@@ -382,7 +382,6 @@ impl DeploymentProgressWindow {
 
                 if ui.button("Export").clicked() {
                     self.export_deployment_logs(deployment);
-                    ui.close_menu();
                 }
             });
 

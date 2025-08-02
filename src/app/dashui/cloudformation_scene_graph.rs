@@ -547,7 +547,7 @@ impl CloudFormationSceneGraph {
             node.was_dragging = is_dragging;
 
             // STEP 3: Render visual content without additional interaction
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(node_rect), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(node_rect), |ui| {
                 // LOG: UI coordinates for visual rendering
                 info!("🎯 EGUI_RENDER_UI: Node {} - ui.max_rect()={:?}, ui.available_rect_before_wrap()={:?}",
                       node_id, ui.max_rect(), ui.available_rect_before_wrap());

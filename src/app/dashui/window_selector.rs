@@ -144,7 +144,6 @@ impl WindowSelector {
 
                             if ui.button(&window_info.title).clicked() {
                                 selected_window = Some((*window_id).clone());
-                                ui.close_menu();
                             }
                         });
                     }
@@ -171,7 +170,6 @@ impl WindowSelector {
                                 .clicked()
                             {
                                 selected_window = Some((*window_id).clone());
-                                ui.close_menu();
                             }
                         });
                     }

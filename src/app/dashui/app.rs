@@ -1502,7 +1502,7 @@ impl DashApp {
     /// Render the top menu bar
     fn render_top_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 let project_info = self.project_command_palette.get_current_project_summary();
 
                 // Get resource count if a project is loaded

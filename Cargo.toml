@@ -10,8 +10,8 @@ rust-version = "1.81"
 
 [dependencies]
 # UI framework
-egui = "0.31"
-eframe = { version = "0.31", default-features = false, features = [
+egui = "0.32"
+eframe = { version = "0.32", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers
     "default_fonts", # Embed the default egui fonts
     "glow",          # Use the glow rendering backend
@@ -19,10 +19,10 @@ eframe = { version = "0.31", default-features = false, features = [
     "wayland",       # To support Linux
     "x11",           # Support older Linux distributions
 ] }
-catppuccin-egui = { version = "5.5.0", default-features = false, features = ["egui31"] }
-egui_extras = { version = "0.31", features = ["image", "svg"] }
-egui_code_editor = "0.2.13"
-egui_json_tree = "0.11"
+catppuccin-egui = { version = "5.6.0", default-features = false, features = ["egui32"] }
+egui_extras = { version = "0.32", features = ["image", "svg"] }
+egui_code_editor = "0.2.17"
+egui_json_tree = "0.12"
 image = "0.25.4"
 
 
@@ -131,7 +131,7 @@ aws-smithy-types = "1.1.1"
 insta = { version = "1.34", features = ["json", "yaml"] }
 pretty_assertions = "1.4"
 tempfile = "3.8"
-egui_kittest = { version = "0.31", features = ["snapshot", "wgpu"] }
+egui_kittest = { version = "0.32", features = ["snapshot", "wgpu"] }
 
 [profile.test]
 opt-level = 3
