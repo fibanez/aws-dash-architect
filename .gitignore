@@ -1,0 +1,57 @@
+# Mac stuff:
+.DS_Store
+.github
+src/bin
+
+# trunk output folder
+dist
+
+# Rust compile target directories:
+target
+target_ra
+target_wasm
+
+# Log files
+*.log
+logs/
+*.out
+
+# Rust/Cargo
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# https://github.com/lycheeverse/lychee
+.lycheecache
+.aider*
+
+**/CLAUDE.local.md
+
+**/.claude/settings.local.json

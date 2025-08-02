@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="240" height="120" viewBox="0 0 240 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simplified AWS Logo -->
+  <path d="M80 60L105 40L130 60L155 40" stroke="#FF9900" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M80 80L105 60L130 80L155 60L180 80" stroke="#FF9900" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- AWS Text -->
+  <text x="80" y="110" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#232F3E">AWS</text>
+</svg>

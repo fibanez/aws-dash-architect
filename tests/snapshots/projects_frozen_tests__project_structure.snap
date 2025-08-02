@@ -1,0 +1,27 @@
+---
+source: tests/projects_frozen_tests.rs
+expression: project
+---
+{
+  "name": "Example Project",
+  "description": "A test project",
+  "short_name": "example",
+  "created": "2025-01-01T10:00:00Z",
+  "updated": "2025-01-01T10:00:00Z",
+  "local_folder": "/home/user/projects/example",
+  "git_url": "https://github.com/user/example.git",
+  "environments": [
+    {
+      "name": "Development",
+      "aws_regions": [
+        "us-east-1"
+      ],
+      "aws_accounts": [
+        "123456789012"
+      ],
+      "deployment_status": null
+    }
+  ],
+  "default_region": "us-east-1",
+  "cfn_template": {}
+}

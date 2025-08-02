@@ -1,0 +1,11 @@
+---
+source: tests/projects_frozen_tests.rs
+expression: resource
+---
+{
+  "resource_id": "MyS3Bucket",
+  "resource_type": "AWS::S3::Bucket",
+  "properties": {
+    "BucketName": "my-bucket"
+  }
+}

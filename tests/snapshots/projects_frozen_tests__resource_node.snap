@@ -1,0 +1,10 @@
+---
+source: tests/projects_frozen_tests.rs
+expression: node
+---
+{
+  "resource_id": "MyInstance",
+  "depends_on": [
+    "MySecurityGroup"
+  ]
+}

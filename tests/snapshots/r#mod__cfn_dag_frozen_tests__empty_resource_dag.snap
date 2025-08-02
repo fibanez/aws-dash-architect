@@ -1,0 +1,10 @@
+---
+source: tests/cfn_dag_frozen_tests.rs
+expression: dag
+---
+{
+  "nodes": {},
+  "resources": {},
+  "node_positions": {},
+  "deferred_queue": []
+}

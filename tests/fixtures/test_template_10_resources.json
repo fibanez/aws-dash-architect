@@ -1,0 +1,234 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Test CloudFormation template with 10 resources for UI testing",
+    "Parameters": {
+        "Environment": {
+            "Type": "String",
+            "Default": "test",
+            "Description": "Environment name for resource naming"
+        },
+        "ProjectName": {
+            "Type": "String",
+            "Default": "ui-test",
+            "Description": "Project name for resource naming"
+        }
+    },
+    "Resources": {
+        "TestS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "${ProjectName}-${Environment}-data-bucket"
+                },
+                "AccessControl": "Private",
+                "VersioningConfiguration": {
+                    "Status": "Enabled"
+                },
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": true,
+                    "BlockPublicPolicy": true,
+                    "IgnorePublicAcls": true,
+                    "RestrictPublicBuckets": true
+                }
+            }
+        },
+        "TestVPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "10.0.0.0/16",
+                "EnableDnsHostnames": true,
+                "EnableDnsSupport": true,
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-vpc"
+                        }
+                    }
+                ]
+            }
+        },
+        "TestSubnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "TestVPC"
+                },
+                "CidrBlock": "10.0.1.0/24",
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        0,
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "MapPublicIpOnLaunch": true,
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-subnet"
+                        }
+                    }
+                ]
+            }
+        },
+        "TestSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Test security group for UI testing",
+                "VpcId": {
+                    "Ref": "TestVPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 80,
+                        "ToPort": 80,
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-sg"
+                        }
+                    }
+                ]
+            }
+        },
+        "TestInternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-igw"
+                        }
+                    }
+                ]
+            }
+        },
+        "TestGatewayAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "TestVPC"
+                },
+                "InternetGatewayId": {
+                    "Ref": "TestInternetGateway"
+                }
+            }
+        },
+        "TestRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "TestVPC"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-rt"
+                        }
+                    }
+                ]
+            }
+        },
+        "TestRoute": {
+            "Type": "AWS::EC2::Route",
+            "DependsOn": "TestGatewayAttachment",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "TestRouteTable"
+                },
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "TestInternetGateway"
+                }
+            }
+        },
+        "TestSubnetRouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": {
+                    "Ref": "TestSubnet"
+                },
+                "RouteTableId": {
+                    "Ref": "TestRouteTable"
+                }
+            }
+        },
+        "TestDynamoDBTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "TableName": {
+                    "Fn::Sub": "${ProjectName}-${Environment}-data-table"
+                },
+                "BillingMode": "PAY_PER_REQUEST",
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "id",
+                        "AttributeType": "S"
+                    }
+                ],
+                "KeySchema": [
+                    {
+                        "AttributeName": "id",
+                        "KeyType": "HASH"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${ProjectName}-${Environment}-table"
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "BucketName": {
+            "Description": "Name of the created S3 bucket",
+            "Value": {
+                "Ref": "TestS3Bucket"
+            }
+        },
+        "VPCId": {
+            "Description": "ID of the created VPC",
+            "Value": {
+                "Ref": "TestVPC"
+            }
+        },
+        "SubnetId": {
+            "Description": "ID of the created subnet",
+            "Value": {
+                "Ref": "TestSubnet"
+            }
+        },
+        "SecurityGroupId": {
+            "Description": "ID of the created security group",
+            "Value": {
+                "Ref": "TestSecurityGroup"
+            }
+        },
+        "DynamoDBTableName": {
+            "Description": "Name of the created DynamoDB table",
+            "Value": {
+                "Ref": "TestDynamoDBTable"
+            }
+        }
+    }
+}

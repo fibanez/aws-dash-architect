@@ -1,0 +1,15 @@
+---
+source: tests/projects_frozen_tests.rs
+expression: env
+---
+{
+  "name": "Staging",
+  "aws_regions": [
+    "us-west-2",
+    "eu-central-1"
+  ],
+  "aws_accounts": [
+    "111222333444"
+  ],
+  "deployment_status": null
+}
