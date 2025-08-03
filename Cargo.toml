@@ -9,6 +9,10 @@ include = ["LICENSE-APACHE", "**/*.rs", "Cargo.toml"]
 rust-version = "1.81"
 
 [dependencies]
+# AI Agent framework
+stood = { git = "https://github.com/fibanez/stood.git" }
+async-trait = "0.1"
+
 # UI framework
 egui = "0.32"
 eframe = { version = "0.32", default-features = false, features = [

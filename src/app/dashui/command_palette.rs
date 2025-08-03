@@ -8,6 +8,7 @@ pub enum CommandAction {
     CloudFormation, // CloudFormation operations
     GraphView,      // CloudFormation graph visualization
     AWSExplorer,    // AWS resource explorer
+    ControlBridge,  // Control Bridge AI assistant
     Quit,
 }
 
@@ -204,6 +205,13 @@ impl CommandPalette {
                 description: "CloudFormation Operations",
             },
             CommandEntry {
+                key: egui::Key::B,
+                key_char: 'B',
+                label: "Control Bridge",
+                color: egui::Color32::from_rgb(70, 150, 200), // Blue
+                description: "AI assistant for AWS infrastructure",
+            },
+            CommandEntry {
                 key: egui::Key::G,
                 key_char: 'G',
                 label: "Graph View",
@@ -276,6 +284,7 @@ impl CommandPalette {
                                         egui::Key::C => {
                                             result = Some(CommandAction::CloudFormation)
                                         }
+                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
                                         _ => {}
                                     }
                                 }
@@ -307,6 +316,7 @@ impl CommandPalette {
                                         egui::Key::C => {
                                             result = Some(CommandAction::CloudFormation)
                                         }
+                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
                                         egui::Key::G => result = Some(CommandAction::GraphView),
                                         egui::Key::E => result = Some(CommandAction::AWSExplorer),
                                         egui::Key::Q => result = Some(CommandAction::Quit),

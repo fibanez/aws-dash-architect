@@ -7,6 +7,7 @@ use super::chat_window::ChatWindow;
 use super::cloudformation_command_palette::{
     CloudFormationCommandAction, CloudFormationCommandPalette, CloudFormationPaletteResult,
 };
+use super::control_bridge_window::ControlBridgeWindow;
 use super::cloudformation_scene_graph::CloudFormationSceneGraph;
 use super::command_palette::{CommandAction, CommandPalette};
 use super::credentials_debug_window::CredentialsDebugWindow;
@@ -97,6 +98,7 @@ pub enum FocusedWindow {
     Help,
     Log,
     Chat,
+    ControlBridge,
     CredentialsDebug,
     DeploymentInfo,
     Verification,
@@ -139,6 +141,8 @@ pub struct DashApp {
     pub log_window: LogWindow,
     #[serde(skip)]
     pub chat_window: ChatWindow,
+    #[serde(skip)]
+    pub control_bridge_window: ControlBridgeWindow,
     #[serde(skip)]
     pub credentials_debug_window: CredentialsDebugWindow,
     #[serde(skip)]
@@ -235,6 +239,7 @@ impl Default for DashApp {
             help_window: HelpWindow::new(),
             log_window: LogWindow::new(),
             chat_window: ChatWindow::new(),
+            control_bridge_window: ControlBridgeWindow::new(),
             credentials_debug_window: CredentialsDebugWindow::default(),
             deployment_info_window: DeploymentInfoWindow::default(),
             verification_window: VerificationWindow::default(),
@@ -452,6 +457,9 @@ impl DashApp {
                 }
                 FocusedWindow::Chat => {
                     self.chat_window.open = false;
+                }
+                FocusedWindow::ControlBridge => {
+                    self.control_bridge_window.open = false;
                 }
                 FocusedWindow::CredentialsDebug => {
                     self.credentials_debug_window.open = false;
@@ -2751,6 +2759,64 @@ impl DashApp {
             });
     }
 
+    /// Handle the Control Bridge window - closable like other windows
+    fn handle_control_bridge_window(&mut self, ctx: &egui::Context) {
+        // Only show if window is open
+        if !self.control_bridge_window.open {
+            return;
+        }
+
+        // Only set focus if this window is not already focused to avoid stealing focus every frame
+        if self.currently_focused_window != Some(FocusedWindow::ControlBridge) {
+            self.set_focused_window(FocusedWindow::ControlBridge);
+        }
+
+        // Check if this window should be brought to the front
+        let window_id = self.control_bridge_window.window_id();
+        let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
+        if bring_to_front {
+            self.window_focus_manager.clear_bring_to_front(window_id);
+        }
+
+        // Control Bridge requires AWS Identity Center login
+        if let Some(aws_identity) = &self.aws_identity_center {
+            let params = IdentityShowParams {
+                aws_identity: Some(aws_identity.clone()),
+            };
+            FocusableWindow::show_with_focus(
+                &mut self.control_bridge_window,
+                ctx,
+                params,
+                bring_to_front,
+            );
+        } else {
+            // Show login requirement message when not logged in
+            let mut is_open = self.control_bridge_window.open;
+            let mut open_login = false;
+            egui::Window::new("🚢 Control Bridge")
+                .open(&mut is_open)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.0);
+                        ui.label("🔐 AWS Identity Center login required");
+                        ui.add_space(10.0);
+                        ui.label("Please log in to AWS Identity Center to use the Control Bridge.");
+                        ui.add_space(10.0);
+                        if ui.button("Open Login Window").clicked() {
+                            open_login = true;
+                        }
+                        ui.add_space(20.0);
+                    });
+                });
+            self.control_bridge_window.open = is_open;
+            
+            if open_login {
+                self.aws_login_window.open = true;
+                self.set_focused_window(FocusedWindow::AwsLogin);
+            }
+        }
+    }
+
     /// Handle the credentials debug window
     fn handle_credentials_debug_window(&mut self, ctx: &egui::Context) {
         if self.credentials_debug_window.is_open() {
@@ -2978,6 +3044,13 @@ impl DashApp {
             self.window_selector.unregister_window("chat_window");
         }
 
+        // Track Control Bridge Window - always open
+        self.window_selector.register_window(
+            "control_bridge".to_string(),
+            "🚢 Control Bridge".to_string(),
+            WindowType::Other("Control Bridge".to_string()),
+        );
+
         // Track Credentials Debug Window
         if self.credentials_debug_window.open {
             self.window_selector.register_window(
@@ -3063,6 +3136,10 @@ impl DashApp {
             "chat_window" => {
                 self.chat_window.open = true;
                 self.set_focused_window(FocusedWindow::Chat);
+            }
+            "control_bridge" => {
+                self.control_bridge_window.open = true;
+                self.set_focused_window(FocusedWindow::ControlBridge);
             }
             "credentials_debug" => {
                 self.credentials_debug_window.open = true;
@@ -3939,6 +4016,11 @@ impl DashApp {
                         self.resource_explorer.set_open(true);
                         // TODO: Add focus management when needed
                     }
+                    CommandAction::ControlBridge => {
+                        // Open Control Bridge window
+                        self.control_bridge_window.open = true;
+                        self.set_focused_window(FocusedWindow::ControlBridge);
+                    }
                     CommandAction::Quit => {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -4673,6 +4755,7 @@ impl eframe::App for DashApp {
         self.handle_help_window(ctx);
         self.handle_log_window(ctx);
         self.handle_chat_window(ctx);
+        self.handle_control_bridge_window(ctx);
         self.handle_credentials_debug_window(ctx);
         self.handle_deployment_info_window(ctx);
         self.handle_template_sections_window(ctx);

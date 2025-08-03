@@ -84,6 +84,7 @@ pub mod aws_icon_manager;
 pub mod aws_login_window;
 pub mod chat_window;
 pub mod cloudformation_command_palette;
+pub mod control_bridge_window;
 pub mod cloudformation_file_picker;
 pub mod cloudformation_scene_graph;
 pub mod cloudformation_window_node_widget;
@@ -122,6 +123,7 @@ pub use chat_window::ChatWindow;
 pub use cloudformation_command_palette::{
     CloudFormationCommandAction, CloudFormationCommandPalette,
 };
+pub use control_bridge_window::ControlBridgeWindow;
 pub use cloudformation_file_picker::{CloudFormationFilePicker, CloudFormationFilePickerStatus};
 pub use cloudformation_scene_graph::CloudFormationSceneGraph;
 pub use cloudformation_window_node_widget::{CloudFormationWindowNodeWidget, NodeWindowManager};
