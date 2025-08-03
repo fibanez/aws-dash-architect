@@ -1233,13 +1233,7 @@ impl TemplateSectionsWindow {
             None => {
                 // No project case
                 ui.add_space(40.0);
-                ui.heading(
-                    RichText::new("No Project Open")
-                        .size(24.0)
-                        .color(egui::Color32::from_rgb(220, 120, 120)),
-                );
-                ui.add_space(20.0);
-                ui.label(RichText::new("Open a project to view resources").size(16.0));
+                ui.label(RichText::new("Open or Create a project").size(16.0));
                 ui.add_space(10.0);
 
                 if ui.button("Open Project").clicked() {
