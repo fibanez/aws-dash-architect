@@ -245,7 +245,7 @@ impl ControlBridgeWindow {
             response_receiver,
             response_sender,
             debug_mode: false,
-            show_json_debug: true, // Enable JSON debug by default
+            show_json_debug: false, // Disable JSON debug by default
             dark_mode: true,       // Default to dark mode
             open: false,           // Start closed by default
             auto_scroll: true,
@@ -327,14 +327,7 @@ impl ControlBridgeWindow {
             "User".to_string(),
         ));
 
-        // Handle commands
-        if input.starts_with('/') {
-            info!("📝 Command detected: {}", input);
-            self.handle_command(&input);
-            return;
-        }
-
-        debug!("Input is not a command, proceeding with agent processing");
+        debug!("Processing user input with agent");
 
         // Process with Control Bridge Agent
         info!("🤖 Starting agent processing for input");
@@ -487,63 +480,6 @@ impl ControlBridgeWindow {
         debug!("Agent execution thread spawned, processing_message remains true until response received");
     }
 
-    fn handle_command(&mut self, command: &str) {
-        info!("📝 Handling command: {}", command);
-        match command {
-            "/help" => {
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    "🚢 Control Bridge Commands:\n/help - Show this help\n/json - Toggle JSON debug display\n/clear - Clear messages\n/collapse - Collapse window\n/expand - Expand window".to_string(),
-                    "ControlBridge".to_string(),
-                ));
-            }
-            "/json" => {
-                self.show_json_debug = !self.show_json_debug;
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    format!(
-                        "JSON debug display: {}",
-                        if self.show_json_debug { "ON" } else { "OFF" }
-                    ),
-                    "ControlBridge".to_string(),
-                ));
-            }
-            "/clear" => {
-                self.messages.clear();
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    "Messages cleared.".to_string(),
-                    "ControlBridge".to_string(),
-                ));
-            }
-            "/close" => {
-                self.open = false;
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    "Control Bridge closed.".to_string(),
-                    "ControlBridge".to_string(),
-                ));
-            }
-            "/open" => {
-                self.open = true;
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    "Control Bridge expanded.".to_string(),
-                    "ControlBridge".to_string(),
-                ));
-            }
-            _ => {
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    format!(
-                        "Unknown command: {}. Type /help for available commands.",
-                        command
-                    ),
-                    "ControlBridge".to_string(),
-                ));
-            }
-        }
-    }
 
     pub fn show(&mut self, ctx: &egui::Context, aws_identity: &Arc<Mutex<AwsIdentityCenter>>) {
         // Check for agent responses from background threads (non-blocking)
@@ -551,8 +487,8 @@ impl ControlBridgeWindow {
             self.handle_agent_response(response);
         }
 
-        // Calculate size constraints based on screen
-        let screen_rect = ctx.screen_rect();
+        // Calculate size constraints based on available area (main window)
+        let available_rect = ctx.available_rect();
 
         // Control Bridge window - closable like other windows
         let window = Window::new("🚢 Control Bridge")
@@ -562,7 +498,7 @@ impl ControlBridgeWindow {
             .min_width(400.0)
             .max_width(800.0)
             .min_height(300.0)
-            .max_height(screen_rect.height() * 0.95) // Limit height to 95% of screen
+            .max_height(available_rect.height() * 0.95) // Limit height to 95% of main window
             .collapsible(true);
 
         let mut is_open = self.open;
@@ -730,6 +666,9 @@ impl ControlBridgeWindow {
         aws_identity: &Arc<Mutex<AwsIdentityCenter>>,
         ctx: &egui::Context,
     ) {
+        // Update dark mode based on current theme
+        self.dark_mode = ui.visuals().dark_mode;
+        
         ui.vertical(|ui| {
             // Header with options
             ui.horizontal(|ui| {
@@ -767,22 +706,25 @@ impl ControlBridgeWindow {
                     }
                     self.force_collapse_all = true;
                 }
+                if ui.button("⬇️ Scroll to Bottom").clicked() {
+                    self.scroll_to_bottom = true;
+                }
             });
 
             //ui.separator();
 
-            // Message display area with height constraints to prevent auto-expanding
+            // Message display area - calculate available space like other windows
             let current_window_height = ui.available_height();
-            let input_area_height = 80.0; // Reserve space for input area and buttons
-            let max_scroll_height = (current_window_height - input_area_height).min(400.0); // Cap at 400px
-
+            let input_area_height = 120.0; // Reserve space for input area, buttons, and header
+            let max_scroll_height = (current_window_height - input_area_height).min(600.0); // Reasonable max, similar to chat window
+            
             let scroll_area = ScrollArea::vertical()
                 .id_salt("control_bridge_scroll")
-                .auto_shrink([false, true]) // Allow vertical shrinking
-                .max_height(max_scroll_height) // Limit maximum height
+                .auto_shrink([false, false]) // Don't auto-shrink - let user control window size
+                .max_height(max_scroll_height) // Prevent expansion beyond available space
                 .stick_to_bottom(self.scroll_to_bottom);
 
-            let scroll_response = scroll_area.show(ui, |ui| {
+            let _scroll_response = scroll_area.show(ui, |ui| {
                 // Set a fixed width to prevent content from expanding the window
                 let available_width = ui.available_width();
                 ui.set_max_width(available_width);
@@ -859,20 +801,13 @@ impl ControlBridgeWindow {
                 self.force_collapse_all = false;
             }
 
-            // Reset the scroll flag only if we successfully scrolled or if auto-scroll is disabled
+            // Reset the scroll flag - don't continuously request repaints
             if self.scroll_to_bottom {
-                // Check if we actually scrolled to bottom by examining scroll response
-                let scrolled_to_bottom = scroll_response.state.offset.y
-                    >= scroll_response.content_size.y - scroll_response.inner_rect.height() - 1.0;
-                if scrolled_to_bottom || !self.auto_scroll {
-                    self.scroll_to_bottom = false;
-                } else {
-                    // Keep the flag set and request another repaint to try again
-                    ctx.request_repaint();
-                }
+                // Always reset the flag to prevent continuous layout updates
+                self.scroll_to_bottom = false;
             }
 
-            ui.separator();
+            ui.add_space(10.0); // Empty space instead of separator
 
             // Input area - vertical layout with input box on top, buttons below
             ui.vertical(|ui| {
@@ -1092,7 +1027,7 @@ impl ControlBridgeWindow {
         );
 
         let header = CollapsingHeader::new(
-            RichText::new(header_text).color(Color32::from_rgb(100, 255, 150)),
+            RichText::new(header_text).color(MessageRole::Assistant.color(self.dark_mode)),
         )
         .id_salt(format!("streaming_{}", message.id))
         .default_open(true); // Always open for streaming messages
