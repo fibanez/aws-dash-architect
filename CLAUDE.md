@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ARCHITECTURAL DECISION AND PROBLEM-SOLVING GUIDELINES
+
+⚠️ **STOP AND COMMUNICATE**: When facing technical obstacles that might lead to compromises, placeholders, or changes from user requirements - STOP and communicate the situation to the user
+
+🚫 **Placeholders are NOT better than broken code** - Mock implementations defeat the purpose and waste time
+
+🎯 **Prioritize Architecture matching user preference over code that compiles** - Don't optimize for compilation success over functional success
+
+🔍 **Solve the real problem** - Research existing patterns, ask for clarification, persist through technical challenges
+
+💬 **Ask for guidance** - Users have experience and can guide architectural decisions; don't make compromises on their behalf
+
+✅ **Only move forward when functionality actually works** - Compilation success without functional success is not progress
+
 **IMPORTANT REMINDERS:**
 - ✅ **Test-Driven Development**: Complete and test each feature before moving to the next- create tests in test folder
 - ✅ Integration Test: Don't use mock techniques for integration test, all integration test test real behavior using egui_kittest library

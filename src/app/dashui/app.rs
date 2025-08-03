@@ -33,6 +33,7 @@ use super::{
     NavigableWidgetManager, NavigationCommand, NavigationMode, NavigationState,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
+use crate::app::bridge::set_global_aws_identity;
 use crate::app::cfn_resources::{
     load_attribute_definitions, load_property_definitions, load_property_type_definitions,
     CfnResourcesDownloader,
@@ -2581,6 +2582,14 @@ impl DashApp {
 
                 // Update the identity center reference
                 self.aws_identity_center = Some(aws_identity.clone());
+                
+                // Set global AwsIdentity for bridge tools
+                set_global_aws_identity(Some(aws_identity.clone()));
+
+                // Proactively initialize ResourceExplorer with AWS Identity Center
+                // This ensures the AWS client is available for bridge tools even if the window isn't open
+                self.resource_explorer.set_aws_identity_center(Some(aws_identity.clone()));
+                tracing::info!("🚀 ResourceExplorer proactively initialized for bridge tools");
 
                 // Initialize CloudFormation Manager with shared AWS Explorer infrastructure
                 if self.cloudformation_manager.is_none() {
@@ -2626,6 +2635,13 @@ impl DashApp {
                 tracing::info!("Clearing AWS Identity Center reference due to logout");
                 self.aws_identity_center = None;
                 self.cloudformation_manager = None;
+                
+                // Clear global AwsIdentity for bridge tools
+                set_global_aws_identity(None);
+                
+                // Clear ResourceExplorer AWS client
+                self.resource_explorer.set_aws_identity_center(None);
+                tracing::info!("🧹 ResourceExplorer cleared on logout");
             }
 
             // Check if the accounts window is open and set focus

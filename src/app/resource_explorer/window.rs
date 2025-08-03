@@ -1,5 +1,6 @@
 use super::{aws_client::*, colors::*, dialogs::*, state::*, tree::*};
 use crate::app::aws_identity::AwsIdentityCenter;
+use crate::app::bridge::set_global_aws_client;
 use egui::{Color32, Context, Ui, Window};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -12,7 +13,7 @@ pub struct ResourceExplorerWindow {
     is_focused: bool,
     fuzzy_dialog: FuzzySearchDialog,
     tree_renderer: TreeRenderer,
-    aws_client: Option<AWSResourceClient>,
+    aws_client: Option<Arc<AWSResourceClient>>,
     refresh_selection: HashMap<String, bool>, // Track which combinations to refresh
     show_refresh_dialog: bool,                // Local dialog state to avoid borrow conflicts
     aws_identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>, // Access to real AWS accounts
@@ -60,19 +61,26 @@ impl ResourceExplorerWindow {
                 );
 
                 // Create AWS client with credential coordinator
-                self.aws_client = Some(AWSResourceClient::new(credential_coordinator));
+                let aws_client = Arc::new(AWSResourceClient::new(credential_coordinator));
+                self.aws_client = Some(aws_client.clone());
+                
+                // Set global AWS client for bridge tools
+                set_global_aws_client(Some(aws_client));
+                tracing::info!("🔧 AWS client created and set as global client for bridge tools");
             }
         } else {
             // Clear AWS client if identity center is removed
             self.aws_client = None;
+            
+            // Clear global AWS client for bridge tools
+            set_global_aws_client(None);
+            tracing::info!("🔧 AWS client cleared from global bridge tools");
         }
     }
 
     /// Get reference to the AWS client for use by other components
     pub fn get_aws_client(&self) -> Option<Arc<AWSResourceClient>> {
-        self.aws_client
-            .as_ref()
-            .map(|client| Arc::new(client.clone()))
+        self.aws_client.clone()
     }
 
     pub fn show(&mut self, ctx: &Context) -> bool {

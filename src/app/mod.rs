@@ -35,6 +35,7 @@
 
 pub mod aws_identity;
 pub mod bedrock_client;
+pub mod bridge;
 pub mod cf_syntax;
 pub mod cfn_dag;
 pub mod cfn_intrinsic_functions;

@@ -5,6 +5,7 @@
 //! integration and always-available operation.
 
 use crate::app::aws_identity::AwsIdentityCenter;
+use crate::app::bridge::get_aws_tools;
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
@@ -390,31 +391,64 @@ impl ControlBridgeWindow {
                             "🚢 Creating Control Bridge Agent with AWS Identity Center credentials"
                         );
 
-                        // Configure telemetry for the agent
+                        // Configure telemetry for the agent with descriptive naming
                         let mut telemetry_config = TelemetryConfig::default()
-                            .with_service_name("awsdash-control-bridge")
+                            .with_service_name("aws-dash-bridge-agent")
                             .with_service_version("1.0.0")
                             //TODO this is hardcoded
                             .with_otlp_endpoint("http://localhost:4319") // Existing OTEL collector
                             .with_batch_processing();
 
-                        // Enable debug tracing and add service attributes manually
+                        // Enable debug tracing and add comprehensive service attributes
                         telemetry_config.enable_debug_tracing = true;
                         telemetry_config
                             .service_attributes
-                            .insert("application".to_string(), "aws-dash".to_string());
+                            .insert("application".to_string(), "aws-dash-architect".to_string());
                         telemetry_config
                             .service_attributes
-                            .insert("agent.type".to_string(), "control-bridge".to_string());
+                            .insert("agent.type".to_string(), "aws-infrastructure-bridge".to_string());
+                        telemetry_config
+                            .service_attributes
+                            .insert("agent.role".to_string(), "aws-resource-assistant".to_string());
+                        telemetry_config
+                            .service_attributes
+                            .insert("agent.description".to_string(), "AWS Infrastructure Management Assistant".to_string());
+                        telemetry_config
+                            .service_attributes
+                            .insert("component".to_string(), "bridge-system".to_string());
+                        telemetry_config
+                            .service_attributes
+                            .insert("agent.capabilities".to_string(), "aws-resource-management,account-search,region-search".to_string());
+                        telemetry_config
+                            .service_attributes
+                            .insert("environment".to_string(), "aws-dash-desktop".to_string());
+                        
+                        // Add unique session identifier for this agent instance
+                        let session_id = format!("aws-dash-bridge-{}", chrono::Utc::now().timestamp_millis());
+                        telemetry_config
+                            .service_attributes
+                            .insert("session.id".to_string(), session_id);
+                        telemetry_config
+                            .service_attributes
+                            .insert("deployment.environment".to_string(), "desktop-application".to_string());
 
                         let mut agent_builder = Agent::builder()
-                            .system_prompt("")
+                            .system_prompt("You are an AWS infrastructure assistant. You have access to AWS resource tools that allow you to list and describe AWS resources. Use these tools to help users understand and manage their AWS infrastructure.
+
+Available tools:
+- aws_list_resources: List AWS resources with filtering by account, region, and resource type
+- aws_describe_resources: Get detailed information about specific AWS resources  
+- aws_find_account: Search for AWS accounts by ID, name, or email (no API calls required)
+- aws_find_region: Search for AWS regions by code or display name (no API calls required)
+
+When users need to find accounts or regions, use the aws_find_account and aws_find_region tools respectively. These tools provide fast fuzzy search without making API calls.")
                             .with_credentials(
                                 aws_creds.access_key_id,
                                 aws_creds.secret_access_key,
                                 aws_creds.session_token,
                             )
-                            .with_telemetry(telemetry_config); // Enable telemetry via agent builder
+                            .with_telemetry(telemetry_config) // Enable telemetry via agent builder
+                            .tools(get_aws_tools(None)); // Add AWS resource tools - client will be accessed via global context
 
                         // Always add JSON capture callback to ensure we never lose JSON data
                         info!("📊 Adding JSON capture callback handler (always active)");
