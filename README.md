@@ -29,7 +29,7 @@ AWS Dash Architect transforms the fragmented workflow of cloud architecture desi
 #### Install Rust (if not already installed)
 - **All platforms**: Visit [rustup.rs](https://rustup.rs/) and follow the installation instructions
 - **Linux/macOS**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- **Windows**: Download and run [rustup-init.exe](https://win.rustup.rs/), install Build Tools for Visual Studio with C++ option
+- **Windows**: Download and run [rustup-init.exe](https://win.rustup.rs/), install Build Tools for Visual Studio with C++ option, cmake, and NASM
 
 #### Build from source
 ```bash

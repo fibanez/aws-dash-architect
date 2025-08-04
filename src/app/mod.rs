@@ -45,6 +45,7 @@ pub mod cfn_resources;
 pub mod cfn_template;
 pub mod cloudformation_manager;
 pub mod dashui;
+pub mod fonts;
 pub mod notifications;
 pub mod projects;
 pub mod resource_explorer;

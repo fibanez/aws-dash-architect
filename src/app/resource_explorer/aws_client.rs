@@ -71,6 +71,11 @@ impl AWSResourceClient {
         }
     }
 
+    /// Get credential coordinator for bridge tools
+    pub fn get_credential_coordinator(&self) -> Arc<CredentialCoordinator> {
+        Arc::clone(&self.credential_coordinator)
+    }
+
     // Lazy service getters - create services only when needed
     fn get_ec2_service(&self) -> EC2Service {
         EC2Service::new(Arc::clone(&self.credential_coordinator))
@@ -128,7 +133,7 @@ impl AWSResourceClient {
         EKSService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    fn get_logs_service(&self) -> LogsService {
+    pub fn get_logs_service(&self) -> LogsService {
         LogsService::new(Arc::clone(&self.credential_coordinator))
     }
 

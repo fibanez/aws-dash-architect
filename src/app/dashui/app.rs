@@ -39,6 +39,7 @@ use crate::app::cfn_resources::{
     CfnResourcesDownloader,
 };
 use crate::app::cloudformation_manager::{CloudFormationManager, ValidationResultsWindow};
+use crate::app::fonts;
 use crate::app::notifications::NotificationManager;
 use crate::app::projects::CloudFormationResource;
 use crate::app::resource_explorer::ResourceExplorer;
@@ -218,6 +219,9 @@ pub struct DashApp {
     #[serde(skip)]
     /// Queue of pending widget actions to execute
     pending_widget_actions: Vec<PendingWidgetAction>,
+    #[serde(skip)]
+    /// Flag to ensure enhanced fonts are configured only once
+    fonts_configured: bool,
 }
 
 impl Default for DashApp {
@@ -276,6 +280,7 @@ impl Default for DashApp {
             skip_next_hint_input: false,
             widget_manager: NavigableWidgetManager::new(),
             pending_widget_actions: Vec::new(),
+            fonts_configured: false,
         }
     }
 }
@@ -4055,12 +4060,17 @@ impl DashApp {
 
     // No longer needed as we're using the command_palette component
 
-    /// Configure the font sizes and rendering for the application (disabled to prevent Scene zoom conflicts)
-    fn configure_fonts(&self, ctx: &egui::Context) {
-        // DISABLED: This was causing global font scaling conflicts with Scene container zoom
-        // The Scene container should handle its own font scaling independently
+    /// Configure the font sizes and rendering for the application with enhanced emoji support
+    fn configure_fonts(&mut self, ctx: &egui::Context) {
+        // Configure enhanced fonts only once for performance
+        if !self.fonts_configured {
+            info!("🎨 Initializing enhanced fonts with emoji support");
+            fonts::configure_enhanced_fonts(ctx);
+            self.fonts_configured = true;
+        }
 
-        // Only do basic font definitions without modifying global styles
+        // Continue with basic font size configuration (disabled to prevent Scene zoom conflicts)
+        // The Scene container should handle its own font scaling independently
         let base_font_size = 14.0; // Use consistent base size
         self.configure_font_definitions(ctx, base_font_size);
     }
@@ -4691,7 +4701,7 @@ impl eframe::App for DashApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Configure fonts with smaller title sizes
+        // Configure fonts with enhanced emoji support
         self.configure_fonts(ctx);
 
         // Update shake animation state

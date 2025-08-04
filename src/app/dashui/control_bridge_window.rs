@@ -5,7 +5,11 @@
 //! integration and always-available operation.
 
 use crate::app::aws_identity::AwsIdentityCenter;
-use crate::app::bridge::get_aws_tools;
+use crate::app::bridge::{
+    aws_list_resources_tool, aws_describe_resource_tool, 
+    aws_find_account_tool, aws_find_region_tool, aws_get_log_entries_tool,
+    set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender
+};
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
@@ -25,13 +29,44 @@ use uuid::Uuid;
 // MESSAGE SYSTEM FOR egui
 // ============================================================================
 
+/// Log analysis events bubbled up from standalone log analysis agents
+#[derive(Debug, Clone)]
+pub enum LogAnalysisEvent {
+    /// Model interaction started 
+    ModelStart { 
+        timestamp: DateTime<Utc>, 
+        messages_count: usize 
+    },
+    /// Tool execution started
+    ToolStart { 
+        timestamp: DateTime<Utc>, 
+        tool_name: String 
+    },
+    /// Tool execution completed
+    ToolComplete { 
+        timestamp: DateTime<Utc>, 
+        tool_name: String, 
+        success: bool 
+    },
+    /// Agent event loop completed
+    EventLoopComplete { 
+        timestamp: DateTime<Utc> 
+    },
+    /// Error occurred during execution
+    Error { 
+        timestamp: DateTime<Utc>, 
+        error: String 
+    },
+}
+
 /// Response from agent execution in separate thread
 #[derive(Debug)]
-enum AgentResponse {
+pub enum AgentResponse {
     Success(AgentResult),
     Error(String),
     JsonDebug(JsonDebugData),
     StreamingUpdate(StreamingUpdate),
+    LogAnalysisEvent { agent_id: String, event: LogAnalysisEvent },
 }
 
 /// Real-time streaming updates from agent execution
@@ -232,12 +267,23 @@ impl Default for ControlBridgeWindow {
     }
 }
 
+impl Drop for ControlBridgeWindow {
+    fn drop(&mut self) {
+        info!("🚢 Control Bridge window dropped - clearing global Bridge sender");
+        clear_global_bridge_sender();
+    }
+}
+
 impl ControlBridgeWindow {
     pub fn new() -> Self {
         info!("🚢 Initializing Control Bridge (Agent will be created on first message)");
 
         // Create response channel for thread communication
         let (response_sender, response_receiver) = mpsc::channel();
+        
+        // Set global Bridge sender for log analysis event bubbling
+        set_global_bridge_sender(response_sender.clone());
+        info!("📡 Global Bridge sender configured for log analysis event bubbling");
 
         let mut app = Self {
             messages: VecDeque::new(),
@@ -354,10 +400,22 @@ impl ControlBridgeWindow {
         let aws_identity_clone = aws_identity.clone();
 
         std::thread::spawn(move || {
-            // Get AWS Identity Center credentials OUTSIDE the tokio runtime
-            let aws_creds = match aws_identity_clone.lock() {
+            // Get AWS Identity Center credentials and region OUTSIDE the tokio runtime
+            let (aws_creds, identity_center_region) = match aws_identity_clone.lock() {
                 Ok(mut identity) => match identity.get_default_role_credentials() {
-                    Ok(creds) => creds,
+                    Ok(creds) => {
+                        let region = identity.identity_center_region.clone();
+                        
+                        // Set global AWS credentials for standalone agents
+                        set_global_aws_credentials(
+                            creds.access_key_id.clone(),
+                            creds.secret_access_key.clone(),
+                            creds.session_token.clone(),
+                            region.clone(),
+                        );
+                        
+                        (creds, region)
+                    },
                     Err(e) => {
                         let response = AgentResponse::Error(format!(
                             "Failed to get AWS Identity Center credentials: {}",
@@ -396,7 +454,7 @@ impl ControlBridgeWindow {
                             .with_service_name("aws-dash-bridge-agent")
                             .with_service_version("1.0.0")
                             //TODO this is hardcoded
-                            .with_otlp_endpoint("http://localhost:4319") // Existing OTEL collector
+                            .with_otlp_endpoint("http://localhost:4320") // HTTP OTLP endpoint (matches auto-detection)
                             .with_batch_processing();
 
                         // Enable debug tracing and add comprehensive service attributes
@@ -446,9 +504,16 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
                                 aws_creds.access_key_id,
                                 aws_creds.secret_access_key,
                                 aws_creds.session_token,
+                                identity_center_region,
                             )
                             .with_telemetry(telemetry_config) // Enable telemetry via agent builder
-                            .tools(get_aws_tools(None)); // Add AWS resource tools - client will be accessed via global context
+                            .tools(vec![
+                                aws_list_resources_tool(None),
+                                aws_describe_resource_tool(None),
+                                aws_find_account_tool(),
+                                aws_find_region_tool(),
+                                aws_get_log_entries_tool(None),
+                            ]); // Explicit tool selection - client will be accessed via global context
 
                         // Always add JSON capture callback to ensure we never lose JSON data
                         info!("📊 Adding JSON capture callback handler (always active)");
@@ -691,7 +756,83 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
             AgentResponse::StreamingUpdate(update) => {
                 self.handle_streaming_update(update);
             }
+            AgentResponse::LogAnalysisEvent { agent_id, event } => {
+                self.handle_log_analysis_event(agent_id, event);
+            }
         }
+    }
+
+    fn handle_log_analysis_event(&mut self, agent_id: String, event: LogAnalysisEvent) {
+        debug!("📊 Received log analysis event from agent {}: {:?}", agent_id, event);
+        
+        // Create a message for the log analysis event
+        let (icon, content) = match &event {
+            LogAnalysisEvent::ModelStart { timestamp, messages_count } => {
+                ("🚀", format!("Model started at {} with {} messages", 
+                    timestamp.format("%H:%M:%S"), messages_count))
+            },
+            LogAnalysisEvent::ToolStart { timestamp, tool_name } => {
+                ("🔧", format!("Tool '{}' started at {}", 
+                    tool_name, timestamp.format("%H:%M:%S")))
+            },
+            LogAnalysisEvent::ToolComplete { timestamp, tool_name, success } => {
+                let icon = if *success { "✅" } else { "❌" };
+                (icon, format!("Tool '{}' completed at {} ({})", 
+                    tool_name, timestamp.format("%H:%M:%S"), 
+                    if *success { "success" } else { "failed" }))
+            },
+            LogAnalysisEvent::EventLoopComplete { timestamp } => {
+                ("🏁", format!("Analysis completed at {}", 
+                    timestamp.format("%H:%M:%S")))
+            },
+            LogAnalysisEvent::Error { timestamp, error } => {
+                ("❌", format!("Error at {}: {}", 
+                    timestamp.format("%H:%M:%S"), error))
+            },
+        };
+
+        // Find or create a parent message for this agent session
+        let parent_message = self.find_or_create_log_analysis_parent(&agent_id);
+        
+        // Create the event message
+        let event_message = Message::new_with_agent(
+            MessageRole::System,
+            format!("{} {}", icon, content),
+            format!("LogAnalysis-{}", agent_id),
+        );
+
+        // Add as nested message to the parent
+        if let Some(parent_idx) = parent_message {
+            if let Some(parent) = self.messages.get_mut(parent_idx) {
+                parent.add_nested_message(event_message);
+            }
+        }
+
+        // Trigger scroll to bottom for activity updates
+        self.scroll_to_bottom = true;
+    }
+
+    fn find_or_create_log_analysis_parent(&mut self, agent_id: &str) -> Option<usize> {
+        // Look for existing parent message for this agent
+        for (idx, message) in self.messages.iter().enumerate() {
+            if let Some(ref source) = message.agent_source {
+                if source == &format!("LogAnalysis-{}", agent_id) {
+                    return Some(idx);
+                }
+            }
+        }
+
+        // Create new parent message for this log analysis session
+        let parent_message = Message::new_with_agent(
+            MessageRole::System,
+            format!("🔍 Log Analysis Session: {} (0 events)", agent_id),
+            format!("LogAnalysis-{}", agent_id),
+        );
+
+        self.add_message(parent_message);
+        
+        // Return the index of the newly added message
+        Some(self.messages.len() - 1)
     }
 
     fn ui_content(
@@ -915,7 +1056,7 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
             if last_msg_time.elapsed() >= delay {
                 if self.auto_scroll && !self.scroll_to_bottom {
                     self.scroll_to_bottom = true;
-                    trace!("Delayed auto-scroll triggered after {:?}", delay);
+                    // Auto-scroll triggered after delay (removed spam trace log)
                 }
 
                 // Keep the timer active during streaming to ensure continuous scrolling

@@ -3,17 +3,24 @@
 //! This module provides a registry and common utilities for AWS bridge tools.
 //! Individual tool implementations are in the tools/ subfolder.
 
+use crate::app::dashui::control_bridge_window::AgentResponse;
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
+use std::sync::{mpsc, Arc, RwLock};
 use stood::tools::Tool;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 // Import individual tools for registry functions
 use super::tools::*;
 
 /// Global tool context for accessing AWS client at runtime
 static GLOBAL_AWS_CLIENT: RwLock<Option<Arc<AWSResourceClient>>> = RwLock::new(None);
+
+/// Global AWS credentials for standalone agents
+static GLOBAL_AWS_CREDENTIALS: RwLock<Option<(String, String, Option<String>, String)>> = RwLock::new(None);
+
+/// Global Bridge response channel for log analysis event bubbling
+static GLOBAL_BRIDGE_SENDER: RwLock<Option<mpsc::Sender<AgentResponse>>> = RwLock::new(None);
 
 /// Set the global AWS client for all tools to use
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
@@ -66,12 +73,126 @@ pub struct ResourceSummary {
 }
 
 
-/// Registry for AWS tools that can be added to an Agent
-pub fn get_aws_tools(aws_client: Option<Arc<AWSResourceClient>>) -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(AwsListResourcesTool::new(aws_client.clone())),
-        Box::new(AwsDescribeResourceTool::new(aws_client.clone())),
-        Box::new(AwsFindAccountTool::new_uninitialized()),
-        Box::new(AwsFindRegionTool::new_uninitialized()),
-    ]
+/// Individual tool constructors for explicit tool selection
+
+/// Creates AWS List Resources tool
+pub fn aws_list_resources_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsListResourcesTool::new(aws_client))
+}
+
+/// Creates AWS Describe Resource tool
+pub fn aws_describe_resource_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsDescribeResourceTool::new(aws_client))
+}
+
+/// Creates AWS Find Account tool
+pub fn aws_find_account_tool() -> Box<dyn Tool> {
+    Box::new(AwsFindAccountTool::new_uninitialized())
+}
+
+/// Creates AWS Find Region tool
+pub fn aws_find_region_tool() -> Box<dyn Tool> {
+    Box::new(AwsFindRegionTool::new_uninitialized())
+}
+
+/// Creates AWS Describe Log Groups tool
+pub fn aws_describe_log_groups_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsDescribeLogGroupsTool::new(aws_client))
+}
+
+/// Creates AWS Get Log Events tool
+pub fn aws_get_log_events_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsGetLogEventsTool::new(aws_client))
+}
+
+/// Creates AWS Get Log Entries tool (high-level tool with standalone agent)
+pub fn aws_get_log_entries_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsGetLogEntriesTool::new(aws_client))
+}
+
+/// Set global AWS credentials for standalone agents
+pub fn set_global_aws_credentials(
+    access_key: String,
+    secret_key: String,
+    session_token: Option<String>,
+    region: String,
+) {
+    match GLOBAL_AWS_CREDENTIALS.write() {
+        Ok(mut guard) => {
+            info!("🔐 Global AWS credentials updated for standalone agents");
+            *guard = Some((access_key, secret_key, session_token, region));
+        }
+        Err(e) => {
+            error!("❌ Failed to set global AWS credentials: {}", e);
+        }
+    }
+}
+
+/// Get global AWS credentials for standalone agents
+pub fn get_global_aws_credentials() -> Option<(String, String, Option<String>, String)> {
+    match GLOBAL_AWS_CREDENTIALS.read() {
+        Ok(guard) => {
+            let has_creds = guard.is_some();
+            info!("🔍 Global AWS credentials access: {}", if has_creds { "✅ Available" } else { "❌ Not set" });
+            guard.clone()
+        }
+        Err(e) => {
+            error!("❌ Failed to read global AWS credentials: {}", e);
+            None
+        }
+    }
+}
+
+/// Clear global AWS credentials
+pub fn clear_global_aws_credentials() {
+    match GLOBAL_AWS_CREDENTIALS.write() {
+        Ok(mut guard) => {
+            info!("🔐 Global AWS credentials cleared");
+            *guard = None;
+        }
+        Err(e) => {
+            error!("❌ Failed to clear global AWS credentials: {}", e);
+        }
+    }
+}
+
+/// Set global Bridge response channel for log analysis event bubbling
+pub fn set_global_bridge_sender(sender: mpsc::Sender<AgentResponse>) {
+    match GLOBAL_BRIDGE_SENDER.write() {
+        Ok(mut guard) => {
+            info!("📡 Global Bridge response channel set for log analysis event bubbling");
+            *guard = Some(sender);
+        }
+        Err(e) => {
+            error!("❌ Failed to set global Bridge response channel: {}", e);
+        }
+    }
+}
+
+/// Get global Bridge response channel for log analysis event bubbling
+pub fn get_global_bridge_sender() -> Option<mpsc::Sender<AgentResponse>> {
+    match GLOBAL_BRIDGE_SENDER.read() {
+        Ok(guard) => {
+            let has_sender = guard.is_some();
+            info!("📡 Global Bridge response channel access: {}", if has_sender { "✅ Available" } else { "❌ Not set" });
+            guard.clone()
+        }
+        Err(e) => {
+            error!("❌ Failed to read global Bridge response channel: {}", e);
+            None
+        }
+    }
+}
+
+/// Clear global Bridge response channel
+pub fn clear_global_bridge_sender() {
+    match GLOBAL_BRIDGE_SENDER.write() {
+        Ok(mut guard) => {
+            info!("📡 Global Bridge response channel cleared");
+            *guard = None;
+        }
+        Err(e) => {
+            error!("❌ Failed to clear global Bridge response channel: {}", e);
+        }
+    }
 }

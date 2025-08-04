@@ -164,10 +164,9 @@ impl AwsLoginWindow {
                         // Handle state transitions
                         match &login_state {
                             LoginState::LoggedIn => {
-                                // If we were completing login and now we're logged in, open the debug window
+                                // Login completed successfully, but don't auto-open debug window
                                 if self.completing_login {
-                                    self.credentials_debug_window_open = true;
-                                    tracing::info!("Login completed successfully, opening credentials debug window");
+                                    tracing::info!("Login completed successfully, debug window available via button");
                                 }
                                 self.completing_login = false;
                             }
@@ -225,6 +224,12 @@ impl AwsLoginWindow {
                                         RichText::new("Successfully logged in!")
                                             .color(egui::Color32::from_rgb(50, 200, 80))
                                             .strong(),
+                                    );
+                                    ui.add_space(3.0);
+                                    ui.label(
+                                        RichText::new("It is safe to close this window")
+                                            .color(egui::Color32::from_rgb(255, 165, 0))
+                                            .size(14.0),
                                     );
                                     ui.add_space(5.0);
 
