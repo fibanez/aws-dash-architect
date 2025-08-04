@@ -110,6 +110,21 @@ pub fn aws_get_log_entries_tool(aws_client: Option<Arc<AWSResourceClient>>) -> B
     Box::new(AwsGetLogEntriesTool::new(aws_client))
 }
 
+/// Creates TodoWrite tool for task management
+pub fn todo_write_tool() -> Box<dyn Tool> {
+    Box::new(TodoWriteTool::new())
+}
+
+/// Creates TodoRead tool for task querying
+pub fn todo_read_tool() -> Box<dyn Tool> {
+    Box::new(TodoReadTool::new())
+}
+
+/// Creates Create_Agent tool for on-demand agent orchestration
+pub fn create_agent_tool() -> Box<dyn Tool> {
+    Box::new(CreateAgentTool::new())
+}
+
 /// Set global AWS credentials for standalone agents
 pub fn set_global_aws_credentials(
     access_key: String,

@@ -5,6 +5,10 @@
 
 pub mod tools;
 pub mod tools_registry;
+pub mod agents;
+pub mod performance;
 
 pub use tools::*;
 pub use tools_registry::*;
+pub use agents::*;
+pub use performance::*;

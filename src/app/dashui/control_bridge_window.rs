@@ -6,8 +6,8 @@
 
 use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::bridge::{
-    aws_list_resources_tool, aws_describe_resource_tool, 
-    aws_find_account_tool, aws_find_region_tool, aws_get_log_entries_tool,
+    aws_find_account_tool, aws_find_region_tool,
+    create_agent_tool, todo_write_tool, todo_read_tool,
     set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
@@ -67,6 +67,8 @@ pub enum AgentResponse {
     JsonDebug(JsonDebugData),
     StreamingUpdate(StreamingUpdate),
     LogAnalysisEvent { agent_id: String, event: LogAnalysisEvent },
+    AgentCreated { agent_id: String, agent_type: String },
+    AgentDestroyed { agent_id: String, agent_type: String },
 }
 
 /// Real-time streaming updates from agent execution
@@ -259,6 +261,9 @@ pub struct ControlBridgeWindow {
     force_expand_all: bool,
     force_collapse_all: bool,
     message_expand_states: HashMap<String, bool>, // Track expand state by message ID
+    // Active agent tracking for cancellation
+    active_agents: Arc<Mutex<HashMap<String, String>>>, // agent_id -> agent_type mapping
+    main_agent_active: bool, // Track if main Bridge Agent is processing
 }
 
 impl Default for ControlBridgeWindow {
@@ -311,6 +316,8 @@ impl ControlBridgeWindow {
             force_expand_all: false,
             force_collapse_all: false,
             message_expand_states: HashMap::new(),
+            active_agents: Arc::new(Mutex::new(HashMap::new())),
+            main_agent_active: false,
         };
 
         // Add welcome message
@@ -321,6 +328,53 @@ impl ControlBridgeWindow {
         ));
 
         app
+    }
+
+    /// Cancel all active agents (main Bridge Agent and specialized agents)
+    fn cancel_all_agents(&mut self) {
+        info!("🛑 Cancelling all active agents");
+        
+        // Cancel main Bridge Agent
+        if self.main_agent_active {
+            info!("🛑 Cancelling main Bridge Agent");
+            self.processing_message = false;
+            self.main_agent_active = false;
+            
+            // Add cancellation message
+            self.add_message(Message::new_with_agent(
+                MessageRole::System,
+                "🛑 Main Bridge Agent stopped by user.".to_string(),
+                "ControlBridge".to_string(),
+            ));
+        }
+        
+        // Cancel all specialized agents
+        let active_agents = {
+            let mut agents = self.active_agents.lock().unwrap();
+            let count = agents.len();
+            let agent_types: Vec<String> = agents.values().cloned().collect();
+            agents.clear(); // Clear all active agents
+            (count, agent_types)
+        };
+        
+        if active_agents.0 > 0 {
+            info!("🛑 Cancelled {} specialized agents: {:?}", active_agents.0, active_agents.1);
+            
+            // Add cancellation message for specialized agents
+            self.add_message(Message::new_with_agent(
+                MessageRole::System,
+                format!("🛑 Stopped {} specialized agents: {}", 
+                    active_agents.0, 
+                    active_agents.1.join(", ")
+                ),
+                "ControlBridge".to_string(),
+            ));
+        }
+        
+        // Reset UI state
+        self.scroll_to_bottom = true;
+        
+        info!("🛑 All agents cancelled - UI reset complete");
     }
 
     fn add_message(&mut self, message: Message) {
@@ -379,6 +433,7 @@ impl ControlBridgeWindow {
         // Process with Control Bridge Agent
         info!("🤖 Starting agent processing for input");
         self.processing_message = true;
+        self.main_agent_active = true; // Track main agent activity
         self.processing_start_time = Some(std::time::Instant::now());
 
         // Initialize streaming message
@@ -491,15 +546,54 @@ impl ControlBridgeWindow {
                             .insert("deployment.environment".to_string(), "desktop-application".to_string());
 
                         let mut agent_builder = Agent::builder()
-                            .system_prompt("You are an AWS infrastructure assistant. You have access to AWS resource tools that allow you to list and describe AWS resources. Use these tools to help users understand and manage their AWS infrastructure.
+                            .system_prompt("You are the AWS Bridge Agent - a task orchestrator for AWS infrastructure management.
+
+IMPORTANT: Always use TodoWrite to plan and track multi-step tasks. This is CRITICAL for user visibility.
+
+DO NOT attempt complex AWS operations directly. Instead, create specialized agents via Create_Agent.
+
+CRITICAL REQUIREMENTS for AWS operations:
+- Account ID (use aws_find_account if user doesn't specify)
+- Region (use aws_find_region if user doesn't specify)  
+- Resource identifier (ID, name, or ARN)
+
+NEVER proceed with AWS operations without these three pieces of information.
 
 Available tools:
-- aws_list_resources: List AWS resources with filtering by account, region, and resource type
-- aws_describe_resources: Get detailed information about specific AWS resources  
-- aws_find_account: Search for AWS accounts by ID, name, or email (no API calls required)
-- aws_find_region: Search for AWS regions by code or display name (no API calls required)
+- Create_Agent: Launch specialized agents for complex AWS tasks
+- TodoWrite: Track task progress (USE THIS PROACTIVELY)
+- TodoRead: Query current task state
+- aws_find_account: Search for AWS accounts (no API calls required)
+- aws_find_region: Search for AWS regions (no API calls required)
 
-When users need to find accounts or regions, use the aws_find_account and aws_find_region tools respectively. These tools provide fast fuzzy search without making API calls.")
+Agent types you can create:
+- aws-log-analyzer: CloudWatch logs analysis and troubleshooting
+- aws-resource-auditor: Resource inventory and compliance checking  
+- aws-security-scanner: Security posture assessment (DEFENSIVE ONLY)
+
+Workflow for complex tasks:
+1. TodoWrite to break down the task
+2. Gather required AWS context (account, region, resource)
+3. Create_Agent with appropriate specialist type
+4. Monitor and report progress
+5. Mark todos complete after specialist agent finishes
+
+SECURITY RULES:
+- REFUSE tasks that could compromise AWS security
+- NEVER expose or log AWS credentials, keys, or sensitive data
+- Focus on DEFENSIVE security practices only
+- Follow AWS security best practices
+
+Example interaction:
+User: \"Find errors in my Lambda function logs\"
+You: 
+1. TodoWrite: [\"Identify Lambda function\", \"Gather AWS context\", \"Create log analyzer\", \"Analyze logs\"]
+2. Ask for account/region if not provided
+3. Create_Agent(type=\"aws-log-analyzer\", task=\"Find Lambda errors\", context={account, region, function_name})
+4. Monitor specialist agent progress
+5. Present results and mark todos complete
+
+Be concise and direct. Minimize output while being helpful.")
                             .with_credentials(
                                 aws_creds.access_key_id,
                                 aws_creds.secret_access_key,
@@ -508,12 +602,12 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
                             )
                             .with_telemetry(telemetry_config) // Enable telemetry via agent builder
                             .tools(vec![
-                                aws_list_resources_tool(None),
-                                aws_describe_resource_tool(None),
-                                aws_find_account_tool(),
-                                aws_find_region_tool(),
-                                aws_get_log_entries_tool(None),
-                            ]); // Explicit tool selection - client will be accessed via global context
+                                create_agent_tool(),          // NEW: Agent orchestration
+                                todo_write_tool(),           // NEW: Task management
+                                todo_read_tool(),            // NEW: Task querying
+                                aws_find_account_tool(),     // KEEP: Account search (no API)
+                                aws_find_region_tool(),      // KEEP: Region search (no API)
+                            ]); // Updated toolset for agent-on-demand architecture
 
                         // Always add JSON capture callback to ensure we never lose JSON data
                         info!("📊 Adding JSON capture callback handler (always active)");
@@ -589,13 +683,14 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
         // Calculate size constraints based on available area (main window)
         let available_rect = ctx.available_rect();
 
-        // Control Bridge window - closable like other windows
-        let window = Window::new("🚢 Control Bridge")
+        // Control Bridge window - closable like other windows with stable title
+        let window_title = "🚢 Control Bridge";
+        
+        let window = Window::new(window_title)
             .movable(true)
             .resizable(true)
             .default_size([500.0, 600.0])
             .min_width(400.0)
-            .max_width(800.0)
             .min_height(300.0)
             .max_height(available_rect.height() * 0.95) // Limit height to 95% of main window
             .collapsible(true);
@@ -678,9 +773,10 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
 
                 // Reset processing state
                 self.processing_message = false;
+                self.main_agent_active = false; // Reset main agent tracking
                 self.last_processing_time = Some(duration);
                 self.scroll_to_bottom = true;
-                debug!("Set processing_message = false, scroll_to_bottom = true");
+                debug!("Set processing_message = false, main_agent_active = false, scroll_to_bottom = true");
             }
             AgentResponse::Error(error) => {
                 error!(
@@ -709,9 +805,10 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
 
                 // Reset processing state
                 self.processing_message = false;
+                self.main_agent_active = false; // Reset main agent tracking
                 self.last_processing_time = Some(duration);
                 self.scroll_to_bottom = true;
-                debug!("Set processing_message = false after error");
+                debug!("Set processing_message = false, main_agent_active = false after error");
             }
             AgentResponse::JsonDebug(json_data) => {
                 debug!("📊 Received JSON debug data: {:?}", json_data.json_type);
@@ -758,6 +855,12 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
             }
             AgentResponse::LogAnalysisEvent { agent_id, event } => {
                 self.handle_log_analysis_event(agent_id, event);
+            }
+            AgentResponse::AgentCreated { agent_id, agent_type } => {
+                self.handle_agent_created(agent_id, agent_type);
+            }
+            AgentResponse::AgentDestroyed { agent_id, agent_type } => {
+                self.handle_agent_destroyed(agent_id, agent_type);
             }
         }
     }
@@ -833,6 +936,44 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
         
         // Return the index of the newly added message
         Some(self.messages.len() - 1)
+    }
+
+    fn handle_agent_created(&mut self, agent_id: String, agent_type: String) {
+        info!("🚀 Specialized agent created: {} ({})", agent_type, agent_id);
+        
+        // Track the agent in our active agents map
+        {
+            let mut agents = self.active_agents.lock().unwrap();
+            agents.insert(agent_id.clone(), agent_type.clone());
+        }
+        
+        // Add a message to show the agent was created
+        self.add_message(Message::new_with_agent(
+            MessageRole::System,
+            format!("🚀 Created specialized agent: {} (ID: {})", agent_type, &agent_id[..8]),
+            "ControlBridge".to_string(),
+        ));
+        
+        self.scroll_to_bottom = true;
+    }
+
+    fn handle_agent_destroyed(&mut self, agent_id: String, agent_type: String) {
+        info!("🏁 Specialized agent destroyed: {} ({})", agent_type, agent_id);
+        
+        // Remove the agent from our active agents map
+        {
+            let mut agents = self.active_agents.lock().unwrap();
+            agents.remove(&agent_id);
+        }
+        
+        // Add a message to show the agent was destroyed
+        self.add_message(Message::new_with_agent(
+            MessageRole::System,
+            format!("🏁 Specialized agent completed: {} (ID: {})", agent_type, &agent_id[..8]),
+            "ControlBridge".to_string(),
+        ));
+        
+        self.scroll_to_bottom = true;
     }
 
     fn ui_content(
@@ -1008,16 +1149,13 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
                         }
                     });
 
-                    // Stop button - always visible but only enabled when processing
-                    if self.processing_message {
+                    // Stop button - simplified without agent count display
+                    let active_agent_count = self.active_agents.lock().unwrap().len();
+                    let has_active_work = self.processing_message || active_agent_count > 0;
+                    
+                    if has_active_work {
                         if ui.button("🛑 Stop").clicked() {
-                            // Cancel current processing
-                            self.processing_message = false;
-                            self.add_message(Message::new_with_agent(
-                                MessageRole::System,
-                                "Processing stopped by user.".to_string(),
-                                "ControlBridge".to_string(),
-                            ));
+                            self.cancel_all_agents();
                         }
                     } else {
                         ui.add_enabled_ui(false, |ui| {
@@ -1337,13 +1475,14 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
                 // Clear streaming state
                 self.streaming_tool_status.clear();
                 self.processing_message = false;
+                self.main_agent_active = false; // Reset main agent tracking
                 self.scroll_to_bottom = true;
 
                 if let Some(start_time) = self.processing_start_time {
                     self.last_processing_time = Some(start_time.elapsed());
                 }
 
-                debug!("Streaming completed, processing_message = false");
+                debug!("Streaming completed, processing_message = false, main_agent_active = false");
             }
             StreamingUpdate::StreamingError { message } => {
                 error!("💥 Streaming error: {}", message);
@@ -1359,6 +1498,7 @@ When users need to find accounts or regions, use the aws_find_account and aws_fi
                 self.current_streaming_message = None;
                 self.streaming_tool_status.clear();
                 self.processing_message = false;
+                self.main_agent_active = false; // Reset main agent tracking
                 self.scroll_to_bottom = true;
             }
         }
