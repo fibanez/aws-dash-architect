@@ -8,6 +8,14 @@ license = "Apache-2.0"
 include = ["LICENSE-APACHE", "**/*.rs", "Cargo.toml"]
 rust-version = "1.81"
 
+[[bin]]
+name = "awsdash"
+path = "src/main.rs"
+
+[[bin]]
+name = "auto_login_example"
+path = "src/bin/auto_login_example.rs"
+
 [dependencies]
 # AI Agent framework
 stood = { git = "https://github.com/fibanez/stood.git" }
@@ -41,6 +49,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "std"] }
 simple-logging = "2.0.2"
 once_cell = "1.20"
+clap = { version = "4.5", features = ["derive", "env"] }
 
 # File and directory handling
 directories = "5.0"

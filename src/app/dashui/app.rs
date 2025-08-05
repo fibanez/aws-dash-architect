@@ -178,6 +178,8 @@ pub struct DashApp {
     #[serde(skip)]
     pub show_startup_popup: bool,
     #[serde(skip)]
+    should_auto_login: bool,
+    #[serde(skip)]
     previous_screen_size: Option<egui::Vec2>,
     #[serde(skip)]
     previous_pixels_per_point: Option<f32>,
@@ -260,6 +262,7 @@ impl Default for DashApp {
             aws_identity_center: None,
             startup_popup_timer: Some(Instant::now()),
             show_startup_popup: true,
+            should_auto_login: false,
             previous_screen_size: None,
             previous_pixels_per_point: None,
             currently_focused_window: None, // Default to no focus
@@ -297,6 +300,31 @@ impl DashApp {
         app.apply_theme(&cc.egui_ctx);
 
         app
+    }
+    
+    /// Set up automatic login parameters
+    pub fn set_auto_login(
+        &mut self,
+        identity_url: Option<String>,
+        region: Option<String>,
+        role: Option<String>,
+    ) {
+        // If we have login parameters, configure the login window
+        if let Some(url) = identity_url {
+            self.aws_login_window.identity_center_url = url;
+        }
+        if let Some(reg) = region {
+            self.aws_login_window.identity_center_region = reg;
+        }
+        if let Some(r) = role {
+            self.aws_login_window.default_role_name = r;
+        }
+        
+        // Mark that we should auto-login
+        self.should_auto_login = true;
+        
+        // Open the login window
+        self.aws_login_window.open = true;
     }
 
 
@@ -4708,6 +4736,21 @@ impl eframe::App for DashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Configure fonts with enhanced emoji support
         self.configure_fonts(ctx);
+        
+        // Handle auto-login if requested
+        if self.should_auto_login {
+            self.should_auto_login = false; // Only try once
+            
+            // Open the login window if not already open
+            if !self.aws_login_window.open {
+                self.aws_login_window.open = true;
+            }
+            
+            // Trigger the login process
+            self.aws_login_window.start_login();
+            
+            tracing::info!("Auto-login triggered with parameters from command line");
+        }
 
         // Update shake animation state
         if self.shake_windows {
