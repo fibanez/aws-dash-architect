@@ -255,6 +255,11 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::info;
 
+/// Default function for serde to return true
+fn default_true() -> bool {
+    true
+}
+
 /// Represents an AWS region for multi-region deployment management.
 ///
 /// AWS regions are used to organize resources geographically and can be
@@ -988,6 +993,22 @@ pub struct Project {
     /// CloudFormation template data (full template with all sections)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cfn_template: Option<CloudFormationTemplate>,
+
+    /// Compliance programs enabled for this project
+    #[serde(default)]
+    pub compliance_programs: Vec<crate::app::cfn_guard::ComplianceProgram>,
+
+    /// Whether Guard validation is enabled
+    #[serde(default = "default_true")]
+    pub guard_rules_enabled: bool,
+
+    /// Custom rule file paths
+    #[serde(default)]
+    pub custom_guard_rules: Vec<String>,
+
+    /// Environment-specific compliance overrides
+    #[serde(default)]
+    pub environment_compliance: HashMap<String, Vec<crate::app::cfn_guard::ComplianceProgram>>,
 }
 
 impl Project {
@@ -1058,6 +1079,10 @@ impl Project {
             environments: default_environments,
             default_region: Some("us-east-1".to_string()),
             cfn_template: Some(CloudFormationTemplate::default()),
+            compliance_programs: Vec::new(),
+            guard_rules_enabled: true,
+            custom_guard_rules: Vec::new(),
+            environment_compliance: HashMap::new(),
         }
     }
 
@@ -3041,6 +3066,43 @@ impl Project {
             Ok(())
         } else {
             Err(anyhow::anyhow!("Project has no local folder set"))
+        }
+    }
+
+    /// Save the project to a specific file path
+    pub fn save_to_path(&self, file_path: &PathBuf) -> anyhow::Result<()> {
+        let json_content = serde_json::to_string_pretty(self)?;
+        std::fs::write(file_path, json_content)?;
+        tracing::info!("Project saved to {}", file_path.display());
+        Ok(())
+    }
+
+    /// Load a project from a specific file path  
+    pub fn load_from_file(file_path: &PathBuf) -> anyhow::Result<Project> {
+        let content = std::fs::read_to_string(file_path)?;
+        let project: Project = serde_json::from_str(&content)?;
+        Ok(project)
+    }
+
+    /// Get compliance programs for a specific environment
+    /// 
+    /// Returns environment-specific compliance programs if configured,
+    /// otherwise returns the global compliance programs for the project.
+    ///
+    /// # Arguments
+    ///
+    /// * `environment_name` - Name of the environment to get compliance programs for
+    ///
+    /// # Returns
+    ///
+    /// Vector of compliance programs applicable to the environment
+    pub fn get_compliance_programs_for_environment(&self, environment_name: &str) -> Vec<crate::app::cfn_guard::ComplianceProgram> {
+        // Check if there are environment-specific overrides
+        if let Some(env_compliance) = self.environment_compliance.get(environment_name) {
+            env_compliance.clone()
+        } else {
+            // Fall back to global compliance programs
+            self.compliance_programs.clone()
         }
     }
 }
