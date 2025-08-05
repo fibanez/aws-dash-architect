@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::super::agents::TaskAgent;
 use super::super::get_global_bridge_sender;
 use super::super::performance::{PerformanceTimer, AgentCreationMetrics};
+use super::super::cancellation::AgentCancellationManager;
 use crate::app::dashui::control_bridge_window::{AgentResponse as BridgeAgentResponse, SubAgentEvent};
 use crate::time_phase;
 
@@ -25,8 +26,8 @@ use crate::time_phase;
 pub struct ActiveTask {
     pub task_id: String,
     pub task_description: String,
-    pub account_id: String,
-    pub region: String,
+    pub account_ids: Vec<String>,
+    pub regions: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -38,12 +39,15 @@ const MAX_CONCURRENT_TASKS: usize = 5;
 pub struct CreateTaskTool {
     /// Track active tasks for lifecycle management
     active_tasks: Arc<Mutex<HashMap<String, ActiveTask>>>,
+    /// Manage cancellation tokens for active agents
+    cancellation_manager: Arc<AgentCancellationManager>,
 }
 
 impl std::fmt::Debug for CreateTaskTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CreateTaskTool")
             .field("active_tasks", &"<HashMap<String, ActiveTask>>")
+            .field("cancellation_manager", &"<AgentCancellationManager>")
             .finish()
     }
 }
@@ -52,27 +56,61 @@ impl CreateTaskTool {
     pub fn new() -> Self {
         Self {
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
+            cancellation_manager: Arc::new(AgentCancellationManager::new()),
+        }
+    }
+
+    /// Get a reference to the cancellation manager for external use (e.g., from Bridge UI)
+    pub fn cancellation_manager(&self) -> Arc<AgentCancellationManager> {
+        self.cancellation_manager.clone()
+    }
+
+    /// Parse parameter that can be either a string or an array of strings
+    fn parse_string_or_array(value: &serde_json::Value) -> Result<Vec<String>, String> {
+        match value {
+            serde_json::Value::String(s) => Ok(vec![s.clone()]),
+            serde_json::Value::Array(arr) => {
+                let mut strings = Vec::new();
+                for item in arr {
+                    match item.as_str() {
+                        Some(s) => strings.push(s.to_string()),
+                        None => return Err("Array must contain only strings".to_string()),
+                    }
+                }
+                if strings.is_empty() {
+                    Err("Array cannot be empty".to_string())
+                } else {
+                    Ok(strings)
+                }
+            },
+            _ => Err("Value must be a string or array of strings".to_string()),
         }
     }
 
     /// Validate AWS context parameters
-    fn validate_parameters(&self, account_id: &str, region: &str, task_description: &str) -> Result<(), ToolError> {
-        if account_id.is_empty() || account_id == "current" {
-            return Err(ToolError::InvalidParameters {
-                message: "account_id must be a 12-digit AWS account number and is REQUIRED. Use aws_find_account tool first.".to_string(),
-            });
+    fn validate_parameters(&self, account_ids: &[String], regions: &[String], task_description: &str) -> Result<(), ToolError> {
+        // Validate account IDs
+        for account_id in account_ids {
+            if account_id.is_empty() || account_id == "current" {
+                return Err(ToolError::InvalidParameters {
+                    message: format!("account_id '{}' must be a 12-digit AWS account number and is REQUIRED. Use aws_find_account tool first.", account_id),
+                });
+            }
+
+            if account_id.len() != 12 || !account_id.chars().all(|c| c.is_ascii_digit()) {
+                return Err(ToolError::InvalidParameters {
+                    message: format!("account_id '{}' must be exactly 12 digits (e.g., '123456789012')", account_id),
+                });
+            }
         }
 
-        if account_id.len() != 12 || !account_id.chars().all(|c| c.is_ascii_digit()) {
-            return Err(ToolError::InvalidParameters {
-                message: "account_id must be exactly 12 digits (e.g., '123456789012')".to_string(),
-            });
-        }
-
-        if region.is_empty() {
-            return Err(ToolError::InvalidParameters {
-                message: "region is REQUIRED (e.g., 'us-east-1', 'eu-west-1'). Use aws_find_region tool first.".to_string(),
-            });
+        // Validate regions
+        for region in regions {
+            if region.is_empty() {
+                return Err(ToolError::InvalidParameters {
+                    message: "region is REQUIRED (e.g., 'us-east-1', 'eu-west-1'). Use aws_find_region tool first.".to_string(),
+                });
+            }
         }
 
         if task_description.is_empty() || task_description.len() < 10 {
@@ -109,46 +147,70 @@ impl CreateTaskTool {
         Ok(())
     }
 
-    /// Create and execute generic task agent
+    /// Create and execute generic task agent with cancellation support
     async fn create_and_execute_task(
         &self,
         task_id: &str,
         task_description: &str,
-        account_id: &str,
-        region: &str,
+        account_ids: &[String],
+        regions: &[String],
     ) -> Result<serde_json::Value, ToolError> {
         let mut inner_timer = PerformanceTimer::new(&format!("Generic Task Agent: {}", task_description));
-        info!("🎯 Creating and executing generic task agent");
+        info!("🎯 Creating and executing generic task agent with cancellation support");
 
+        // Create cancellation token for this task
+        let cancellation_token = self.cancellation_manager.create_token(task_id.to_string());
+        
         // Create task agent
         let mut agent = time_phase!(inner_timer, "Task Agent creation", {
             TaskAgent::create(
                 task_id.to_string(),
                 task_description.to_string(),
-                account_id.to_string(),
-                region.to_string(),
+                account_ids.to_vec(),
+                regions.to_vec(),
+                None, // Use global model configuration
             )
             .await
             .map_err(|e| {
                 error!("Failed to create task agent: {}", e);
+                // Clean up cancellation token on creation failure
+                self.cancellation_manager.remove_token(task_id);
                 ToolError::ExecutionFailed {
                     message: format!("Failed to create task agent: {}", e),
                 }
             })?
         });
 
-        // Execute the task
-        let result = time_phase!(inner_timer, "Task Agent execution", {
-            TaskAgent::execute_task(&mut agent, task_description)
-                .await
-                .map_err(|e| {
-                    error!("Task agent execution failed: {}", e);
-                    ToolError::ExecutionFailed {
-                        message: format!("Task agent execution failed: {}", e),
+        // Execute the task with cancellation support
+        let result = time_phase!(inner_timer, "Task Agent execution with cancellation", {
+            // Use tokio::select! to race between task execution and cancellation
+            tokio::select! {
+                task_result = TaskAgent::execute_task(&mut agent, task_description) => {
+                    match task_result {
+                        Ok(result) => {
+                            info!("✅ Task agent completed successfully");
+                            Ok(result)
+                        },
+                        Err(e) => {
+                            error!("Task agent execution failed: {}", e);
+                            Err(ToolError::ExecutionFailed {
+                                message: format!("Task agent execution failed: {}", e),
+                            })
+                        }
                     }
-                })?
-        });
+                },
+                _ = cancellation_token.cancelled() => {
+                    info!("🛑 Task agent execution cancelled by user: {}", task_id);
+                    Err(ToolError::ExecutionFailed {
+                        message: "Task execution was cancelled by user".to_string(),
+                    })
+                }
+            }
+        })?;
 
+        // Clean up cancellation token on successful completion
+        self.cancellation_manager.remove_token(task_id);
+        
         inner_timer.complete();
         info!("✅ Generic task agent completed successfully");
         Ok(result)
@@ -175,16 +237,41 @@ impl Tool for CreateTaskTool {
                     "type": "string",
                     "description": "Clear, detailed description of the AWS task to perform (e.g., 'Analyze Lambda function errors in production', 'Audit S3 bucket security configurations', 'Review CloudWatch alarms for EC2 instances')"
                 },
-                "account_id": {
-                    "type": "string",
-                    "description": "AWS account ID (12-digit number, e.g., '123456789012'). REQUIRED for all AWS operations."
+                "account_ids": {
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Single AWS account ID (12-digit number, e.g., '123456789012')"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[0-9]{12}$"
+                            },
+                            "description": "Array of AWS account IDs for multi-account operations"
+                        }
+                    ],
+                    "description": "AWS account ID(s). Can be a single account ID string or an array of account IDs. REQUIRED for all AWS operations."
                 },
-                "region": {
-                    "type": "string", 
-                    "description": "AWS region (e.g., 'us-east-1', 'eu-west-1'). REQUIRED for all AWS operations."
+                "regions": {
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Single AWS region (e.g., 'us-east-1', 'eu-west-1')"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of AWS regions for multi-region operations"
+                        }
+                    ],
+                    "description": "AWS region(s). Can be a single region string or an array of regions. REQUIRED for all AWS operations."
                 }
             },
-            "required": ["task_description", "account_id", "region"]
+            "required": ["task_description", "account_ids", "regions"]
         })
     }
 
@@ -209,7 +296,7 @@ impl Tool for CreateTaskTool {
         });
 
         // Extract and validate parameters
-        let (task_description, account_id, region) = time_phase!(perf_timer, "Parameter parsing & validation", {
+        let (task_description, account_ids, regions) = time_phase!(perf_timer, "Parameter parsing & validation", {
             let task_description = params
                 .get("task_description")
                 .and_then(|v| v.as_str())
@@ -217,27 +304,31 @@ impl Tool for CreateTaskTool {
                     message: "task_description is required".to_string(),
                 })?;
 
-            let account_id = params
-                .get("account_id")
-                .and_then(|v| v.as_str())
+            let account_ids = params
+                .get("account_ids")
                 .ok_or_else(|| ToolError::InvalidParameters {
-                    message: "account_id is required".to_string(),
-                })?;
+                    message: "account_ids is required".to_string(),
+                })
+                .and_then(|v| Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
+                    message: format!("Invalid account_ids parameter: {}", e),
+                }))?;
 
-            let region = params
-                .get("region")
-                .and_then(|v| v.as_str())
+            let regions = params
+                .get("regions")
                 .ok_or_else(|| ToolError::InvalidParameters {
-                    message: "region is required".to_string(),
-                })?;
+                    message: "regions is required".to_string(),
+                })
+                .and_then(|v| Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
+                    message: format!("Invalid regions parameter: {}", e),
+                }))?;
 
             // Validate parameters
-            self.validate_parameters(account_id, region, task_description)?;
+            self.validate_parameters(&account_ids, &regions, task_description)?;
 
             // Check concurrency limits
             self.check_concurrency_limit()?;
 
-            (task_description, account_id, region)
+            (task_description, account_ids, regions)
         });
 
         // Setup task tracking and notifications
@@ -245,8 +336,8 @@ impl Tool for CreateTaskTool {
             let task_id = Uuid::new_v4().to_string();
 
             info!(
-                "🎯 Creating task agent - Description: '{}', Account: {}, Region: {}",
-                task_description, account_id, region
+                "🎯 Creating task agent - Description: '{}', Accounts: {:?}, Regions: {:?}",
+                task_description, account_ids, regions
             );
 
             // Store active task info
@@ -263,8 +354,8 @@ impl Tool for CreateTaskTool {
                     ActiveTask {
                         task_id: task_id.clone(),
                         task_description: task_description.to_string(),
-                        account_id: account_id.to_string(),
-                        region: region.to_string(),
+                        account_ids: account_ids.clone(),
+                        regions: regions.clone(),
                         created_at: Utc::now(),
                     },
                 );
@@ -295,7 +386,7 @@ impl Tool for CreateTaskTool {
 
         // Create and execute task agent
         let task_result = time_phase!(perf_timer, "Task creation & execution", {
-            self.create_and_execute_task(&task_id, task_description, account_id, region).await
+            self.create_and_execute_task(&task_id, task_description, &account_ids, &regions).await
         });
 
         // Complete performance timing and determine success before cleanup
@@ -337,6 +428,9 @@ impl Tool for CreateTaskTool {
                 active_tasks.remove(&task_id);
             }
 
+            // Cleanup cancellation token (in case of error or completion)
+            self.cancellation_manager.remove_token(&task_id);
+
             // Notify Bridge UI that task was destroyed
             if let Some(bridge_sender) = get_global_bridge_sender() {
                 let _ = bridge_sender.send(BridgeAgentResponse::AgentDestroyed {
@@ -376,8 +470,8 @@ impl Tool for CreateTaskTool {
                     "success": true,
                     "task_id": task_id,
                     "task_description": task_description,
-                    "account_id": account_id,
-                    "region": region,
+                    "account_ids": account_ids,
+                    "regions": regions,
                     "result": result,
                     "created_at": Utc::now().to_rfc3339(),
                     "performance": {
@@ -409,19 +503,33 @@ mod tests {
         let tool = CreateTaskTool::new();
 
         // Valid parameters
-        assert!(tool.validate_parameters("123456789012", "us-east-1", "Analyze Lambda function errors in production environment").is_ok());
+        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["us-east-1".to_string()], "Analyze Lambda function errors in production environment").is_ok());
 
         // Invalid account_id - too short
-        assert!(tool.validate_parameters("12345", "us-east-1", "Valid task description").is_err());
+        assert!(tool.validate_parameters(&vec!["12345".to_string()], &vec!["us-east-1".to_string()], "Valid task description").is_err());
 
         // Invalid account_id - contains letters
-        assert!(tool.validate_parameters("12345678901a", "us-east-1", "Valid task description").is_err());
+        assert!(tool.validate_parameters(&vec!["12345678901a".to_string()], &vec!["us-east-1".to_string()], "Valid task description").is_err());
 
         // Invalid region - empty
-        assert!(tool.validate_parameters("123456789012", "", "Valid task description").is_err());
+        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["".to_string()], "Valid task description").is_err());
 
         // Invalid task_description - too short
-        assert!(tool.validate_parameters("123456789012", "us-east-1", "Too short").is_err());
+        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["us-east-1".to_string()], "Too short").is_err());
+
+        // Valid multiple accounts and regions
+        assert!(tool.validate_parameters(
+            &vec!["123456789012".to_string(), "123456789013".to_string()], 
+            &vec!["us-east-1".to_string(), "eu-west-1".to_string()], 
+            "Multi-region Lambda performance analysis"
+        ).is_ok());
+
+        // Invalid - one bad account in array
+        assert!(tool.validate_parameters(
+            &vec!["123456789012".to_string(), "invalid".to_string()], 
+            &vec!["us-east-1".to_string()], 
+            "Valid task description"
+        ).is_err());
     }
 
     #[tokio::test]

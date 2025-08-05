@@ -46,6 +46,28 @@ impl AwsListResourcesTool {
         self.aws_client = aws_client;
     }
 
+    /// Parse parameter that can be either a string or an array of strings
+    fn parse_string_or_array(value: &serde_json::Value) -> Result<Vec<String>, String> {
+        match value {
+            serde_json::Value::String(s) => Ok(vec![s.clone()]),
+            serde_json::Value::Array(arr) => {
+                let mut strings = Vec::new();
+                for item in arr {
+                    match item.as_str() {
+                        Some(s) => strings.push(s.to_string()),
+                        None => return Err("Array must contain only strings".to_string()),
+                    }
+                }
+                if strings.is_empty() {
+                    Err("Array cannot be empty".to_string())
+                } else {
+                    Ok(strings)
+                }
+            },
+            _ => Err("Value must be a string or array of strings".to_string()),
+        }
+    }
+
     /// Map friendly resource names to CloudFormation types
     /// Supports all 80+ AWS resource types from the Explorer system
     fn map_resource_type(friendly_name: &str) -> Option<String> {
@@ -286,14 +308,39 @@ Examples:
                     "examples": ["instances", "vpcs", "buckets", "functions", "AWS::EC2::Instance"]
                 },
                 "region": {
-                    "type": "string",
-                    "description": "AWS region (e.g., 'us-east-1', 'eu-west-1')",
-                    "examples": ["us-east-1", "us-west-2", "eu-west-1"]
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Single AWS region (e.g., 'us-east-1', 'eu-west-1')"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of AWS regions for multi-region queries"
+                        }
+                    ],
+                    "description": "AWS region(s). Can be a single region string or array of regions.",
+                    "examples": ["us-east-1", ["us-east-1", "eu-west-1"], "us-west-2"]
                 },
                 "account_id": {
-                    "type": "string",
-                    "description": "AWS account ID (optional, uses all accounts if not specified)",
-                    "pattern": "^[0-9]{12}$"
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Single AWS account ID",
+                            "pattern": "^[0-9]{12}$"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[0-9]{12}$"
+                            },
+                            "description": "Array of AWS account IDs for multi-account queries"
+                        }
+                    ],
+                    "description": "AWS account ID(s). Can be a single account ID string or array of account IDs. Optional - uses all accounts if not specified."
                 },
                 "force_refresh": {
                     "type": "boolean",
@@ -336,13 +383,21 @@ Examples:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         
-        let region_param = params.get("region")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let regions = params.get("region")
+            .map(|v| Self::parse_string_or_array(v))
+            .transpose()
+            .map_err(|e| ToolError::InvalidParameters {
+                message: format!("Invalid region parameter: {}", e),
+            })?
+            .unwrap_or_default();
         
-        let account_id_param = params.get("account_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let account_ids = params.get("account_id")
+            .map(|v| Self::parse_string_or_array(v))
+            .transpose()
+            .map_err(|e| ToolError::InvalidParameters {
+                message: format!("Invalid account_id parameter: {}", e),
+            })?
+            .unwrap_or_default();
         
         let force_refresh = params.get("force_refresh")
             .and_then(|v| v.as_bool())
@@ -370,8 +425,8 @@ Examples:
         // Create query scope
         let mut scope = QueryScope::new();
         
-        // Add account selection if specified
-        if let Some(account_id) = account_id_param {
+        // Add account selections if specified
+        for account_id in account_ids {
             scope.accounts.push(AccountSelection {
                 account_id: account_id.clone(),
                 display_name: account_id.clone(),
@@ -379,8 +434,8 @@ Examples:
             });
         }
         
-        // Add region selection if specified  
-        if let Some(region) = region_param {
+        // Add region selections if specified  
+        for region in regions {
             scope.regions.push(RegionSelection {
                 region_code: region.clone(),
                 display_name: region.clone(),

@@ -11,6 +11,8 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use stood::tools::Tool;
 use tracing::{error, info, warn};
 
+use super::cancellation::AgentCancellationManager;
+
 // Import TODO storage types
 use super::tools::todo_write::TodoItem;
 
@@ -28,6 +30,12 @@ static GLOBAL_BRIDGE_SENDER: RwLock<Option<mpsc::Sender<AgentResponse>>> = RwLoc
 
 /// Global shared TODO storage for all agents
 static GLOBAL_TODO_STORAGE: RwLock<Option<Arc<Mutex<HashMap<String, Vec<TodoItem>>>>>> = RwLock::new(None);
+
+/// Global agent cancellation manager for stopping running agents
+static GLOBAL_CANCELLATION_MANAGER: RwLock<Option<Arc<AgentCancellationManager>>> = RwLock::new(None);
+
+/// Global model configuration for agent creation
+static GLOBAL_MODEL_CONFIG: RwLock<Option<String>> = RwLock::new(None);
 
 /// Set the global AWS client for all tools to use
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
@@ -138,7 +146,14 @@ pub fn todo_read_tool() -> Box<dyn Tool> {
 
 /// Creates Create_Task tool for flexible task-based agent orchestration
 pub fn create_task_tool() -> Box<dyn Tool> {
-    Box::new(CreateTaskTool::new())
+    let tool = CreateTaskTool::new();
+    
+    // Set the global cancellation manager if not already set
+    if get_global_cancellation_manager().is_none() {
+        set_global_cancellation_manager(tool.cancellation_manager());
+    }
+    
+    Box::new(tool)
 }
 
 /// Set global AWS credentials for standalone agents
@@ -271,6 +286,88 @@ pub fn get_global_todo_storage() -> Option<Arc<Mutex<HashMap<String, Vec<TodoIte
         Err(e) => {
             error!("❌ Failed to read global TODO storage: {}", e);
             None
+        }
+    }
+}
+
+/// Set global agent cancellation manager for stopping running agents
+pub fn set_global_cancellation_manager(manager: Arc<AgentCancellationManager>) {
+    match GLOBAL_CANCELLATION_MANAGER.write() {
+        Ok(mut guard) => {
+            info!("🛑 Global agent cancellation manager updated");
+            *guard = Some(manager);
+        }
+        Err(e) => {
+            error!("❌ Failed to set global cancellation manager: {}", e);
+        }
+    }
+}
+
+/// Get global agent cancellation manager for stopping running agents
+pub fn get_global_cancellation_manager() -> Option<Arc<AgentCancellationManager>> {
+    match GLOBAL_CANCELLATION_MANAGER.read() {
+        Ok(guard) => {
+            let manager = guard.clone();
+            info!("🛑 Global cancellation manager access: {}", if manager.is_some() { "✅ Available" } else { "❌ Not set" });
+            manager
+        }
+        Err(e) => {
+            error!("❌ Failed to read global cancellation manager: {}", e);
+            None
+        }
+    }
+}
+
+/// Clear global agent cancellation manager
+pub fn clear_global_cancellation_manager() {
+    match GLOBAL_CANCELLATION_MANAGER.write() {
+        Ok(mut guard) => {
+            info!("🛑 Global cancellation manager cleared");
+            *guard = None;
+        }
+        Err(e) => {
+            error!("❌ Failed to clear global cancellation manager: {}", e);
+        }
+    }
+}
+
+/// Set global model configuration for agent creation
+pub fn set_global_model(model_id: String) {
+    match GLOBAL_MODEL_CONFIG.write() {
+        Ok(mut guard) => {
+            info!("🤖 Global model updated to: {}", model_id);
+            *guard = Some(model_id);
+        }
+        Err(e) => {
+            error!("❌ Failed to set global model: {}", e);
+        }
+    }
+}
+
+/// Get global model configuration for agent creation
+pub fn get_global_model() -> Option<String> {
+    match GLOBAL_MODEL_CONFIG.read() {
+        Ok(guard) => {
+            let model = guard.clone();
+            info!("🤖 Global model access: {}", if model.is_some() { "✅ Available" } else { "❌ Not set" });
+            model
+        }
+        Err(e) => {
+            error!("❌ Failed to read global model: {}", e);
+            None
+        }
+    }
+}
+
+/// Clear global model configuration
+pub fn clear_global_model() {
+    match GLOBAL_MODEL_CONFIG.write() {
+        Ok(mut guard) => {
+            info!("🤖 Global model cleared");
+            *guard = None;
+        }
+        Err(e) => {
+            error!("❌ Failed to clear global model: {}", e);
         }
     }
 }

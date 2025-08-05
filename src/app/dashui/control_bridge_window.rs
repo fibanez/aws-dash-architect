@@ -8,7 +8,9 @@ use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::bridge::{
     aws_find_account_tool, aws_find_region_tool,
     create_task_tool, todo_write_tool, todo_read_tool,
-    set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender
+    set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender,
+    get_global_cancellation_manager, set_global_model, get_global_model,
+    ModelConfig, ModelSettings
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
 use async_trait::async_trait;
@@ -83,6 +85,7 @@ pub enum AgentResponse {
     SubAgentEvent { agent_id: String, agent_type: String, event: SubAgentEvent },
     AgentCreated { agent_id: String, agent_type: String },
     AgentDestroyed { agent_id: String, agent_type: String },
+    ModelChanged { model_id: String },
 }
 
 /// Real-time streaming updates from agent execution
@@ -280,6 +283,11 @@ pub struct ControlBridgeWindow {
     main_agent_active: bool, // Track if main Bridge Agent is processing
     // Parent-child node relationships for sub-agent visibility
     active_agent_nodes: HashMap<String, String>, // agent_id -> parent_message_id mapping
+    
+    // Model selection and configuration
+    available_models: Vec<ModelConfig>, // Available AI models
+    model_settings: ModelSettings, // Model preferences and selection
+    model_changed: bool, // Flag to trigger agent recreation when model changes
 }
 
 impl Default for ControlBridgeWindow {
@@ -361,8 +369,16 @@ impl ControlBridgeWindow {
             active_agents: Arc::new(Mutex::new(HashMap::new())),
             main_agent_active: false,
             active_agent_nodes: HashMap::new(),
+            
+            // Initialize model configuration
+            available_models: ModelConfig::default_models(),
+            model_settings: ModelSettings::default(),
+            model_changed: false,
         };
 
+        // Set initial global model configuration
+        set_global_model(app.model_settings.selected_model.clone());
+        
         // Add welcome message
         app.add_message(Message::new_with_agent(
             MessageRole::System,
@@ -375,7 +391,7 @@ impl ControlBridgeWindow {
 
     /// Cancel all active agents (main Bridge Agent and specialized agents)
     fn cancel_all_agents(&mut self) {
-        info!("🛑 Cancelling all active agents");
+        info!("🛑 Cancelling all active agents with proper cancellation tokens");
         
         // Cancel main Bridge Agent
         if self.main_agent_active {
@@ -391,25 +407,36 @@ impl ControlBridgeWindow {
             ));
         }
         
-        // Cancel all specialized agents
-        let active_agents = {
+        // Actually cancel all running agents using the global cancellation manager
+        let cancelled_count = if let Some(cancellation_manager) = get_global_cancellation_manager() {
+            let count = cancellation_manager.cancel_all();
+            if count > 0 {
+                info!("🛑 Cancelled {} running agents via cancellation tokens", count);
+                count
+            } else {
+                info!("🛑 No running agents to cancel");
+                0
+            }
+        } else {
+            warn!("❌ No global cancellation manager available - cannot cancel running agents");
+            0
+        };
+        
+        // Update UI tracking for active agents
+        let ui_active_agents = {
             let mut agents = self.active_agents.lock().unwrap();
             let count = agents.len();
             let agent_types: Vec<String> = agents.values().cloned().collect();
-            agents.clear(); // Clear all active agents
+            agents.clear(); // Clear all active agents from UI tracking
             (count, agent_types)
         };
         
-        if active_agents.0 > 0 {
-            info!("🛑 Cancelled {} specialized agents: {:?}", active_agents.0, active_agents.1);
-            
-            // Add cancellation message for specialized agents
+        // Show appropriate cancellation messages
+        if cancelled_count > 0 || ui_active_agents.0 > 0 {
+            let total_cancelled = std::cmp::max(cancelled_count, ui_active_agents.0);
             self.add_message(Message::new_with_agent(
                 MessageRole::System,
-                format!("🛑 Stopped {} specialized agents: {}", 
-                    active_agents.0, 
-                    active_agents.1.join(", ")
-                ),
+                format!("🛑 Cancelled {} active agents", total_cancelled),
                 "ControlBridge".to_string(),
             ));
         }
@@ -496,6 +523,8 @@ impl ControlBridgeWindow {
         let sender = self.response_sender.clone();
         let json_debug_enabled = self.show_json_debug;
         let aws_identity_clone = aws_identity.clone();
+        let model_changed = self.model_changed;
+        let selected_model = self.model_settings.selected_model.clone();
 
         std::thread::spawn(move || {
             // Get AWS Identity Center credentials and region OUTSIDE the tokio runtime
@@ -541,8 +570,8 @@ impl ControlBridgeWindow {
                 Ok(runtime) => runtime.block_on(async {
                     let mut agent_guard = agent.lock().unwrap();
 
-                    // Create agent on first use if not already created
-                    if agent_guard.is_none() {
+                    // Create agent on first use or recreate if model changed
+                    if agent_guard.is_none() || model_changed {
                         info!(
                             "🚢 Creating Control Bridge Agent with AWS Identity Center credentials"
                         );
@@ -588,7 +617,10 @@ impl ControlBridgeWindow {
                             .service_attributes
                             .insert("deployment.environment".to_string(), "desktop-application".to_string());
 
+                        // TODO: Add model configuration once stood library model API is clarified
+                        // let model = ModelConfig::id_to_bedrock_model(&selected_model);
                         let mut agent_builder = Agent::builder()
+                            // .model(model)  // TODO: Re-enable when model API is available
                             .system_prompt("You are the AWS Bridge Agent - a task orchestrator for AWS infrastructure management.
 
 IMPORTANT: Always use TodoWrite to plan and track multi-step tasks. This is CRITICAL for user visibility.
@@ -781,8 +813,11 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
 
                         match agent_builder.build().await {
                             Ok(new_agent) => {
+                                let action = if model_changed { "recreated due to model change" } else { "created" };
                                 info!(
-                                    "✅ Control Bridge Agent created successfully with telemetry{}",
+                                    "✅ Control Bridge Agent {} successfully (model: {}) with telemetry{}",
+                                    action,
+                                    selected_model,
                                     if json_debug_enabled {
                                         " and JSON capture"
                                     } else {
@@ -790,6 +825,15 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                                     }
                                 );
                                 *agent_guard = Some(new_agent);
+                                
+                                // Notify UI thread that model was successfully changed
+                                if model_changed {
+                                    if let Err(e) = sender.send(AgentResponse::ModelChanged { 
+                                        model_id: selected_model.clone() 
+                                    }) {
+                                        error!("Failed to send model change notification to UI: {}", e);
+                                    }
+                                }
                             }
                             Err(e) => {
                                 error!("❌ Failed to create Control Bridge Agent: {}", e);
@@ -1021,6 +1065,19 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
             }
             AgentResponse::AgentDestroyed { agent_id, agent_type } => {
                 self.handle_agent_destroyed(agent_id, agent_type);
+            }
+            AgentResponse::ModelChanged { model_id } => {
+                info!("✅ Model successfully changed to: {}", model_id);
+                self.model_changed = false; // Reset the flag
+                
+                // Add a system message to indicate successful model change
+                self.add_message(Message::new_with_agent(
+                    MessageRole::System,
+                    format!("🤖 Agent successfully updated to use {}", 
+                        ModelConfig::get_display_name(&self.available_models, &model_id)),
+                    "ControlBridge".to_string(),
+                ));
+                self.scroll_to_bottom = true;
             }
         }
     }
@@ -1303,6 +1360,71 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
 
             ui.add_space(10.0); // Empty space instead of separator
 
+            // Model selection dropdown
+            let mut model_selection_changed = None;
+            ui.horizontal(|ui| {
+                ui.label("🤖 Model:");
+                
+                let current_model = self.model_settings.get_selected_model(&self.available_models);
+                let current_display_name = current_model
+                    .map(|m| m.display_name.clone())
+                    .unwrap_or_else(|| "Unknown Model".to_string());
+                
+                let current_selected_model = self.model_settings.selected_model.clone();
+                let available_models = self.available_models.clone();
+                
+                egui::ComboBox::from_label("")
+                    .selected_text(&current_display_name)
+                    .show_ui(ui, |ui| {
+                        for model in &available_models {
+                            let is_selected = current_selected_model == model.model_id;
+                            if ui.selectable_value(
+                                &mut self.model_settings.selected_model, 
+                                model.model_id.clone(), 
+                                &model.display_name
+                            ).clicked() {
+                                if !is_selected {
+                                    model_selection_changed = Some((model.display_name.clone(), model.model_id.clone()));
+                                }
+                            }
+                        }
+                    });
+                
+                // Show loading indicator if model is being changed
+                if self.model_changed {
+                    ui.spinner();
+                    ui.label("Updating model...");
+                }
+                
+                // Add a tooltip with model description
+                if let Some(current_model) = current_model {
+                    ui.label("ℹ").on_hover_text(&current_model.description);
+                }
+            });
+            
+            // Handle model change outside the UI closure to avoid borrowing conflicts
+            if let Some((display_name, model_id)) = model_selection_changed {
+                self.model_changed = true;
+                info!("🔄 Model changed to: {} ({})", display_name, model_id);
+                
+                // Update global model configuration
+                set_global_model(model_id.clone());
+                
+                // Cancel any active processing since we need to recreate agents
+                if self.processing_message || self.main_agent_active {
+                    self.cancel_all_agents();
+                    
+                    // Add informational message about model change
+                    self.add_message(Message::new_with_agent(
+                        MessageRole::System,
+                        format!("🤖 Model changed to {}. Agent will be recreated on next interaction.", display_name),
+                        "ControlBridge".to_string(),
+                    ));
+                }
+            }
+
+            ui.add_space(5.0); // Small space after model selection
+
             // Input area - vertical layout with input box on top, buttons below
             ui.vertical(|ui| {
                 // Input text box
@@ -1327,9 +1449,12 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                         }
                     });
 
-                    // Stop button - simplified without agent count display
-                    let active_agent_count = self.active_agents.lock().unwrap().len();
-                    let has_active_work = self.processing_message || active_agent_count > 0;
+                    // Stop button - check both UI tracking and actual running agents
+                    let ui_active_count = self.active_agents.lock().unwrap().len();
+                    let actual_active_count = get_global_cancellation_manager()
+                        .map(|manager| manager.active_count())
+                        .unwrap_or(0);
+                    let has_active_work = self.processing_message || ui_active_count > 0 || actual_active_count > 0;
                     
                     if has_active_work {
                         if ui.button("🛑 Stop").clicked() {
