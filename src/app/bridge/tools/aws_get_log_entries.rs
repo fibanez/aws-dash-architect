@@ -3,24 +3,20 @@
 //! This is a high-level tool that creates a standalone agent with CloudWatch-specific tools
 //! to analyze logs based on natural language queries and resource IDs.
 
-use crate::app::dashui::control_bridge_window::{
-    AgentResponse as BridgeAgentResponse, LogAnalysisEvent,
-};
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json;
-use std::sync::{mpsc, Arc};
-use stood::agent::callbacks::{CallbackError, CallbackEvent, CallbackHandler, ToolEvent};
+use std::sync::Arc;
 use stood::agent::Agent;
 use stood::telemetry::{TelemetryConfig, LogLevel};
 use stood::tools::{Tool, ToolError, ToolResult};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::super::{
     aws_describe_log_groups_tool, aws_find_account_tool, aws_find_region_tool,
     aws_get_log_events_tool, get_global_aws_client, get_global_aws_credentials,
-    get_global_bridge_sender,
+    get_global_bridge_sender, SubAgentCallbackHandler,
 };
 
 /// AWS Get Log Entries Tool - Creates standalone agents for log analysis
@@ -124,6 +120,7 @@ Be proactive in suggesting related log groups and time ranges if the initial sea
         let mut agent_builder = Agent::builder()
             .system_prompt(system_prompt)
             .with_telemetry(telemetry_config)
+            .with_think_tool("Think carefully about what we need to do next")
             .tools(vec![
                 aws_describe_log_groups_tool(Some(aws_client.clone())),
                 aws_get_log_events_tool(Some(aws_client.clone())),
@@ -133,14 +130,20 @@ Be proactive in suggesting related log groups and time ranges if the initial sea
 
         // Add callback handler for event bubbling to Bridge
         if let Some(bridge_sender) = get_global_bridge_sender() {
-            info!("📡 Log analysis agent using Bridge event bubbling");
-            agent_builder = agent_builder.with_callback_handler(
-                LogEntriesCallbackHandler::with_sender(session_id.clone(), bridge_sender),
+            info!("📡 Log analysis agent using Bridge event bubbling with user-friendly language");
+            let callback_handler = SubAgentCallbackHandler::with_sender(
+                session_id.clone(),
+                "aws-log-analyzer".to_string(), 
+                bridge_sender
             );
+            agent_builder = agent_builder.with_callback_handler(callback_handler);
         } else {
             info!("📊 Log analysis agent without Bridge event bubbling (standalone mode)");
-            agent_builder = agent_builder
-                .with_callback_handler(LogEntriesCallbackHandler::new(session_id.clone()));
+            let callback_handler = SubAgentCallbackHandler::new(
+                session_id.clone(), 
+                "aws-log-analyzer".to_string()
+            );
+            agent_builder = agent_builder.with_callback_handler(callback_handler);
         }
 
         // Add AWS credentials if available globally (same as main agent)
@@ -358,176 +361,4 @@ impl Tool for AwsGetLogEntriesTool {
     }
 }
 
-/// Helper function to convert LogAnalysisEvent to Bridge AgentResponse
-fn create_bridge_response(agent_id: String, event: LogAnalysisEvent) -> BridgeAgentResponse {
-    BridgeAgentResponse::LogAnalysisEvent { agent_id, event }
-}
-
-/// Callback handler for log analysis events
-///
-/// This handler captures raw callback events from the log analysis agent and forwards
-/// them to the Bridge UI as LogAnalysisEvent messages for display in the message tree.
-#[derive(Debug)]
-pub struct LogEntriesCallbackHandler {
-    agent_id: String,
-    sender: Option<mpsc::Sender<BridgeAgentResponse>>,
-}
-
-impl LogEntriesCallbackHandler {
-    pub fn new(agent_id: String) -> Self {
-        Self {
-            agent_id,
-            sender: None,
-        }
-    }
-
-    pub fn with_sender(agent_id: String, sender: mpsc::Sender<BridgeAgentResponse>) -> Self {
-        Self {
-            agent_id,
-            sender: Some(sender),
-        }
-    }
-
-    fn send_event(&self, event: LogAnalysisEvent) {
-        if let Some(ref sender) = self.sender {
-            let response = create_bridge_response(self.agent_id.clone(), event);
-            if let Err(e) = sender.send(response) {
-                warn!("Failed to send log analysis event to Bridge: {}", e);
-            }
-        } else {
-            debug!("📊 Log analysis event (no sender): {:?}", event);
-        }
-    }
-}
-
-#[async_trait]
-impl CallbackHandler for LogEntriesCallbackHandler {
-    /// Handle streaming content events (not used for log analysis event bubbling)
-    async fn on_content(&self, _content: &str, _is_complete: bool) -> Result<(), CallbackError> {
-        // Log analysis event bubbling doesn't need content streaming
-        Ok(())
-    }
-
-    /// Handle tool execution events
-    async fn on_tool(&self, event: ToolEvent) -> Result<(), CallbackError> {
-        let log_event = match event {
-            ToolEvent::Started { name, .. } => {
-                debug!("🔧 Log analysis tool started: {}", name);
-                LogAnalysisEvent::ToolStart {
-                    timestamp: Utc::now(),
-                    tool_name: name,
-                }
-            }
-            ToolEvent::Completed { name, .. } => {
-                debug!("✅ Log analysis tool completed: {}", name);
-                LogAnalysisEvent::ToolComplete {
-                    timestamp: Utc::now(),
-                    tool_name: name,
-                    success: true,
-                }
-            }
-            ToolEvent::Failed { name, error, .. } => {
-                debug!("❌ Log analysis tool failed: {} - {}", name, error);
-                LogAnalysisEvent::ToolComplete {
-                    timestamp: Utc::now(),
-                    tool_name: name,
-                    success: false,
-                }
-            }
-        };
-
-        self.send_event(log_event);
-        Ok(())
-    }
-
-    /// Handle execution completion events
-    async fn on_complete(
-        &self,
-        _result: &stood::agent::result::AgentResult,
-    ) -> Result<(), CallbackError> {
-        let log_event = LogAnalysisEvent::EventLoopComplete {
-            timestamp: Utc::now(),
-        };
-
-        self.send_event(log_event);
-        Ok(())
-    }
-
-    /// Handle error events
-    async fn on_error(&self, error: &stood::StoodError) -> Result<(), CallbackError> {
-        let log_event = LogAnalysisEvent::Error {
-            timestamp: Utc::now(),
-            error: error.to_string(),
-        };
-
-        self.send_event(log_event);
-        Ok(())
-    }
-
-    /// Handle all callback events including ModelStart
-    async fn handle_event(&self, event: CallbackEvent) -> Result<(), CallbackError> {
-        let log_event = match event {
-            CallbackEvent::ModelStart { messages, .. } => {
-                debug!(
-                    "🚀 Log analysis model started with {} messages",
-                    messages.len()
-                );
-                LogAnalysisEvent::ModelStart {
-                    timestamp: Utc::now(),
-                    messages_count: messages.len(),
-                }
-            }
-            // For other events, delegate to the specific handlers
-            _ => {
-                // Handle other events through the default trait implementations
-                match event {
-                    CallbackEvent::ToolStart { tool_name, .. } => {
-                        return self
-                            .on_tool(ToolEvent::Started {
-                                name: tool_name,
-                                input: serde_json::Value::Null,
-                            })
-                            .await;
-                    }
-                    CallbackEvent::ToolComplete {
-                        tool_name, error, ..
-                    } => {
-                        if let Some(err) = error {
-                            return self
-                                .on_tool(ToolEvent::Failed {
-                                    name: tool_name,
-                                    error: err,
-                                    duration: std::time::Duration::ZERO,
-                                })
-                                .await;
-                        } else {
-                            return self
-                                .on_tool(ToolEvent::Completed {
-                                    name: tool_name,
-                                    output: None,
-                                    duration: std::time::Duration::ZERO,
-                                })
-                                .await;
-                        }
-                    }
-                    CallbackEvent::EventLoopComplete { result, .. } => {
-                        // Convert to AgentResult and call on_complete
-                        let agent_result = stood::agent::result::AgentResult::from(
-                            result,
-                            std::time::Duration::ZERO,
-                        );
-                        return self.on_complete(&agent_result).await;
-                    }
-                    CallbackEvent::Error { error, .. } => {
-                        return self.on_error(&error).await;
-                    }
-                    _ => return Ok(()), // Ignore other events
-                }
-            }
-        };
-
-        self.send_event(log_event);
-        Ok(())
-    }
-}
 

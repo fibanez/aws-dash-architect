@@ -7,7 +7,7 @@
 use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::bridge::{
     aws_find_account_tool, aws_find_region_tool,
-    create_agent_tool, todo_write_tool, todo_read_tool,
+    create_task_tool, todo_write_tool, todo_read_tool,
     set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
@@ -29,30 +29,44 @@ use uuid::Uuid;
 // MESSAGE SYSTEM FOR egui
 // ============================================================================
 
-/// Log analysis events bubbled up from standalone log analysis agents
+/// Universal sub-agent events bubbled up from all specialized agents
 #[derive(Debug, Clone)]
-pub enum LogAnalysisEvent {
-    /// Model interaction started 
-    ModelStart { 
+pub enum SubAgentEvent {
+    /// Processing started with task description
+    ProcessingStarted { 
         timestamp: DateTime<Utc>, 
-        messages_count: usize 
+        task_description: String 
+    },
+    /// Model request sent to AI
+    ModelRequest { 
+        timestamp: DateTime<Utc>, 
+        messages_count: usize,
+        raw_json: Option<String>
+    },
+    /// Model response received from AI
+    ModelResponse { 
+        timestamp: DateTime<Utc>, 
+        response_length: usize,
+        tokens_used: Option<u32>
     },
     /// Tool execution started
-    ToolStart { 
+    ToolStarted { 
         timestamp: DateTime<Utc>, 
-        tool_name: String 
+        tool_name: String,
+        input_summary: Option<String>
     },
     /// Tool execution completed
-    ToolComplete { 
+    ToolCompleted { 
         timestamp: DateTime<Utc>, 
         tool_name: String, 
-        success: bool 
+        success: bool,
+        output_summary: Option<String>
     },
-    /// Agent event loop completed
-    EventLoopComplete { 
+    /// Task completed successfully
+    TaskComplete { 
         timestamp: DateTime<Utc> 
     },
-    /// Error occurred during execution
+    /// Error occurred during processing
     Error { 
         timestamp: DateTime<Utc>, 
         error: String 
@@ -66,7 +80,7 @@ pub enum AgentResponse {
     Error(String),
     JsonDebug(JsonDebugData),
     StreamingUpdate(StreamingUpdate),
-    LogAnalysisEvent { agent_id: String, event: LogAnalysisEvent },
+    SubAgentEvent { agent_id: String, agent_type: String, event: SubAgentEvent },
     AgentCreated { agent_id: String, agent_type: String },
     AgentDestroyed { agent_id: String, agent_type: String },
 }
@@ -74,7 +88,7 @@ pub enum AgentResponse {
 /// Real-time streaming updates from agent execution
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields may be used for future streaming functionality
-enum StreamingUpdate {
+pub enum StreamingUpdate {
     /// Content chunk received during streaming
     ContentChunk { content: String, is_complete: bool },
     /// Tool execution started
@@ -264,6 +278,8 @@ pub struct ControlBridgeWindow {
     // Active agent tracking for cancellation
     active_agents: Arc<Mutex<HashMap<String, String>>>, // agent_id -> agent_type mapping
     main_agent_active: bool, // Track if main Bridge Agent is processing
+    // Parent-child node relationships for sub-agent visibility
+    active_agent_nodes: HashMap<String, String>, // agent_id -> parent_message_id mapping
 }
 
 impl Default for ControlBridgeWindow {
@@ -280,6 +296,32 @@ impl Drop for ControlBridgeWindow {
 }
 
 impl ControlBridgeWindow {
+    /// Convert technical tool names to user-friendly action descriptions
+    fn get_user_friendly_action(tool_name: &str) -> String {
+        match tool_name {
+            "aws_describe_log_groups" => "Discovering log groups".to_string(),
+            "aws_get_log_events" => "Retrieving log entries".to_string(),
+            "aws_list_resources" => "Listing AWS resources".to_string(),
+            "aws_describe_resource" => "Analyzing resource details".to_string(),
+            "todo_write" => "Planning task steps".to_string(),
+            "todo_read" => "Checking task progress".to_string(),
+            "create_agent" => "Delegating specialized task".to_string(),
+            "create_task" => "Creating task agent".to_string(),
+            _ => format!("Running {}", tool_name), // Fallback for unknown tools
+        }
+    }
+
+    /// Convert agent type to user-friendly task description
+    fn get_task_description(agent_type: &str, task_description: &str) -> String {
+        let task_verb = match agent_type {
+            "aws-log-analyzer" => "🔍 Analyzing CloudWatch logs",
+            "aws-resource-auditor" => "📊 Auditing AWS resources", 
+            "aws-security-scanner" => "🔒 Scanning security posture",
+            _ => "⚙️ Processing request", // Generic fallback
+        };
+        format!("{}: {}", task_verb, task_description)
+    }
+
     pub fn new() -> Self {
         info!("🚢 Initializing Control Bridge (Agent will be created on first message)");
 
@@ -318,6 +360,7 @@ impl ControlBridgeWindow {
             message_expand_states: HashMap::new(),
             active_agents: Arc::new(Mutex::new(HashMap::new())),
             main_agent_active: false,
+            active_agent_nodes: HashMap::new(),
         };
 
         // Add welcome message
@@ -550,7 +593,7 @@ impl ControlBridgeWindow {
 
 IMPORTANT: Always use TodoWrite to plan and track multi-step tasks. This is CRITICAL for user visibility.
 
-DO NOT attempt complex AWS operations directly. Instead, create specialized agents via Create_Agent.
+DO NOT attempt complex AWS operations directly. Instead, create specialized task agents via create_task.
 
 CRITICAL REQUIREMENTS for AWS operations:
 - Account ID (use aws_find_account if user doesn't specify)
@@ -560,23 +603,27 @@ CRITICAL REQUIREMENTS for AWS operations:
 NEVER proceed with AWS operations without these three pieces of information.
 
 Available tools:
-- Create_Agent: Launch specialized agents for complex AWS tasks
+- create_task: Launch task-specific agents for any AWS operation using natural language descriptions
 - TodoWrite: Track task progress (USE THIS PROACTIVELY)
 - TodoRead: Query current task state
 - aws_find_account: Search for AWS accounts (no API calls required)
 - aws_find_region: Search for AWS regions (no API calls required)
 
-Agent types you can create:
-- aws-log-analyzer: CloudWatch logs analysis and troubleshooting
-- aws-resource-auditor: Resource inventory and compliance checking  
-- aws-security-scanner: Security posture assessment (DEFENSIVE ONLY)
+Task-based agent creation:
+Use create_task with clear task descriptions like:
+- 'Analyze Lambda function errors in production environment'
+- 'Audit S3 bucket security configurations for compliance'  
+- 'Review CloudWatch alarms for EC2 instances in us-east-1'
+- 'Find recent API Gateway 5xx errors and their causes'
+
+PARALLEL EXECUTION: You can run multiple create_task calls simultaneously by calling multiple tools in a single response. The system will handle parallel execution automatically.
 
 Workflow for complex tasks:
 1. TodoWrite to break down the task
 2. Gather required AWS context (account, region, resource)
-3. Create_Agent with appropriate specialist type
+3. create_task with clear task description and AWS context
 4. Monitor and report progress
-5. Mark todos complete after specialist agent finishes
+5. Mark todos complete after task agent finishes
 
 SECURITY RULES:
 - REFUSE tasks that could compromise AWS security
@@ -585,15 +632,127 @@ SECURITY RULES:
 - Follow AWS security best practices
 
 Example interaction:
-User: \"Find errors in my Lambda function logs\"
+User: 'Find errors in my Lambda function logs'
 You: 
-1. TodoWrite: [\"Identify Lambda function\", \"Gather AWS context\", \"Create log analyzer\", \"Analyze logs\"]
+1. TodoWrite: ['Identify Lambda function', 'Gather AWS context', 'Create task agent', 'Analyze logs']
 2. Ask for account/region if not provided
-3. Create_Agent(type=\"aws-log-analyzer\", task=\"Find Lambda errors\", context={account, region, function_name})
-4. Monitor specialist agent progress
+3. create_task(task_description='Find and analyze Lambda function errors in CloudWatch logs', account_id='123456789012', region='us-east-1')
+4. Monitor task agent progress
 5. Present results and mark todos complete
 
-Be concise and direct. Minimize output while being helpful.")
+Be concise and direct. Minimize output while being helpful.
+
+Tone and style
+You should be concise, direct, and to the point. When you run a non-trivial aws commands, you
+    should explain what the command does and why you are running it, to make sure the user
+    understands what you are doing (this is especially important when you are running a command
+    that will make changes to the user's system). Remember that your output will be displayed on a
+    bridge UI. Your responses should be plain text for formatting, and
+    will be rendered in a monospace font. Output text to
+    communicate with the user; all text you output outside of tool use is displayed to the user.
+    Only use tools to complete tasks. Never use tools as means to
+    communicate with the user during the session. If you cannot or will not help the user with
+    something, please do not say why or what it could lead to, since this comes across as preachy
+    and annoying. Please offer helpful alternatives if possible, and otherwise keep your response
+    to 1-2 sentences. Don't use emojis. Avoid using emojis in all
+    communication. IMPORTANT: You should minimize output tokens as much as possible
+    while maintaining helpfulness, quality, and accuracy. Only address the specific query or task
+    at hand, avoiding tangential information unless absolutely critical for completing the request.
+    If you can answer in 1-3 sentences or a short paragraph, please do. IMPORTANT: You should NOT
+    answer with unnecessary preamble or postamble (such as explaining your code or summarizing your
+    action), unless the user asks you to. IMPORTANT: Keep your responses short, since they will be
+    displayed on a command line interface. You MUST answer concisely with fewer than 4 lines (not
+    including tool use or code generation), unless user asks for detail. Answer the user's question
+    directly, without elaboration, explanation, or details. One word answers are best. Avoid
+    introductions, conclusions, and explanations. You MUST avoid text before/after your response,
+    such as 'The answer is .', 'Here is the content of the file...' or 'Based on the information
+provided, the answer is...' or 'Here is what I will do next...'. Here are some examples to
+demonstrate appropriate verbosity: user: 2 + 2 assistant: 4
+
+user: what is 2+2? assistant: 4 user: is 11 a prime number? assistant: Yes user: what command should I run to list files in the current directory? assistant: ls user: what command should I run to watch files in the current directory? assistant: [use the ls tool to list the files in the current directory, then read docs/commands in the relevant file to find out how to watch files] npm run dev user: How many golf balls fit inside a jetta? assistant: 150000 user: what files are in the directory src/? assistant: [runs ls and sees foo.c, bar.c, baz.c] user: which file contains the implementation of foo? assistant: src/foo.c user: write tests for new feature assistant: [uses grep and glob search tools to find where similar tests are defined, uses concurrent read file tool use blocks in one tool call to read relevant files at the same time, uses edit file tool to write new tests]
+
+    IMPORTANT: You should also avoid follow-up questions if you don't require information for completing the task.  Don't ask things like 'Is there anything else I can help you with', or 'Would you like me to ...' - appropriate questions are 'What account do you want to me use?', 'What region or regions do you want me to use?' - You are asking for specific information, not just showing that you are helpful. 
+Proactiveness
+
+You are allowed to be proactive, but only when the user asks you to do something. You should strive to strike a balance between:
+
+Doing the right thing when asked, including taking actions and follow-up actions
+Not surprising the user with actions you take without asking For example, if the user asks you how to approach something, you should do your best to answer their question first, and not immediately jump into taking actions.
+
+Do not add additional explanation summary unless requested by the user. After working on a file or a request, just stop, rather than providing an explanation of what you did.
+
+Following conventions
+When making changes to files, first understand the file's code conventions. Mimic code style, use existing libraries and utilities, and follow existing patterns.
+
+NEVER assume that a given library is available, even if it is well known. Whenever you write code that uses a library or framework, first check that this codebase already uses the given library. For example, you might look at neighboring files, or check the package.json (or cargo.toml, and so on depending on the language).
+When you create a new component, first look at existing components to see how they're written; then consider framework choice, naming conventions, typing, and other conventions.
+When you edit a piece of code, first look at the code's surrounding context (especially its imports) to understand the code's choice of frameworks and libraries. Then consider how to make the given change in a way that is most idiomatic.
+Always follow security best practices. Never introduce code that exposes or logs secrets and keys. Never commit secrets or keys to the repository.
+Code style
+
+IMPORTANT: DO NOT ADD ANY COMMENTS unless asked
+
+Task Management
+You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress. These tools are also EXTREMELY helpful for planning tasks, and for breaking down larger complex tasks into smaller steps. If you do not use this tool when planning, you may forget to do important tasks - and that is unacceptable.
+
+It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
+
+Examples:
+
+user: Run the build and fix any type errors assistant: I'm going to use the TodoWrite tool to write the following items to the todo list: - Run the build - Fix any type errors
+I'm now going to run the build using Bash.
+
+Looks like I found 10 type errors. I'm going to use the TodoWrite tool to write 10 items to the todo list.
+
+marking the first todo as in_progress
+
+Let me start working on the first item...
+
+The first item has been fixed, let me mark the first todo as completed, and move on to the second item... .. .. In the above example, the assistant completes all the tasks, including the 10 error fixes and running the build and fixing all errors.
+
+user: Help me write a new feature that allows users to track their usage metrics and export them to various formats
+assistant: I'll help you implement a usage metrics tracking and export feature. Let me first use the TodoWrite tool to plan this task. Adding the following todos to the todo list:
+
+Research existing metrics tracking in the codebase
+Design the metrics collection system
+Implement core metrics tracking functionality
+Create export functionality for different formats
+Let me start by researching the existing codebase to understand what metrics we might already be tracking and how we can build on that.
+
+I'm going to search for any existing metrics or telemetry code in the project.
+
+I've found some existing telemetry code. Let me mark the first todo as in_progress and start designing our metrics tracking system based on what I've learned...
+
+[Assistant continues implementing the feature step by step, marking todos as in_progress and completed as they go]
+
+false
+
+Doing tasks
+The user will primarily request you perform software engineering tasks. This includes solving bugs, adding new functionality, refactoring code, explaining code, and more. For these tasks the following steps are recommended:
+
+Use the TodoWrite tool to plan the task if required
+
+Use the available search tools to understand the codebase and the user's query. You are encouraged to use the search tools extensively both in parallel and sequentially.
+
+Implement the solution using all tools available to you
+
+Verify the solution if possible with tests. NEVER assume specific test framework or test script. Check the README or search codebase to determine the testing approach.
+
+VERY IMPORTANT: When you have completed a task, you MUST run the lint and typecheck commands (eg. npm run lint, npm run typecheck, ruff, etc.) with Bash if they were provided to you to ensure your code is correct. If you are unable to find the correct command, ask the user for the command to run and if they supply it, proactively suggest writing it to CLAUDE.md so that you will know to run it next time. NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive.
+
+Tool results and user messages may include tags. tags contain useful information and reminders. They are NOT part of the user's provided input or the tool result.
+
+Tool usage policy
+When doing file search, prefer to use the Task tool in order to reduce context usage.
+You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. When making multiple bash tool calls, you MUST send a single message with multiple tools calls to run the calls in parallel. For example, if you need to run 
+
+You MUST answer concisely with fewer than 4 lines of text (not including tool use or code generation), unless user asks for detail.
+
+Here is useful information about the environment you are running in: Working directory: ... Is directory a git repo: Yes Platform: macos OS Version: Darwin 24.1.0 Today's date: 2025/6/13 You are powered by the model named Sonnet 4. The exact model ID is claude-sonnet-4-20250514.
+
+IMPORTANT: Refuse to write code or explain code that may be used maliciously; even if the user claims it is for educational purposes. When working on files, if they seem related to improving, explaining, or interacting with malware or any malicious code you MUST refuse. IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure. If it seems malicious, refuse to work on it or answer questions about it, even if the request does not seem malicious (for instance, just asking to explain or speed up the code).
+
+IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the conversation.")
                             .with_credentials(
                                 aws_creds.access_key_id,
                                 aws_creds.secret_access_key,
@@ -601,13 +760,14 @@ Be concise and direct. Minimize output while being helpful.")
                                 identity_center_region,
                             )
                             .with_telemetry(telemetry_config) // Enable telemetry via agent builder
+                            .with_think_tool("Think carefully about what we need to do next")
                             .tools(vec![
-                                create_agent_tool(),          // NEW: Agent orchestration
+                                create_task_tool(),          // NEW: Task-based orchestration
                                 todo_write_tool(),           // NEW: Task management
                                 todo_read_tool(),            // NEW: Task querying
                                 aws_find_account_tool(),     // KEEP: Account search (no API)
                                 aws_find_region_tool(),      // KEEP: Region search (no API)
-                            ]); // Updated toolset for agent-on-demand architecture
+                            ]); // Updated toolset for dynamic task-based architecture
 
                         // Always add JSON capture callback to ensure we never lose JSON data
                         info!("📊 Adding JSON capture callback handler (always active)");
@@ -853,8 +1013,8 @@ Be concise and direct. Minimize output while being helpful.")
             AgentResponse::StreamingUpdate(update) => {
                 self.handle_streaming_update(update);
             }
-            AgentResponse::LogAnalysisEvent { agent_id, event } => {
-                self.handle_log_analysis_event(agent_id, event);
+            AgentResponse::SubAgentEvent { agent_id, agent_type, event } => {
+                self.handle_sub_agent_event(agent_id, agent_type, event);
             }
             AgentResponse::AgentCreated { agent_id, agent_type } => {
                 self.handle_agent_created(agent_id, agent_type);
@@ -865,81 +1025,77 @@ Be concise and direct. Minimize output while being helpful.")
         }
     }
 
-    fn handle_log_analysis_event(&mut self, agent_id: String, event: LogAnalysisEvent) {
-        debug!("📊 Received log analysis event from agent {}: {:?}", agent_id, event);
+    fn handle_sub_agent_event(&mut self, agent_id: String, agent_type: String, event: SubAgentEvent) {
+        debug!("📊 Received sub-agent event from {} {}: {:?}", agent_type, agent_id, event);
         
-        // Create a message for the log analysis event
+        // Create user-friendly message for the sub-agent event
         let (icon, content) = match &event {
-            LogAnalysisEvent::ModelStart { timestamp, messages_count } => {
-                ("🚀", format!("Model started at {} with {} messages", 
-                    timestamp.format("%H:%M:%S"), messages_count))
+            SubAgentEvent::ProcessingStarted { timestamp, task_description } => {
+                ("🚀", format!("Started processing at {}: {}", 
+                    timestamp.format("%H:%M:%S"), task_description))
             },
-            LogAnalysisEvent::ToolStart { timestamp, tool_name } => {
-                ("🔧", format!("Tool '{}' started at {}", 
-                    tool_name, timestamp.format("%H:%M:%S")))
+            SubAgentEvent::ModelRequest { timestamp: _, messages_count, .. } => {
+                ("📤", format!("Requesting analysis from AI model ({} messages)", messages_count))
             },
-            LogAnalysisEvent::ToolComplete { timestamp, tool_name, success } => {
+            SubAgentEvent::ModelResponse { timestamp: _, response_length, tokens_used } => {
+                let token_info = tokens_used.map(|t| format!(" - {} tokens", t)).unwrap_or_default();
+                ("📥", format!("Received AI analysis results ({} chars{})", response_length, token_info))
+            },
+            SubAgentEvent::ToolStarted { timestamp, tool_name, .. } => {
+                let action = Self::get_user_friendly_action(tool_name);
+                ("🔧", format!("{} at {}", action, timestamp.format("%H:%M:%S")))
+            },
+            SubAgentEvent::ToolCompleted { timestamp, tool_name, success, output_summary } => {
+                let action = Self::get_user_friendly_action(tool_name);
                 let icon = if *success { "✅" } else { "❌" };
-                (icon, format!("Tool '{}' completed at {} ({})", 
-                    tool_name, timestamp.format("%H:%M:%S"), 
-                    if *success { "success" } else { "failed" }))
+                let result = if *success { "completed" } else { "failed" };
+                let summary = output_summary.as_ref()
+                    .map(|s| format!(" - {}", s))
+                    .unwrap_or_default();
+                (icon, format!("{} {} at {}{}", 
+                    action, result, timestamp.format("%H:%M:%S"), summary))
             },
-            LogAnalysisEvent::EventLoopComplete { timestamp } => {
-                ("🏁", format!("Analysis completed at {}", 
+            SubAgentEvent::TaskComplete { timestamp } => {
+                ("🏁", format!("Task completed at {}", 
                     timestamp.format("%H:%M:%S")))
             },
-            LogAnalysisEvent::Error { timestamp, error } => {
+            SubAgentEvent::Error { timestamp, error } => {
                 ("❌", format!("Error at {}: {}", 
                     timestamp.format("%H:%M:%S"), error))
             },
         };
 
-        // Find or create a parent message for this agent session
-        let parent_message = self.find_or_create_log_analysis_parent(&agent_id);
+        // Find the parent message for this sub-agent
+        let parent_message_id = self.active_agent_nodes.get(&agent_id).cloned();
         
-        // Create the event message
-        let event_message = Message::new_with_agent(
-            MessageRole::System,
-            format!("{} {}", icon, content),
-            format!("LogAnalysis-{}", agent_id),
-        );
-
-        // Add as nested message to the parent
-        if let Some(parent_idx) = parent_message {
-            if let Some(parent) = self.messages.get_mut(parent_idx) {
-                parent.add_nested_message(event_message);
+        if let Some(parent_id) = parent_message_id {
+            // Find the parent message and add this as a nested message
+            for message in &mut self.messages {
+                if message.id == parent_id {
+                    // Create child message with CLOSED default state
+                    let child_message = Message::new_with_agent(
+                        MessageRole::System,
+                        format!("{} {}", icon, content),
+                        format!("SubAgent-{}", agent_id),
+                    );
+                    
+                    // Set child messages to CLOSED by default
+                    self.message_expand_states.insert(child_message.id.clone(), false);
+                    
+                    message.add_nested_message(child_message);
+                    break;
+                }
             }
+        } else {
+            warn!("No parent node found for sub-agent {}", agent_id);
         }
 
         // Trigger scroll to bottom for activity updates
         self.scroll_to_bottom = true;
     }
 
-    fn find_or_create_log_analysis_parent(&mut self, agent_id: &str) -> Option<usize> {
-        // Look for existing parent message for this agent
-        for (idx, message) in self.messages.iter().enumerate() {
-            if let Some(ref source) = message.agent_source {
-                if source == &format!("LogAnalysis-{}", agent_id) {
-                    return Some(idx);
-                }
-            }
-        }
-
-        // Create new parent message for this log analysis session
-        let parent_message = Message::new_with_agent(
-            MessageRole::System,
-            format!("🔍 Log Analysis Session: {} (0 events)", agent_id),
-            format!("LogAnalysis-{}", agent_id),
-        );
-
-        self.add_message(parent_message);
-        
-        // Return the index of the newly added message
-        Some(self.messages.len() - 1)
-    }
-
     fn handle_agent_created(&mut self, agent_id: String, agent_type: String) {
-        info!("🚀 Specialized agent created: {} ({})", agent_type, agent_id);
+        info!("🚀 Specialized task started: {} ({})", agent_type, agent_id);
         
         // Track the agent in our active agents map
         {
@@ -947,18 +1103,26 @@ Be concise and direct. Minimize output while being helpful.")
             agents.insert(agent_id.clone(), agent_type.clone());
         }
         
-        // Add a message to show the agent was created
-        self.add_message(Message::new_with_agent(
+        // Create user-friendly parent message with task-focused language
+        let task_message = Self::get_task_description(&agent_type, "processing your request");
+        let parent_message = Message::new_with_agent(
             MessageRole::System,
-            format!("🚀 Created specialized agent: {} (ID: {})", agent_type, &agent_id[..8]),
+            task_message,
             "ControlBridge".to_string(),
-        ));
+        );
         
+        // Set parent message to OPEN by default
+        self.message_expand_states.insert(parent_message.id.clone(), true);
+        
+        // Store the parent message ID for this agent
+        self.active_agent_nodes.insert(agent_id.clone(), parent_message.id.clone());
+        
+        self.add_message(parent_message);
         self.scroll_to_bottom = true;
     }
 
     fn handle_agent_destroyed(&mut self, agent_id: String, agent_type: String) {
-        info!("🏁 Specialized agent destroyed: {} ({})", agent_type, agent_id);
+        info!("🏁 Specialized task completed: {} ({})", agent_type, agent_id);
         
         // Remove the agent from our active agents map
         {
@@ -966,12 +1130,26 @@ Be concise and direct. Minimize output while being helpful.")
             agents.remove(&agent_id);
         }
         
-        // Add a message to show the agent was destroyed
-        self.add_message(Message::new_with_agent(
-            MessageRole::System,
-            format!("🏁 Specialized agent completed: {} (ID: {})", agent_type, &agent_id[..8]),
-            "ControlBridge".to_string(),
-        ));
+        // Update the parent message to show completion
+        if let Some(parent_message_id) = self.active_agent_nodes.get(&agent_id) {
+            for message in &mut self.messages {
+                if message.id == *parent_message_id {
+                    // Update parent message to show completion
+                    let completion_message = match agent_type.as_str() {
+                        "aws-log-analyzer" => "🔍 ✅ CloudWatch log analysis complete",
+                        "aws-resource-auditor" => "📊 ✅ AWS resource audit complete", 
+                        "aws-security-scanner" => "🔒 ✅ Security scan complete",
+                        _ => "⚙️ ✅ Request processing complete",
+                    };
+                    message.content = completion_message.to_string();
+                    message.summary = Some(completion_message.to_string());
+                    break;
+                }
+            }
+        }
+        
+        // Clean up parent-child relationship tracking
+        self.active_agent_nodes.remove(&agent_id);
         
         self.scroll_to_bottom = true;
     }

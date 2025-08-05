@@ -61,7 +61,9 @@ impl TodoReadTool {
 
         // Filter by priority
         if let Some(priority_str) = filters.get("priority").and_then(|v| v.as_str()) {
-            if let Ok(priority) = serde_json::from_str::<TodoPriority>(&format!("\"{}\"", priority_str)) {
+            if let Ok(priority) =
+                serde_json::from_str::<TodoPriority>(&format!("\"{}\"", priority_str))
+            {
                 filtered.retain(|todo| todo.priority == priority);
             }
         }
@@ -83,13 +85,31 @@ impl TodoReadTool {
     /// Generate summary statistics for todos
     fn generate_summary(&self, todos: &[TodoItem]) -> serde_json::Value {
         let total = todos.len();
-        let pending = todos.iter().filter(|t| t.status == TodoStatus::Pending).count();
-        let in_progress = todos.iter().filter(|t| t.status == TodoStatus::InProgress).count();
-        let completed = todos.iter().filter(|t| t.status == TodoStatus::Completed).count();
-        
-        let high_priority = todos.iter().filter(|t| t.priority == TodoPriority::High).count();
-        let medium_priority = todos.iter().filter(|t| t.priority == TodoPriority::Medium).count();
-        let low_priority = todos.iter().filter(|t| t.priority == TodoPriority::Low).count();
+        let pending = todos
+            .iter()
+            .filter(|t| t.status == TodoStatus::Pending)
+            .count();
+        let in_progress = todos
+            .iter()
+            .filter(|t| t.status == TodoStatus::InProgress)
+            .count();
+        let completed = todos
+            .iter()
+            .filter(|t| t.status == TodoStatus::Completed)
+            .count();
+
+        let high_priority = todos
+            .iter()
+            .filter(|t| t.priority == TodoPriority::High)
+            .count();
+        let medium_priority = todos
+            .iter()
+            .filter(|t| t.priority == TodoPriority::Medium)
+            .count();
+        let low_priority = todos
+            .iter()
+            .filter(|t| t.priority == TodoPriority::Low)
+            .count();
 
         let completion_rate = if total > 0 {
             (completed as f64 / total as f64 * 100.0).round() as u32
@@ -122,52 +142,13 @@ impl Tool for TodoReadTool {
     }
 
     fn description(&self) -> &str {
-        "Query and analyze current todo items and task progress. \
-         Use this to check the status of ongoing AWS operations, \
-         identify next steps, and make informed decisions about workflow progression."
+        "Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of the status of the current task list. You should make use of this tool as often as possible, especially in the following situations:\n- At the beginning of conversations to see what's pending\n- Before starting new tasks to prioritize work\n- When the user asks about previous tasks or plans\n- Whenever you're uncertain about what to do next\n- After completing tasks to update your understanding of remaining work\n- After every few messages to ensure you're on track\n\nUsage:\n- This tool takes in no parameters. So leave the input blank or empty. DO NOT include a dummy object, placeholder string or a key like 'input' or 'empty'. LEAVE IT BLANK.\n- Returns a list of todo items with their status, priority, and content\n- Use this information to track progress and plan next steps\n- If no todos exist yet, an empty list will be returned"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "filters": {
-                    "type": "object",
-                    "description": "Optional filters to apply to the todo query",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "completed"],
-                            "description": "Filter by todo status"
-                        },
-                        "priority": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                            "description": "Filter by priority level"
-                        },
-                        "content_contains": {
-                            "type": "string",
-                            "description": "Filter by content containing this text (case-insensitive)"
-                        },
-                        "id": {
-                            "type": "string",
-                            "description": "Get specific todo by ID"
-                        }
-                    },
-                    "additionalProperties": false
-                },
-                "include_summary": {
-                    "type": "boolean",
-                    "description": "Include summary statistics in response",
-                    "default": true
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of todos to return",
-                    "minimum": 1,
-                    "maximum": 100,
-                    "default": 50
-                }
             },
             "additionalProperties": false
         })
@@ -244,7 +225,7 @@ impl Tool for TodoReadTool {
         }
 
         // Add filter info if filters were applied
-        if !filters.is_null() && filters.as_object().map_or(false, |obj| !obj.is_empty()) {
+        if !filters.is_null() && filters.as_object().is_some_and(|obj| !obj.is_empty()) {
             response["applied_filters"] = filters;
             response["total_before_filtering"] = serde_json::Value::Number(todos.len().into());
         }
@@ -273,17 +254,23 @@ mod tests {
     fn create_test_todos() -> Vec<TodoItem> {
         vec![
             TodoItem::new("High priority pending task".to_string(), TodoPriority::High),
-            TodoItem::new("Medium priority completed task".to_string(), TodoPriority::Medium)
-                .with_status(TodoStatus::Completed),
-            TodoItem::new("Low priority in-progress task".to_string(), TodoPriority::Low)
-                .with_status(TodoStatus::InProgress),
+            TodoItem::new(
+                "Medium priority completed task".to_string(),
+                TodoPriority::Medium,
+            )
+            .with_status(TodoStatus::Completed),
+            TodoItem::new(
+                "Low priority in-progress task".to_string(),
+                TodoPriority::Low,
+            )
+            .with_status(TodoStatus::InProgress),
         ]
     }
 
     #[tokio::test]
     async fn test_todo_read_all() {
         let tool = TodoReadTool::new();
-        
+
         // Populate storage
         {
             let mut storage = tool.task_storage.lock().unwrap();
@@ -291,9 +278,9 @@ mod tests {
         }
 
         let result = tool.execute(None, None).await.unwrap();
-        
+
         assert!(result.success);
-        let response = result.data.unwrap();
+        let response = result.content;
         assert_eq!(response["todos_count"], 3);
         assert!(response["summary"].is_object());
     }
@@ -301,7 +288,7 @@ mod tests {
     #[tokio::test]
     async fn test_todo_read_with_status_filter() {
         let tool = TodoReadTool::new();
-        
+
         // Populate storage
         {
             let mut storage = tool.task_storage.lock().unwrap();
@@ -315,9 +302,9 @@ mod tests {
         });
 
         let result = tool.execute(Some(params), None).await.unwrap();
-        
+
         assert!(result.success);
-        let response = result.data.unwrap();
+        let response = result.content;
         assert_eq!(response["todos_count"], 1);
         assert_eq!(response["total_before_filtering"], 3);
     }
@@ -325,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn test_todo_read_with_priority_filter() {
         let tool = TodoReadTool::new();
-        
+
         // Populate storage
         {
             let mut storage = tool.task_storage.lock().unwrap();
@@ -339,16 +326,16 @@ mod tests {
         });
 
         let result = tool.execute(Some(params), None).await.unwrap();
-        
+
         assert!(result.success);
-        let response = result.data.unwrap();
+        let response = result.content;
         assert_eq!(response["todos_count"], 1);
     }
 
     #[tokio::test]
     async fn test_todo_read_with_content_filter() {
         let tool = TodoReadTool::new();
-        
+
         // Populate storage
         {
             let mut storage = tool.task_storage.lock().unwrap();
@@ -362,9 +349,9 @@ mod tests {
         });
 
         let result = tool.execute(Some(params), None).await.unwrap();
-        
+
         assert!(result.success);
-        let response = result.data.unwrap();
+        let response = result.content;
         assert_eq!(response["todos_count"], 1);
     }
 
@@ -372,9 +359,9 @@ mod tests {
     fn test_summary_generation() {
         let tool = TodoReadTool::new();
         let todos = create_test_todos();
-        
+
         let summary = tool.generate_summary(&todos);
-        
+
         assert_eq!(summary["total_todos"], 3);
         assert_eq!(summary["by_status"]["pending"], 1);
         assert_eq!(summary["by_status"]["completed"], 1);
@@ -383,3 +370,4 @@ mod tests {
         assert_eq!(summary["has_active_tasks"], true);
     }
 }
+

@@ -12,7 +12,7 @@ pub mod aws_get_log_events;
 pub mod aws_get_log_entries;
 pub mod todo_write;
 pub mod todo_read;
-pub mod create_agent;
+pub mod create_task;
 
 // Re-export all tools for easy access
 pub use aws_describe_resource::AwsDescribeResourceTool;
@@ -24,4 +24,4 @@ pub use aws_get_log_events::AwsGetLogEventsTool;
 pub use aws_get_log_entries::AwsGetLogEntriesTool;
 pub use todo_write::{TodoWriteTool, TodoItem, TodoStatus, TodoPriority};
 pub use todo_read::TodoReadTool;
-pub use create_agent::{CreateAgentTool, AgentType, AwsContext, ActiveAgent};
+pub use create_task::{CreateTaskTool, ActiveTask};

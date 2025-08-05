@@ -1,13 +1,9 @@
-//! AWS Bridge Specialized Agents
+//! AWS Bridge Task Agents
 //!
-//! This module contains specialized agent implementations for the agent-on-demand
-//! architecture. Each agent is designed for specific AWS tasks with focused toolsets.
+//! This module contains the task-based agent implementation for the agent-on-demand
+//! architecture. The TaskAgent handles any AWS task based on natural language descriptions.
 
-pub mod aws_log_analyzer;
-pub mod aws_resource_auditor;
-pub mod aws_security_scanner;
+pub mod task_agent;
 
-// Re-export agents for easy access
-pub use aws_log_analyzer::AwsLogAnalyzerAgent;
-pub use aws_resource_auditor::AwsResourceAuditorAgent;
-pub use aws_security_scanner::AwsSecurityScannerAgent;
+// Re-export agent for easy access
+pub use task_agent::TaskAgent;

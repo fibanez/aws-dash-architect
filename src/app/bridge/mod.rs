@@ -7,8 +7,10 @@ pub mod tools;
 pub mod tools_registry;
 pub mod agents;
 pub mod performance;
+pub mod sub_agent_callback_handler;
 
 pub use tools::*;
 pub use tools_registry::*;
 pub use agents::*;
 pub use performance::*;
+pub use sub_agent_callback_handler::*;

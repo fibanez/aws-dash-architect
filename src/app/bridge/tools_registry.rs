@@ -6,9 +6,13 @@
 use crate::app::dashui::control_bridge_window::AgentResponse;
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use serde::{Deserialize, Serialize};
-use std::sync::{mpsc, Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use stood::tools::Tool;
 use tracing::{error, info, warn};
+
+// Import TODO storage types
+use super::tools::todo_write::TodoItem;
 
 // Import individual tools for registry functions
 use super::tools::*;
@@ -21,6 +25,9 @@ static GLOBAL_AWS_CREDENTIALS: RwLock<Option<(String, String, Option<String>, St
 
 /// Global Bridge response channel for log analysis event bubbling
 static GLOBAL_BRIDGE_SENDER: RwLock<Option<mpsc::Sender<AgentResponse>>> = RwLock::new(None);
+
+/// Global shared TODO storage for all agents
+static GLOBAL_TODO_STORAGE: RwLock<Option<Arc<Mutex<HashMap<String, Vec<TodoItem>>>>>> = RwLock::new(None);
 
 /// Set the global AWS client for all tools to use
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
@@ -74,7 +81,6 @@ pub struct ResourceSummary {
 
 
 /// Individual tool constructors for explicit tool selection
-
 /// Creates AWS List Resources tool
 pub fn aws_list_resources_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
     Box::new(AwsListResourcesTool::new(aws_client))
@@ -110,19 +116,29 @@ pub fn aws_get_log_entries_tool(aws_client: Option<Arc<AWSResourceClient>>) -> B
     Box::new(AwsGetLogEntriesTool::new(aws_client))
 }
 
-/// Creates TodoWrite tool for task management
+/// Creates TodoWrite tool for task management with shared storage
 pub fn todo_write_tool() -> Box<dyn Tool> {
-    Box::new(TodoWriteTool::new())
+    if let Some(storage) = get_global_todo_storage() {
+        Box::new(TodoWriteTool::with_shared_storage(storage))
+    } else {
+        warn!("❌ Failed to get global TODO storage, creating isolated TodoWrite tool");
+        Box::new(TodoWriteTool::new())
+    }
 }
 
-/// Creates TodoRead tool for task querying
+/// Creates TodoRead tool for task querying with shared storage
 pub fn todo_read_tool() -> Box<dyn Tool> {
-    Box::new(TodoReadTool::new())
+    if let Some(storage) = get_global_todo_storage() {
+        Box::new(TodoReadTool::with_shared_storage(storage))
+    } else {
+        warn!("❌ Failed to get global TODO storage, creating isolated TodoRead tool");
+        Box::new(TodoReadTool::new())
+    }
 }
 
-/// Creates Create_Agent tool for on-demand agent orchestration
-pub fn create_agent_tool() -> Box<dyn Tool> {
-    Box::new(CreateAgentTool::new())
+/// Creates Create_Task tool for flexible task-based agent orchestration
+pub fn create_task_tool() -> Box<dyn Tool> {
+    Box::new(CreateTaskTool::new())
 }
 
 /// Set global AWS credentials for standalone agents
@@ -208,6 +224,53 @@ pub fn clear_global_bridge_sender() {
         }
         Err(e) => {
             error!("❌ Failed to clear global Bridge response channel: {}", e);
+        }
+    }
+}
+
+/// Initialize global shared TODO storage (call once at startup)
+pub fn initialize_global_todo_storage() {
+    match GLOBAL_TODO_STORAGE.write() {
+        Ok(mut guard) => {
+            if guard.is_none() {
+                info!("📝 Initializing global shared TODO storage for all agents");
+                *guard = Some(Arc::new(Mutex::new(HashMap::new())));
+            } else {
+                info!("📝 Global TODO storage already initialized");
+            }
+        }
+        Err(e) => {
+            error!("❌ Failed to initialize global TODO storage: {}", e);
+        }
+    }
+}
+
+/// Get global shared TODO storage for tools
+pub fn get_global_todo_storage() -> Option<Arc<Mutex<HashMap<String, Vec<TodoItem>>>>> {
+    match GLOBAL_TODO_STORAGE.read() {
+        Ok(guard) => {
+            let storage = guard.clone();
+            if storage.is_some() {
+                info!("📝 Global TODO storage access: ✅ Available");
+                storage
+            } else {
+                info!("📝 Global TODO storage access: ❌ Not initialized - initializing now");
+                // Auto-initialize if not already done
+                drop(guard); // Release read lock
+                initialize_global_todo_storage();
+                // Try again
+                match GLOBAL_TODO_STORAGE.read() {
+                    Ok(guard) => guard.clone(),
+                    Err(e) => {
+                        error!("❌ Failed to read global TODO storage after initialization: {}", e);
+                        None
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!("❌ Failed to read global TODO storage: {}", e);
+            None
         }
     }
 }
