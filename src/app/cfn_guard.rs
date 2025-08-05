@@ -6,16 +6,20 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::app::cfn_template::CloudFormationTemplate;
+use crate::app::guard_rules_registry::GuardRulesRegistry;
 
 /// Main validator for CloudFormation Guard rules
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GuardValidator {
     /// Mapping of rule names to their content
     rules: HashMap<String, String>,
     /// Compliance programs enabled for validation
     compliance_programs: Vec<ComplianceProgram>,
+    /// Rules registry client for downloading and caching rules
+    registry: GuardRulesRegistry,
 }
 
 /// Result of Guard validation containing violations and summary
@@ -67,11 +71,37 @@ pub enum ComplianceProgram {
 impl GuardValidator {
     /// Create a new Guard validator with the specified compliance programs
     pub async fn new(compliance_programs: Vec<ComplianceProgram>) -> Result<Self> {
-        // For now, return a placeholder implementation
-        // TODO: Load actual rules from compliance programs
+        // Create cache directory for Guard rules
+        let cache_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("awsdash")
+            .join("guard_rules");
+            
+        let mut registry = GuardRulesRegistry::new(cache_dir).await?;
+        let mut all_rules = HashMap::new();
+        
+        // Load rules for each compliance program
+        for program in &compliance_programs {
+            // Try to get cached rules first, fall back to downloading
+            let rules = match registry.get_cached_rules(program.clone()).await {
+                Ok(cached_rules) => cached_rules,
+                Err(_) => {
+                    // No cache, try to download
+                    registry.download_compliance_rules(program.clone()).await
+                        .unwrap_or_else(|_| HashMap::new())
+                }
+            };
+            
+            // Merge rules into the validator
+            for (rule_name, rule_content) in rules {
+                all_rules.insert(rule_name, rule_content);
+            }
+        }
+        
         Ok(GuardValidator {
-            rules: HashMap::new(),
+            rules: all_rules,
             compliance_programs,
+            registry,
         })
     }
 

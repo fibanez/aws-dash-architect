@@ -36,6 +36,7 @@
 pub mod aws_identity;
 pub mod bedrock_client;
 pub mod bridge;
+pub mod bulk_rule_downloader;
 pub mod cf_syntax;
 pub mod cfn_dag;
 pub mod cfn_guard;
@@ -45,8 +46,10 @@ pub mod cfn_resource_policies;
 pub mod cfn_resources;
 pub mod cfn_template;
 pub mod cloudformation_manager;
+pub mod compliance_discovery;
 pub mod dashui;
 pub mod fonts;
+pub mod guard_rules_registry;
 pub mod notifications;
 pub mod projects;
 pub mod resource_explorer;
