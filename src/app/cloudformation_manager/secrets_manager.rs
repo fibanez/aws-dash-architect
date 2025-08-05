@@ -532,6 +532,10 @@ mod tests {
             environments: vec![],
             default_region: None,
             cfn_template: None,
+            compliance_programs: vec![],
+            guard_rules_enabled: false,
+            custom_guard_rules: vec![],
+            environment_compliance: std::collections::HashMap::new(),
         }
     }
 

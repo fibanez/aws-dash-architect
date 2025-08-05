@@ -81,6 +81,8 @@ fn test_guard_violation_structure() {
         resource_name: "MyBucket".to_string(),
         message: "S3 bucket should enforce SSL requests only".to_string(),
         severity: ViolationSeverity::High,
+        exempted: false,
+        exemption_reason: None,
     };
     
     assert_eq!(violation.rule_name, "S3_BUCKET_SSL_REQUESTS_ONLY");
@@ -137,12 +139,16 @@ fn test_guard_validation_aggregation() {
             resource_name: "Resource1".to_string(),
             message: "Message 1".to_string(),
             severity: ViolationSeverity::Critical,
+            exempted: false,
+            exemption_reason: None,
         },
         GuardViolation {
             rule_name: "RULE2".to_string(),
             resource_name: "Resource2".to_string(),
             message: "Message 2".to_string(),
             severity: ViolationSeverity::Low,
+            exempted: false,
+            exemption_reason: None,
         },
     ];
     

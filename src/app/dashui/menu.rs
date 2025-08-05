@@ -11,6 +11,22 @@ pub enum MenuAction {
     ThemeChanged,
     ShakeWindows,
     ShowWindowSelector,
+    ShowComplianceDetails,
+}
+
+/// Compliance status for Guard validation
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComplianceStatus {
+    /// All rules passed - template is compliant
+    Compliant,
+    /// Some rules failed - violations found
+    Violations(usize),
+    /// Validation is currently running
+    Validating,
+    /// Validation not performed or Guard disabled
+    NotValidated,
+    /// Error occurred during validation
+    ValidationError(String),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -24,6 +40,7 @@ pub fn build_menu(
     resource_count: Option<usize>,
     aws_identity_center: Option<&Arc<Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
     window_selector: &mut crate::app::dashui::window_selector::WindowSelector,
+    compliance_status: Option<ComplianceStatus>,
 ) -> (MenuAction, Option<String>) {
     let mut theme_changed = false;
     let original_theme = *theme;
@@ -74,6 +91,11 @@ pub fn build_menu(
 
     // AWS login status indicator
     show_aws_login_status(ui, aws_identity_center);
+
+    // Compliance status indicator
+    if let Some(compliance_action) = show_compliance_status(ui, compliance_status) {
+        return (compliance_action, None);
+    }
 
     ui.add_space(16.0);
 
@@ -172,4 +194,88 @@ fn show_aws_login_status(
         log_debug!("AWS login indicator clicked");
         // Could trigger login window here if needed
     }
+}
+
+/// Displays the compliance status indicator for CloudFormation Guard validation
+fn show_compliance_status(
+    ui: &mut egui::Ui,
+    compliance_status: Option<ComplianceStatus>,
+) -> Option<MenuAction> {
+    match compliance_status {
+        Some(ComplianceStatus::Compliant) => {
+            let response = ui.button(
+                RichText::new("✅ Compliant")
+                    .color(Color32::from_rgb(50, 200, 80))
+                    .strong()
+                    .size(12.0),
+            );
+            if response.clicked() {
+                log_debug!("Compliance status (compliant) clicked");
+                return Some(MenuAction::ShowComplianceDetails);
+            }
+            if response.hovered() {
+                response.on_hover_text("CloudFormation Guard validation passed - click for details");
+            }
+        }
+        Some(ComplianceStatus::Violations(count)) => {
+            let response = ui.button(
+                RichText::new(format!("❌ {} Violations", count))
+                    .color(Color32::from_rgb(200, 50, 50))
+                    .strong()
+                    .size(12.0),
+            );
+            if response.clicked() {
+                log_debug!("Compliance status ({} violations) clicked", count);
+                return Some(MenuAction::ShowComplianceDetails);
+            }
+            if response.hovered() {
+                response.on_hover_text("CloudFormation Guard found policy violations - click to view details");
+            }
+        }
+        Some(ComplianceStatus::Validating) => {
+            let response = ui.button(
+                RichText::new("⚠️ Validating...")
+                    .color(Color32::from_rgb(220, 180, 50))
+                    .strong()
+                    .size(12.0),
+            );
+            if response.hovered() {
+                response.on_hover_text("CloudFormation Guard validation in progress");
+            }
+        }
+        Some(ComplianceStatus::ValidationError(ref error)) => {
+            let response = ui.button(
+                RichText::new("🚫 Validation Error")
+                    .color(Color32::from_rgb(200, 100, 50))
+                    .strong()
+                    .size(12.0),
+            );
+            if response.clicked() {
+                log_debug!("Compliance status (error) clicked");
+                return Some(MenuAction::ShowComplianceDetails);
+            }
+            if response.hovered() {
+                response.on_hover_text(format!("CloudFormation Guard validation error: {}", error));
+            }
+        }
+        Some(ComplianceStatus::NotValidated) => {
+            let response = ui.button(
+                RichText::new("⚪ Not Validated")
+                    .color(Color32::from_rgb(150, 150, 150))
+                    .strong()
+                    .size(12.0),
+            );
+            if response.clicked() {
+                log_debug!("Compliance status (not validated) clicked");
+                return Some(MenuAction::ShowComplianceDetails);
+            }
+            if response.hovered() {
+                response.on_hover_text("CloudFormation Guard validation not performed - click to configure");
+            }
+        }
+        None => {
+            // No compliance status available - don't show anything
+        }
+    }
+    None
 }

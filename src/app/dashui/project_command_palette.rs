@@ -37,6 +37,14 @@ pub struct ProjectForm {
     pub local_folder: Option<PathBuf>,
     pub git_url: Option<String>,
     pub environments: Vec<EnvironmentForm>,
+    
+    // CloudFormation Guard compliance settings
+    #[serde(default)]
+    pub guard_rules_enabled: bool,
+    #[serde(default)]
+    pub compliance_programs: Vec<crate::app::cfn_guard::ComplianceProgram>,
+    #[serde(default)]
+    pub custom_guard_rules: Vec<String>,
 }
 
 impl Default for ProjectForm {
@@ -65,6 +73,9 @@ impl Default for ProjectForm {
             local_folder: None,
             git_url: None,
             environments: default_environments,
+            guard_rules_enabled: true,
+            compliance_programs: Vec::new(),
+            custom_guard_rules: Vec::new(),
         }
     }
 }
@@ -130,6 +141,9 @@ impl ProjectForm {
             local_folder: project.local_folder.clone(),
             git_url: project.git_url.clone(),
             environments: environment_forms,
+            guard_rules_enabled: project.guard_rules_enabled,
+            compliance_programs: project.compliance_programs.clone(),
+            custom_guard_rules: project.custom_guard_rules.clone(),
         }
     }
 
@@ -189,6 +203,11 @@ impl ProjectForm {
 
             project.environments.push(environment);
         }
+
+        // Set compliance program fields
+        project.guard_rules_enabled = self.guard_rules_enabled;
+        project.compliance_programs = self.compliance_programs.clone();
+        project.custom_guard_rules = self.custom_guard_rules.clone();
 
         project
     }
@@ -582,6 +601,78 @@ impl ProjectCommandPalette {
                             } else {
                                 Some(git_url)
                             };
+                            ui.end_row();
+
+                            // CloudFormation Guard settings section
+                            ui.label(RichText::new("CloudFormation Guard").strong().size(16.0));
+                            ui.label(""); // Empty cell for spacing
+                            ui.end_row();
+
+                            // Guard validation enabled checkbox
+                            ui.label("Enable Guard Validation:");
+                            ui.checkbox(&mut self.form.guard_rules_enabled, "Validate templates with CloudFormation Guard");
+                            ui.end_row();
+
+                            // Compliance programs selection
+                            ui.label("Compliance Programs:");
+                            ui.vertical(|ui| {
+                                let all_programs = vec![
+                                    (crate::app::cfn_guard::ComplianceProgram::NIST80053R5, "NIST 800-53 Rev 5"),
+                                    (crate::app::cfn_guard::ComplianceProgram::NIST80053R4, "NIST 800-53 Rev 4"),
+                                    (crate::app::cfn_guard::ComplianceProgram::PCIDSS, "PCI DSS"),
+                                    (crate::app::cfn_guard::ComplianceProgram::HIPAA, "HIPAA"),
+                                    (crate::app::cfn_guard::ComplianceProgram::SOC, "SOC 2"),
+                                    (crate::app::cfn_guard::ComplianceProgram::FedRAMP, "FedRAMP"),
+                                    (crate::app::cfn_guard::ComplianceProgram::NIST800171, "NIST 800-171"),
+                                ];
+
+                                for (program, description) in all_programs {
+                                    let mut selected = self.form.compliance_programs.contains(&program);
+                                    if ui.checkbox(&mut selected, description).changed() {
+                                        if selected {
+                                            if !self.form.compliance_programs.contains(&program) {
+                                                self.form.compliance_programs.push(program);
+                                            }
+                                        } else {
+                                            self.form.compliance_programs.retain(|p| p != &program);
+                                        }
+                                    }
+                                }
+                                
+                                if self.form.compliance_programs.is_empty() {
+                                    ui.label(RichText::new("No compliance programs selected").weak().italics());
+                                } else {
+                                    ui.label(RichText::new(format!("{} programs selected", self.form.compliance_programs.len())).weak());
+                                }
+                            });
+                            ui.end_row();
+
+                            // Custom guard rules
+                            ui.label("Custom Rules (paths):");
+                            ui.vertical(|ui| {
+                                let mut to_remove = Vec::new();
+                                for (index, rule_path) in self.form.custom_guard_rules.iter_mut().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        ui.text_edit_singleline(rule_path);
+                                        if ui.button("Remove").clicked() {
+                                            to_remove.push(index);
+                                        }
+                                    });
+                                }
+                                
+                                // Remove rules marked for removal (in reverse order to maintain indices)
+                                for &index in to_remove.iter().rev() {
+                                    self.form.custom_guard_rules.remove(index);
+                                }
+                                
+                                if ui.button("+ Add Custom Rule").clicked() {
+                                    self.form.custom_guard_rules.push(String::new());
+                                }
+                                
+                                if self.form.custom_guard_rules.is_empty() {
+                                    ui.label(RichText::new("No custom rules configured").weak().italics());
+                                }
+                            });
                             ui.end_row();
 
                             // Environment section header

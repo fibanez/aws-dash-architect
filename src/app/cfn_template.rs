@@ -1445,7 +1445,7 @@ impl CloudFormationTemplate {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn validate_with_guard(&self, validator: &GuardValidator) -> Result<GuardValidation> {
+    pub async fn validate_with_guard(&self, validator: &mut GuardValidator) -> Result<GuardValidation> {
         validator.validate_template(self).await
     }
 }

@@ -1536,6 +1536,7 @@ impl DashApp {
                     resource_count,
                     self.aws_identity_center.as_ref(), // Pass AWS identity center for login status
                     &mut self.window_selector,
+                    None, // TODO: Add compliance status when Guard integration is complete
                 );
 
                 // Handle menu actions
@@ -1549,6 +1550,10 @@ impl DashApp {
                     }
                     menu::MenuAction::ShowWindowSelector => {
                         // No longer needed, handled directly in menu
+                    }
+                    menu::MenuAction::ShowComplianceDetails => {
+                        // TODO: Open the Guard Violations window
+                        tracing::info!("Compliance details requested");
                     }
                     menu::MenuAction::None => {}
                 }
