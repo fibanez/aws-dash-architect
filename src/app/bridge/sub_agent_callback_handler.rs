@@ -1,7 +1,7 @@
 //! Universal Sub-Agent Callback Handler
 //!
-//! This handler captures events from all specialized agents (log analyzer, resource auditor, 
-//! security scanner) and forwards them to the Bridge UI with user-friendly language that 
+//! This handler captures events from all specialized agents (log analyzer, resource auditor,
+//! security scanner) and forwards them to the Bridge UI with user-friendly language that
 //! focuses on tasks and actions rather than technical "agent" terminology.
 
 use crate::app::dashui::control_bridge_window::{
@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 
 /// Universal callback handler for all specialized agent types
 ///
-/// This handler captures events from any specialized agent and converts them to 
+/// This handler captures events from any specialized agent and converts them to
 /// user-friendly SubAgentEvent messages with task-focused language.
 #[derive(Debug)]
 pub struct SubAgentCallbackHandler {
@@ -70,25 +70,25 @@ impl SubAgentCallbackHandler {
             // CloudWatch and logging tools
             "aws_describe_log_groups" => "Discovering log groups".to_string(),
             "aws_get_log_events" => "Retrieving log entries".to_string(),
-            
+
             // Resource management tools
             "aws_list_resources" => "Listing AWS resources".to_string(),
             "aws_describe_resource" => "Analyzing resource details".to_string(),
             "aws_get_resource_tags" => "Checking resource tags".to_string(),
-            
+
             // Security assessment tools
             "aws_security_groups" => "Analyzing security groups".to_string(),
             "aws_iam_policies" => "Reviewing IAM policies".to_string(),
             "aws_vpc_config" => "Examining VPC configuration".to_string(),
-            
+
             // Task management tools
             "todo_write" => "Planning analysis steps".to_string(),
             "todo_read" => "Checking progress".to_string(),
-            
+
             // Context tools
             "aws_find_account" => "Identifying AWS account".to_string(),
             "aws_find_region" => "Setting AWS region".to_string(),
-            
+
             // Generic fallback
             _ => format!("Processing {}", tool_name.replace("_", " ")),
         }
@@ -102,7 +102,7 @@ impl SubAgentCallbackHandler {
             "aws-security-scanner" => "🔒 Scanning security posture",
             _ => "⚙️ Processing request",
         };
-        
+
         format!("{}: {}", task_verb, _task_description)
     }
 }
@@ -120,7 +120,7 @@ impl CallbackHandler for SubAgentCallbackHandler {
         let sub_agent_event = match event {
             ToolEvent::Started { name, input } => {
                 debug!("🔧 Sub-agent tool started: {}", name);
-                
+
                 // Create input summary for technical details (child node)
                 let input_summary = if let serde_json::Value::Object(obj) = input {
                     if obj.is_empty() {
@@ -140,8 +140,8 @@ impl CallbackHandler for SubAgentCallbackHandler {
             }
             ToolEvent::Completed { name, output, .. } => {
                 debug!("✅ Sub-agent tool completed: {}", name);
-                
-                // Create output summary for technical details (child node)  
+
+                // Create output summary for technical details (child node)
                 let output_summary = if let Some(output_data) = output {
                     match output_data {
                         serde_json::Value::String(s) => {
@@ -217,19 +217,17 @@ impl CallbackHandler for SubAgentCallbackHandler {
                     "🚀 Sub-agent model started with {} messages",
                     messages.len()
                 );
-                
+
                 // Include raw JSON for technical details if available
                 let raw_json = if messages.len() < 5 {
                     // Only include raw JSON for small message counts to avoid UI clutter
-                    serde_json::to_string_pretty(&messages)
-                        .ok()
-                        .map(|json| {
-                            if json.len() > 1000 {
-                                format!("{}...", &json[..1000])  // Truncate long JSON
-                            } else {
-                                json
-                            }
-                        })
+                    serde_json::to_string_pretty(&messages).ok().map(|json| {
+                        if json.len() > 1000 {
+                            format!("{}...", &json[..1000]) // Truncate long JSON
+                        } else {
+                            json
+                        }
+                    })
                 } else {
                     None
                 };
@@ -242,7 +240,7 @@ impl CallbackHandler for SubAgentCallbackHandler {
             }
             CallbackEvent::ModelComplete { response, .. } => {
                 debug!("✅ Sub-agent model completed");
-                
+
                 let response_length = response.len();
 
                 SubAgentEvent::ModelResponse {
@@ -255,7 +253,9 @@ impl CallbackHandler for SubAgentCallbackHandler {
             _ => {
                 // Handle other events through the default trait implementations
                 match event {
-                    CallbackEvent::ToolStart { tool_name, input, .. } => {
+                    CallbackEvent::ToolStart {
+                        tool_name, input, ..
+                    } => {
                         return self
                             .on_tool(ToolEvent::Started {
                                 name: tool_name,
@@ -264,7 +264,10 @@ impl CallbackHandler for SubAgentCallbackHandler {
                             .await;
                     }
                     CallbackEvent::ToolComplete {
-                        tool_name, output, error, ..
+                        tool_name,
+                        output,
+                        error,
+                        ..
                     } => {
                         if let Some(err) = error {
                             return self

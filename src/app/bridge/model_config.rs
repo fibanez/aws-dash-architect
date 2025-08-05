@@ -5,7 +5,24 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use stood::llm::{ProviderConfig, Bedrock};
+
+/// Macro to create agent with the correct model based on model ID
+#[macro_export]
+macro_rules! create_agent_with_model {
+    ($agent_builder:expr, $model_id:expr) => {
+        {
+            use stood::llm::Bedrock::*;
+            match $model_id.as_str() {
+                "anthropic.claude-3-5-sonnet-20241022-v2:0" => $agent_builder.model(Claude35Sonnet),
+                "anthropic.claude-3-5-haiku-20241022-v1:0" => $agent_builder.model(ClaudeHaiku3),
+                "amazon.nova-micro-v1:0" => $agent_builder.model(NovaMicro),
+                "amazon.nova-lite-v1:0" => $agent_builder.model(NovaLite),
+                "amazon.nova-pro-v1:0" => $agent_builder.model(NovaPro),
+                _ => $agent_builder.model(ClaudeHaiku3), // Default to Claude 3.5 Haiku
+            }
+        }
+    };
+}
 
 /// Configuration for an AI model available in the Bridge system
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -64,9 +81,9 @@ impl ModelConfig {
         ]
     }
 
-    /// Get the default model (Claude 3.5 Sonnet)
+    /// Get the default model (Claude 3.5 Haiku)
     pub fn default_model_id() -> String {
-        "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string()
+        "anthropic.claude-3-5-haiku-20241022-v1:0".to_string()
     }
 
     /// Find a model configuration by model ID
@@ -93,24 +110,6 @@ impl ModelConfig {
         grouped
     }
 
-    /// Convert model ID string to ProviderConfig
-    /// TODO: Re-implement once stood library model API is clarified
-    #[allow(dead_code)]
-    pub fn id_to_bedrock_model(_model_id: &str) -> String {
-        // Placeholder implementation - return model ID as string for now
-        // match model_id {
-        //     "anthropic.claude-3-5-sonnet-20241022-v2:0" => ProviderConfig::Bedrock(Bedrock::Claude35Sonnet),
-        //     "anthropic.claude-3-5-haiku-20241022-v1:0" => ProviderConfig::Bedrock(Bedrock::Claude35Haiku),
-        //     "amazon.nova-micro-v1:0" => ProviderConfig::Bedrock(Bedrock::NovaMicro),
-        //     "amazon.nova-lite-v1:0" => ProviderConfig::Bedrock(Bedrock::NovaLite),
-        //     "amazon.nova-pro-v1:0" => ProviderConfig::Bedrock(Bedrock::NovaPro),
-        //     _ => {
-        //         // Default to Claude 3.5 Sonnet for unknown models
-        //         ProviderConfig::Bedrock(Bedrock::Claude35Sonnet)
-        //     }
-        // }
-        _model_id.to_string() // Placeholder
-    }
 }
 
 /// Settings for model preferences and configuration
@@ -147,12 +146,19 @@ impl Default for ModelSettings {
 
 impl ModelSettings {
     /// Get the currently selected model configuration
-    pub fn get_selected_model<'a>(&self, available_models: &'a [ModelConfig]) -> Option<&'a ModelConfig> {
+    pub fn get_selected_model<'a>(
+        &self,
+        available_models: &'a [ModelConfig],
+    ) -> Option<&'a ModelConfig> {
         ModelConfig::find_by_id(available_models, &self.selected_model)
     }
 
     /// Set the selected model with validation
-    pub fn set_selected_model(&mut self, model_id: String, available_models: &[ModelConfig]) -> bool {
+    pub fn set_selected_model(
+        &mut self,
+        model_id: String,
+        available_models: &[ModelConfig],
+    ) -> bool {
         if ModelConfig::find_by_id(available_models, &model_id).is_some() {
             self.selected_model = model_id;
             true
@@ -162,16 +168,19 @@ impl ModelSettings {
     }
 
     /// Get fallback model if selected is unavailable
-    pub fn get_fallback_model<'a>(&self, available_models: &'a [ModelConfig]) -> Option<&'a ModelConfig> {
+    pub fn get_fallback_model<'a>(
+        &self,
+        available_models: &'a [ModelConfig],
+    ) -> Option<&'a ModelConfig> {
         if !self.auto_fallback {
             return None;
         }
 
-        // Try to find first available model in preference order
+        // Try to find first available model in preference order (Haiku first as default)
         let preference_order = [
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
             "anthropic.claude-3-5-sonnet-20241022-v2:0",
             "amazon.nova-pro-v1:0",
-            "anthropic.claude-3-5-haiku-20241022-v1:0",
             "amazon.nova-lite-v1:0",
             "amazon.nova-micro-v1:0",
         ];
@@ -197,7 +206,7 @@ mod tests {
     fn test_default_models() {
         let models = ModelConfig::default_models();
         assert!(!models.is_empty());
-        
+
         // Check that we have the expected models
         let model_ids: Vec<String> = models.iter().map(|m| m.model_id.clone()).collect();
         assert!(model_ids.contains(&"anthropic.claude-3-5-sonnet-20241022-v2:0".to_string()));
@@ -216,7 +225,7 @@ mod tests {
     fn test_group_by_provider() {
         let models = ModelConfig::default_models();
         let grouped = ModelConfig::group_by_provider(&models);
-        
+
         assert!(grouped.contains_key("Anthropic"));
         assert!(grouped.contains_key("Amazon"));
         assert!(grouped["Anthropic"].len() >= 2); // Sonnet and Haiku
@@ -227,14 +236,14 @@ mod tests {
     fn test_model_settings() {
         let models = ModelConfig::default_models();
         let mut settings = ModelSettings::default();
-        
+
         // Test default selection
         assert!(settings.get_selected_model(&models).is_some());
-        
+
         // Test changing selection
         assert!(settings.set_selected_model("amazon.nova-pro-v1:0".to_string(), &models));
         assert_eq!(settings.selected_model, "amazon.nova-pro-v1:0");
-        
+
         // Test invalid selection
         assert!(!settings.set_selected_model("invalid-model".to_string(), &models));
     }
@@ -243,7 +252,7 @@ mod tests {
     fn test_fallback_model() {
         let models = ModelConfig::default_models();
         let settings = ModelSettings::default();
-        
+
         let fallback = settings.get_fallback_model(&models);
         assert!(fallback.is_some());
     }

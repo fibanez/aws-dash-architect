@@ -214,7 +214,8 @@ fn show_compliance_status(
                 return Some(MenuAction::ShowComplianceDetails);
             }
             if response.hovered() {
-                response.on_hover_text("CloudFormation Guard validation passed - click for details");
+                response
+                    .on_hover_text("CloudFormation Guard validation passed - click for details");
             }
         }
         Some(ComplianceStatus::Violations(count)) => {
@@ -229,7 +230,9 @@ fn show_compliance_status(
                 return Some(MenuAction::ShowComplianceDetails);
             }
             if response.hovered() {
-                response.on_hover_text("CloudFormation Guard found policy violations - click to view details");
+                response.on_hover_text(
+                    "CloudFormation Guard found policy violations - click to view details",
+                );
             }
         }
         Some(ComplianceStatus::Validating) => {
@@ -270,7 +273,9 @@ fn show_compliance_status(
                 return Some(MenuAction::ShowComplianceDetails);
             }
             if response.hovered() {
-                response.on_hover_text("CloudFormation Guard validation not performed - click to configure");
+                response.on_hover_text(
+                    "CloudFormation Guard validation not performed - click to configure",
+                );
             }
         }
         None => {

@@ -71,7 +71,9 @@ impl GuardRulesRegistry {
         Ok(GuardRulesRegistry {
             cache_dir,
             client,
-            base_url: "https://raw.githubusercontent.com/aws-cloudformation/aws-guard-rules-registry/main".to_string(),
+            base_url:
+                "https://raw.githubusercontent.com/aws-cloudformation/aws-guard-rules-registry/main"
+                    .to_string(),
         })
     }
 
@@ -92,7 +94,10 @@ impl GuardRulesRegistry {
     /// # Returns
     ///
     /// A HashMap mapping rule names to their content
-    pub async fn download_compliance_rules(&mut self, program: ComplianceProgram) -> Result<HashMap<String, String>> {
+    pub async fn download_compliance_rules(
+        &mut self,
+        program: ComplianceProgram,
+    ) -> Result<HashMap<String, String>> {
         // Try to download from AWS Guard Rules Registry first
         match self.download_from_aws_registry(&program).await {
             Ok(rules) => {
@@ -101,7 +106,11 @@ impl GuardRulesRegistry {
                 Ok(rules)
             }
             Err(e) => {
-                log::warn!("Failed to download rules from AWS registry for {:?}: {}", program, e);
+                log::warn!(
+                    "Failed to download rules from AWS registry for {:?}: {}",
+                    program,
+                    e
+                );
                 // Fall back to placeholder rules for development
                 let rules = self.get_placeholder_rules(&program).await?;
                 self.cache_rules(&program, &rules).await?;
@@ -109,15 +118,22 @@ impl GuardRulesRegistry {
             }
         }
     }
-    
+
     /// Download rules from the official AWS Guard Rules Registry
-    async fn download_from_aws_registry(&self, program: &ComplianceProgram) -> Result<HashMap<String, String>> {
+    async fn download_from_aws_registry(
+        &self,
+        program: &ComplianceProgram,
+    ) -> Result<HashMap<String, String>> {
         let mut rules = HashMap::new();
-        
+
         // Map compliance programs to their GitHub paths in the AWS Guard Rules Registry
         let program_path = match program {
-            ComplianceProgram::NIST80053R5 => "compliance/cis-aws-foundations-benchmark/nist-800-53-rev5",
-            ComplianceProgram::NIST80053R4 => "compliance/cis-aws-foundations-benchmark/nist-800-53-rev4", 
+            ComplianceProgram::NIST80053R5 => {
+                "compliance/cis-aws-foundations-benchmark/nist-800-53-rev5"
+            }
+            ComplianceProgram::NIST80053R4 => {
+                "compliance/cis-aws-foundations-benchmark/nist-800-53-rev4"
+            }
             ComplianceProgram::PCIDSS => "compliance/pci-dss-3.2.1",
             ComplianceProgram::HIPAA => "compliance/hipaa-security-rule-2003",
             ComplianceProgram::SOC => "compliance/soc-2-type-ii",
@@ -125,10 +141,10 @@ impl GuardRulesRegistry {
             ComplianceProgram::NIST800171 => "compliance/nist-800-171",
             ComplianceProgram::Custom(_) => return Ok(rules), // Skip custom programs
         };
-        
+
         // Construct the URL to download the compliance program's rules
         let rules_url = format!("{}/rules/{}", self.base_url, program_path);
-        
+
         // Download the directory listing to find rule files
         match self.download_directory_listing(&rules_url).await {
             Ok(rule_files) => {
@@ -149,17 +165,24 @@ impl GuardRulesRegistry {
                 }
             }
             Err(e) => {
-                return Err(anyhow!("Failed to download directory listing for {}: {}", program_path, e));
+                return Err(anyhow!(
+                    "Failed to download directory listing for {}: {}",
+                    program_path,
+                    e
+                ));
             }
         }
-        
+
         if rules.is_empty() {
-            return Err(anyhow!("No rules found for compliance program {:?}", program));
+            return Err(anyhow!(
+                "No rules found for compliance program {:?}",
+                program
+            ));
         }
-        
+
         Ok(rules)
     }
-    
+
     /// Download directory listing from GitHub API to find rule files
     async fn download_directory_listing(&self, url: &str) -> Result<Vec<String>> {
         // Convert raw GitHub URL to API URL
@@ -168,19 +191,24 @@ impl GuardRulesRegistry {
             .replace("/main/", "/contents/")
             .replace("https://api.github.com/repos/aws-cloudformation/aws-guard-rules-registry/contents/", 
                      "https://api.github.com/repos/aws-cloudformation/aws-guard-rules-registry/contents/");
-        
-        let response = self.client.get(&api_url)
+
+        let response = self
+            .client
+            .get(&api_url)
             .header("User-Agent", "aws-dash-cfn-guard")
             .send()
             .await?;
-            
+
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to fetch directory listing: {}", response.status()));
+            return Err(anyhow!(
+                "Failed to fetch directory listing: {}",
+                response.status()
+            ));
         }
-        
+
         let files: Vec<serde_json::Value> = response.json().await?;
         let mut rule_files = Vec::new();
-        
+
         for file in files {
             if let Some(name) = file.get("name").and_then(|n| n.as_str()) {
                 if name.ends_with(".guard") {
@@ -188,21 +216,26 @@ impl GuardRulesRegistry {
                 }
             }
         }
-        
+
         Ok(rule_files)
     }
-    
+
     /// Download a single rule file content
     async fn download_rule_file(&self, url: &str) -> Result<String> {
-        let response = self.client.get(url)
+        let response = self
+            .client
+            .get(url)
             .header("User-Agent", "aws-dash-cfn-guard")
             .send()
             .await?;
-            
+
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to download rule file: {}", response.status()));
+            return Err(anyhow!(
+                "Failed to download rule file: {}",
+                response.status()
+            ));
         }
-        
+
         let content = response.text().await?;
         Ok(content)
     }
@@ -216,31 +249,35 @@ impl GuardRulesRegistry {
     /// # Returns
     ///
     /// A HashMap of cached rules, or an error if no cache exists
-    pub async fn get_cached_rules(&self, program: ComplianceProgram) -> Result<HashMap<String, String>> {
+    pub async fn get_cached_rules(
+        &self,
+        program: ComplianceProgram,
+    ) -> Result<HashMap<String, String>> {
         let cache_path = self.get_program_cache_path(&program);
-        
+
         if !cache_path.exists() {
             return Err(anyhow!("No cached rules found for {:?}", program));
         }
 
         let mut rules = HashMap::new();
-        
+
         // Read all .guard files from the cache directory
         for entry in fs::read_dir(&cache_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.extension().and_then(|s| s.to_str()) == Some("guard") {
-                let rule_name = path.file_stem()
+                let rule_name = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown")
                     .to_string();
-                    
+
                 let content = fs::read_to_string(&path)?;
                 rules.insert(rule_name, content);
             }
         }
-        
+
         Ok(rules)
     }
 
@@ -276,7 +313,7 @@ impl GuardRulesRegistry {
     /// True if updates are available, false otherwise
     pub async fn check_for_updates(&self, program: ComplianceProgram) -> Result<bool> {
         let cache_path = self.get_program_cache_path(&program);
-        
+
         // If no cache exists, updates are available
         if !cache_path.exists() {
             return Ok(true);
@@ -319,7 +356,7 @@ impl GuardRulesRegistry {
     fn get_program_cache_path(&self, program: &ComplianceProgram) -> PathBuf {
         let program_name = match program {
             ComplianceProgram::NIST80053R4 => "NIST80053R4",
-            ComplianceProgram::NIST80053R5 => "NIST80053R5", 
+            ComplianceProgram::NIST80053R5 => "NIST80053R5",
             ComplianceProgram::NIST800171 => "NIST800171",
             ComplianceProgram::PCIDSS => "PCIDSS",
             ComplianceProgram::HIPAA => "HIPAA",
@@ -327,14 +364,18 @@ impl GuardRulesRegistry {
             ComplianceProgram::FedRAMP => "FedRAMP",
             ComplianceProgram::Custom(name) => name,
         };
-        
+
         self.cache_dir.join(program_name)
     }
 
     /// Cache rules to local filesystem
-    async fn cache_rules(&self, program: &ComplianceProgram, rules: &HashMap<String, String>) -> Result<()> {
+    async fn cache_rules(
+        &self,
+        program: &ComplianceProgram,
+        rules: &HashMap<String, String>,
+    ) -> Result<()> {
         let cache_path = self.get_program_cache_path(program);
-        
+
         // Create cache directory for this program
         if !cache_path.exists() {
             fs::create_dir_all(&cache_path)?;
@@ -355,7 +396,7 @@ impl GuardRulesRegistry {
             compliance_program: program.clone(),
             source_url: format!("{}/rules/{:?}", self.base_url, program),
         };
-        
+
         let metadata_json = serde_json::to_string_pretty(&metadata)?;
         fs::write(&metadata_file, metadata_json)?;
 
@@ -364,7 +405,10 @@ impl GuardRulesRegistry {
 
     /// Get placeholder rules for testing and development
     /// TODO: Replace with actual AWS Guard Rules Registry integration
-    async fn get_placeholder_rules(&self, program: &ComplianceProgram) -> Result<HashMap<String, String>> {
+    async fn get_placeholder_rules(
+        &self,
+        program: &ComplianceProgram,
+    ) -> Result<HashMap<String, String>> {
         let mut rules = HashMap::new();
 
         match program {
@@ -386,7 +430,9 @@ rule s3_bucket_ssl_requests_only {
         }
     }
 }
-                    "#.trim().to_string(),
+                    "#
+                    .trim()
+                    .to_string(),
                 );
 
                 rules.insert(
@@ -400,7 +446,9 @@ rule s3_bucket_public_read_prohibited {
         }
     }
 }
-                    "#.trim().to_string(),
+                    "#
+                    .trim()
+                    .to_string(),
                 );
             }
             ComplianceProgram::PCIDSS => {
@@ -413,7 +461,9 @@ rule ec2_security_group_attached_to_eni {
         # Security group rules here
     }
 }
-                    "#.trim().to_string(),
+                    "#
+                    .trim()
+                    .to_string(),
                 );
             }
             ComplianceProgram::HIPAA => {
@@ -428,7 +478,9 @@ rule rds_instance_encryption_enabled {
         }
     }
 }
-                    "#.trim().to_string(),
+                    "#
+                    .trim()
+                    .to_string(),
                 );
             }
             ComplianceProgram::Custom(_) => {
@@ -439,12 +491,17 @@ rule rds_instance_encryption_enabled {
                 // Add placeholder rules for other programs
                 rules.insert(
                     "GENERIC_COMPLIANCE_RULE".to_string(),
-                    format!(r#"
+                    format!(
+                        r#"
 # Generic compliance rule for {:?}
 rule generic_compliance_rule {{
     # Placeholder rule content
 }}
-                    "#, program).trim().to_string(),
+                    "#,
+                        program
+                    )
+                    .trim()
+                    .to_string(),
                 );
             }
         }

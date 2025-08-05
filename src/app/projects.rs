@@ -3085,7 +3085,7 @@ impl Project {
     }
 
     /// Get compliance programs for a specific environment
-    /// 
+    ///
     /// Returns environment-specific compliance programs if configured,
     /// otherwise returns the global compliance programs for the project.
     ///
@@ -3096,7 +3096,10 @@ impl Project {
     /// # Returns
     ///
     /// Vector of compliance programs applicable to the environment
-    pub fn get_compliance_programs_for_environment(&self, environment_name: &str) -> Vec<crate::app::cfn_guard::ComplianceProgram> {
+    pub fn get_compliance_programs_for_environment(
+        &self,
+        environment_name: &str,
+    ) -> Vec<crate::app::cfn_guard::ComplianceProgram> {
         // Check if there are environment-specific overrides
         if let Some(env_compliance) = self.environment_compliance.get(environment_name) {
             env_compliance.clone()

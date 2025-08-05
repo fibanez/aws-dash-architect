@@ -5,7 +5,7 @@
 
 use crate::app::resource_explorer::{
     aws_client::AWSResourceClient,
-    state::{QueryScope, AccountSelection, RegionSelection, ResourceTypeSelection},
+    state::{AccountSelection, QueryScope, RegionSelection, ResourceTypeSelection},
 };
 use async_trait::async_trait;
 use serde_json;
@@ -63,7 +63,7 @@ impl AwsListResourcesTool {
                 } else {
                     Ok(strings)
                 }
-            },
+            }
             _ => Err("Value must be a string or array of strings".to_string()),
         }
     }
@@ -76,7 +76,9 @@ impl AwsListResourcesTool {
             "instances" | "ec2" | "instance" => Some("AWS::EC2::Instance".to_string()),
             "vpcs" | "vpc" => Some("AWS::EC2::VPC".to_string()),
             "subnets" | "subnet" => Some("AWS::EC2::Subnet".to_string()),
-            "security_groups" | "sg" | "securitygroup" => Some("AWS::EC2::SecurityGroup".to_string()),
+            "security_groups" | "sg" | "securitygroup" => {
+                Some("AWS::EC2::SecurityGroup".to_string())
+            }
             "volumes" | "ebs" | "volume" => Some("AWS::EC2::Volume".to_string()),
             "snapshots" | "snapshot" => Some("AWS::EC2::Snapshot".to_string()),
             "images" | "amis" | "ami" => Some("AWS::EC2::Image".to_string()),
@@ -99,7 +101,9 @@ impl AwsListResourcesTool {
             // Lambda Resources
             "functions" | "lambda" | "function" => Some("AWS::Lambda::Function".to_string()),
             "layers" | "lambda_layers" => Some("AWS::Lambda::LayerVersion".to_string()),
-            "event_mappings" | "lambda_triggers" => Some("AWS::Lambda::EventSourceMapping".to_string()),
+            "event_mappings" | "lambda_triggers" => {
+                Some("AWS::Lambda::EventSourceMapping".to_string())
+            }
 
             // RDS Resources
             "db_instances" | "rds" | "database" => Some("AWS::RDS::DBInstance".to_string()),
@@ -113,7 +117,9 @@ impl AwsListResourcesTool {
 
             // CloudWatch Resources
             "alarms" | "cloudwatch_alarms" => Some("AWS::CloudWatch::Alarm".to_string()),
-            "dashboards" | "cloudwatch_dashboards" => Some("AWS::CloudWatch::Dashboard".to_string()),
+            "dashboards" | "cloudwatch_dashboards" => {
+                Some("AWS::CloudWatch::Dashboard".to_string())
+            }
 
             // API Gateway Resources
             "rest_apis" | "apigateway" => Some("AWS::ApiGateway::RestApi".to_string()),
@@ -133,8 +139,12 @@ impl AwsListResourcesTool {
             "eks_clusters" | "eks" => Some("AWS::EKS::Cluster".to_string()),
 
             // Load Balancers
-            "load_balancers" | "elb" | "alb" | "nlb" => Some("AWS::ElasticLoadBalancingV2::LoadBalancer".to_string()),
-            "classic_load_balancers" | "clb" => Some("AWS::ElasticLoadBalancing::LoadBalancer".to_string()),
+            "load_balancers" | "elb" | "alb" | "nlb" => {
+                Some("AWS::ElasticLoadBalancingV2::LoadBalancer".to_string())
+            }
+            "classic_load_balancers" | "clb" => {
+                Some("AWS::ElasticLoadBalancing::LoadBalancer".to_string())
+            }
             "target_groups" | "tg" => Some("AWS::ElasticLoadBalancingV2::TargetGroup".to_string()),
 
             // CloudFormation Resources
@@ -145,7 +155,9 @@ impl AwsListResourcesTool {
 
             // Kinesis Resources
             "kinesis_streams" | "kinesis" => Some("AWS::Kinesis::Stream".to_string()),
-            "firehose_streams" | "firehose" => Some("AWS::KinesisFirehose::DeliveryStream".to_string()),
+            "firehose_streams" | "firehose" => {
+                Some("AWS::KinesisFirehose::DeliveryStream".to_string())
+            }
 
             // SageMaker Resources
             "sagemaker_endpoints" | "sagemaker" => Some("AWS::SageMaker::Endpoint".to_string()),
@@ -198,15 +210,21 @@ impl AwsListResourcesTool {
 
             // IoT Resources
             "iot_things" | "iot" => Some("AWS::IoT::Thing".to_string()),
-            "greengrass_components" | "greengrass" => Some("AWS::GreengrassV2::ComponentVersion".to_string()),
+            "greengrass_components" | "greengrass" => {
+                Some("AWS::GreengrassV2::ComponentVersion".to_string())
+            }
 
             // Organizations Resources
-            "organizational_units" | "ous" => Some("AWS::Organizations::OrganizationalUnit".to_string()),
+            "organizational_units" | "ous" => {
+                Some("AWS::Organizations::OrganizationalUnit".to_string())
+            }
             "organization_policies" => Some("AWS::Organizations::Policy".to_string()),
 
             // Certificate Manager Resources
             "certificates" | "acm" => Some("AWS::CertificateManager::Certificate".to_string()),
-            "certificate_authorities" | "ca" => Some("AWS::ACMPCA::CertificateAuthority".to_string()),
+            "certificate_authorities" | "ca" => {
+                Some("AWS::ACMPCA::CertificateAuthority".to_string())
+            }
 
             // WAF Resources
             "web_acls" | "waf" => Some("AWS::WAFv2::WebACL".to_string()),
@@ -219,14 +237,18 @@ impl AwsListResourcesTool {
 
             // ElastiCache Resources
             "cache_clusters" | "elasticache" => Some("AWS::ElastiCache::CacheCluster".to_string()),
-            "replication_groups" | "redis_clusters" => Some("AWS::ElastiCache::ReplicationGroup".to_string()),
+            "replication_groups" | "redis_clusters" => {
+                Some("AWS::ElastiCache::ReplicationGroup".to_string())
+            }
 
             // Neptune Resources
             "neptune_clusters" | "neptune" => Some("AWS::Neptune::DBCluster".to_string()),
             "neptune_instances" => Some("AWS::Neptune::DBInstance".to_string()),
 
             // OpenSearch Resources
-            "opensearch_domains" | "opensearch" | "elasticsearch" => Some("AWS::OpenSearchService::Domain".to_string()),
+            "opensearch_domains" | "opensearch" | "elasticsearch" => {
+                Some("AWS::OpenSearchService::Domain".to_string())
+            }
 
             // Cognito Resources
             "user_pools" | "cognito" => Some("AWS::Cognito::UserPool".to_string()),
@@ -358,16 +380,33 @@ Examples:
         _agent_context: Option<&stood::agent::AgentContext>,
     ) -> Result<ToolResult, ToolError> {
         let start_time = std::time::Instant::now();
-        info!("🔍 aws_list_resources executing with parameters: {:?}", parameters);
+        info!(
+            "🔍 aws_list_resources executing with parameters: {:?}",
+            parameters
+        );
 
         // Check if AWS client is available (try instance client first, then global)
         let global_client = get_global_aws_client();
-        
+
         // Debug logging for AWS client availability
         info!("🔍 Checking AWS client availability:");
-        info!("  - Instance client: {}", if self.aws_client.is_some() { "✅ Available" } else { "❌ Not available" });
-        info!("  - Global client: {}", if global_client.is_some() { "✅ Available" } else { "❌ Not available" });
-        
+        info!(
+            "  - Instance client: {}",
+            if self.aws_client.is_some() {
+                "✅ Available"
+            } else {
+                "❌ Not available"
+            }
+        );
+        info!(
+            "  - Global client: {}",
+            if global_client.is_some() {
+                "✅ Available"
+            } else {
+                "❌ Not available"
+            }
+        );
+
         let aws_client = self.aws_client.as_ref()
             .or(global_client.as_ref())
             .ok_or_else(|| {
@@ -378,28 +417,32 @@ Examples:
 
         // Parse parameters
         let params = parameters.unwrap_or_else(|| serde_json::json!({}));
-        
-        let resource_type_param = params.get("resource_type")
+
+        let resource_type_param = params
+            .get("resource_type")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        
-        let regions = params.get("region")
+
+        let regions = params
+            .get("region")
             .map(|v| Self::parse_string_or_array(v))
             .transpose()
             .map_err(|e| ToolError::InvalidParameters {
                 message: format!("Invalid region parameter: {}", e),
             })?
             .unwrap_or_default();
-        
-        let account_ids = params.get("account_id")
+
+        let account_ids = params
+            .get("account_id")
             .map(|v| Self::parse_string_or_array(v))
             .transpose()
             .map_err(|e| ToolError::InvalidParameters {
                 message: format!("Invalid account_id parameter: {}", e),
             })?
             .unwrap_or_default();
-        
-        let force_refresh = params.get("force_refresh")
+
+        let force_refresh = params
+            .get("force_refresh")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -424,7 +467,7 @@ Examples:
 
         // Create query scope
         let mut scope = QueryScope::new();
-        
+
         // Add account selections if specified
         for account_id in account_ids {
             scope.accounts.push(AccountSelection {
@@ -433,8 +476,8 @@ Examples:
                 color: egui::Color32::from_rgb(100, 150, 255),
             });
         }
-        
-        // Add region selections if specified  
+
+        // Add region selections if specified
         for region in regions {
             scope.regions.push(RegionSelection {
                 region_code: region.clone(),
@@ -442,13 +485,17 @@ Examples:
                 color: egui::Color32::from_rgb(150, 100, 255),
             });
         }
-        
+
         // Add resource type selection if specified
         if let Some(resource_type) = cloudformation_resource_type {
             scope.resource_types.push(ResourceTypeSelection {
                 resource_type: resource_type.clone(),
                 display_name: resource_type.clone(),
-                service_name: resource_type.split("::").nth(1).unwrap_or("Unknown").to_string(),
+                service_name: resource_type
+                    .split("::")
+                    .nth(1)
+                    .unwrap_or("Unknown")
+                    .to_string(),
             });
         }
 
@@ -485,17 +532,22 @@ Examples:
         // Collect results
         let mut all_resources = Vec::new();
         let mut query_errors = Vec::new();
-        
+
         // Start the query task in a way that doesn't require 'static lifetime
         let _ = query_task.await;
-        
+
         // Collect all results
         while let Some(result) = result_receiver.recv().await {
             match result.resources {
                 Ok(resources) => {
-                    info!("✅ Received {} resources for {}/{}/{}", 
-                         resources.len(), result.account_id, result.region, result.resource_type);
-                    
+                    info!(
+                        "✅ Received {} resources for {}/{}/{}",
+                        resources.len(),
+                        result.account_id,
+                        result.region,
+                        result.resource_type
+                    );
+
                     // Convert ResourceEntry to ResourceSummary
                     for resource in resources {
                         all_resources.push(ResourceSummary {
@@ -506,13 +558,19 @@ Examples:
                             display_name: resource.display_name,
                             status: resource.status,
                             properties: resource.properties,
-                            tags: resource.tags.iter().map(|tag| format!("{}={}", tag.key, tag.value)).collect(),
+                            tags: resource
+                                .tags
+                                .iter()
+                                .map(|tag| format!("{}={}", tag.key, tag.value))
+                                .collect(),
                         });
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("Query failed for {}/{}/{}: {}", 
-                                          result.account_id, result.region, result.resource_type, e);
+                    let error_msg = format!(
+                        "Query failed for {}/{}/{}: {}",
+                        result.account_id, result.region, result.resource_type, e
+                    );
                     warn!("❌ {}", error_msg);
                     query_errors.push(error_msg);
                 }
@@ -521,16 +579,21 @@ Examples:
 
         let duration = start_time.elapsed();
         let total_count = all_resources.len();
-        
-        let execution_summary = if query_errors.is_empty() {
-            format!(
-                "Found {} AWS resources in {:.2}s. Query executed {}.",
-                total_count,
-                duration.as_secs_f64(),
-                if force_refresh { "fresh from AWS APIs" } else { "with cache support" }
-            )
-        } else {
-            format!(
+
+        let execution_summary =
+            if query_errors.is_empty() {
+                format!(
+                    "Found {} AWS resources in {:.2}s. Query executed {}.",
+                    total_count,
+                    duration.as_secs_f64(),
+                    if force_refresh {
+                        "fresh from AWS APIs"
+                    } else {
+                        "with cache support"
+                    }
+                )
+            } else {
+                format!(
                 "Found {} AWS resources in {:.2}s with {} errors. Query executed {}. Errors: {}",
                 total_count,
                 duration.as_secs_f64(),
@@ -538,7 +601,7 @@ Examples:
                 if force_refresh { "fresh from AWS APIs" } else { "with cache support" },
                 query_errors.join("; ")
             )
-        };
+            };
 
         info!("📊 aws_list_resources completed: {}", execution_summary);
 

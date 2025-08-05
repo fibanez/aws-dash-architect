@@ -10,11 +10,15 @@ fn add_resource_for_test(
 ) {
     // Set a temporary directory just for this test to avoid filesystem issues
     if project.local_folder.is_none() {
-        let temp_dir = std::env::temp_dir().join(format!("awsdash_test_{}_{:?}", std::process::id(), std::thread::current().id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "awsdash_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         std::fs::create_dir_all(&temp_dir).ok();
         project.local_folder = Some(temp_dir);
     }
-    
+
     // Use the project's add_resource method but ignore file errors for testing
     if let Err(_) = project.add_resource(resource, depends_on) {
         // If file operations fail, we'll rely on the template-only approach

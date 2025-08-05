@@ -128,7 +128,8 @@ mod tests {
                 // Verify the error is reasonable and not a panic
                 assert!(
                     !e.to_string().is_empty(),
-                    "Error message should be descriptive: {}", e
+                    "Error message should be descriptive: {}",
+                    e
                 );
                 // Verify project state remains consistent after failure
                 let resources = project.get_resources();
@@ -149,7 +150,11 @@ mod tests {
         );
 
         // Set a unique temp directory for testing
-        let temp_dir = std::env::temp_dir().join(format!("awsdash_test_{}_{:?}", std::process::id(), std::thread::current().id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "awsdash_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         std::fs::create_dir_all(&temp_dir).ok();
         project.local_folder = Some(temp_dir);
 
@@ -219,12 +224,15 @@ mod tests {
                 // Verify the error is reasonable
                 assert!(
                     !e.to_string().is_empty(),
-                    "Error message should be descriptive: {}", e
+                    "Error message should be descriptive: {}",
+                    e
                 );
                 // For remove operations on non-existent resources, this is often expected
                 assert!(
-                    e.to_string().contains("not found") || e.to_string().contains("no local folder"),
-                    "Remove error should be about missing resource or folder: {}", e
+                    e.to_string().contains("not found")
+                        || e.to_string().contains("no local folder"),
+                    "Remove error should be about missing resource or folder: {}",
+                    e
                 );
             }
         }
@@ -319,12 +327,22 @@ mod tests {
                 );
                 let resource = resource.unwrap();
                 assert_eq!(
-                    resource.properties.get("BucketName").unwrap().as_str().unwrap(),
+                    resource
+                        .properties
+                        .get("BucketName")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
                     "my-updated-bucket",
                     "BucketName should be updated"
                 );
                 assert_eq!(
-                    resource.properties.get("VersioningConfiguration").unwrap().as_str().unwrap(),
+                    resource
+                        .properties
+                        .get("VersioningConfiguration")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
                     "Enabled",
                     "VersioningConfiguration should be added"
                 );
@@ -334,12 +352,15 @@ mod tests {
                 // Verify the error is reasonable
                 assert!(
                     !e.to_string().is_empty(),
-                    "Error message should be descriptive: {}", e
+                    "Error message should be descriptive: {}",
+                    e
                 );
                 // Update should fail if the resource doesn't exist
                 assert!(
-                    e.to_string().contains("not found") || e.to_string().contains("no local folder"),
-                    "Update error should be about missing resource or folder: {}", e
+                    e.to_string().contains("not found")
+                        || e.to_string().contains("no local folder"),
+                    "Update error should be about missing resource or folder: {}",
+                    e
                 );
             }
         }

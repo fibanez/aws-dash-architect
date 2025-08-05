@@ -84,11 +84,11 @@ pub mod aws_icon_manager;
 pub mod aws_login_window;
 pub mod chat_window;
 pub mod cloudformation_command_palette;
-pub mod control_bridge_window;
 pub mod cloudformation_file_picker;
 pub mod cloudformation_scene_graph;
 pub mod cloudformation_window_node_widget;
 pub mod command_palette;
+pub mod control_bridge_window;
 pub mod credentials_debug_window;
 pub mod deployment_info_window;
 pub mod download_manager;
@@ -124,11 +124,11 @@ pub use chat_window::ChatWindow;
 pub use cloudformation_command_palette::{
     CloudFormationCommandAction, CloudFormationCommandPalette,
 };
-pub use control_bridge_window::ControlBridgeWindow;
 pub use cloudformation_file_picker::{CloudFormationFilePicker, CloudFormationFilePickerStatus};
 pub use cloudformation_scene_graph::CloudFormationSceneGraph;
 pub use cloudformation_window_node_widget::{CloudFormationWindowNodeWidget, NodeWindowManager};
 pub use command_palette::CommandPalette;
+pub use control_bridge_window::ControlBridgeWindow;
 pub use credentials_debug_window::CredentialsDebugWindow;
 pub use download_manager::DownloadManager;
 pub use fuzzy_file_picker::{FuzzyFilePicker, FuzzyFilePickerStatus};

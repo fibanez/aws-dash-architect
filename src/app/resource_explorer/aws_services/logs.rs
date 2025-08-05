@@ -179,18 +179,18 @@ impl LogsService {
 
         let client = logs::Client::new(&aws_config);
         let mut request = client.describe_log_groups();
-        
+
         if let Some(prefix) = name_prefix {
             request = request.log_group_name_prefix(prefix);
         }
-        
+
         if let Some(limit_val) = limit {
             request = request.limit(limit_val);
         }
 
         let mut paginator = request.into_paginator().send();
         let mut log_groups = Vec::new();
-        
+
         while let Some(page) = paginator.next().await {
             let page = page?;
             if let Some(log_group_list) = page.log_groups {
@@ -228,29 +228,32 @@ impl LogsService {
             })?;
 
         let client = logs::Client::new(&aws_config);
-        
+
         // If no specific log stream is provided, get all log streams and their events
         let log_streams = if let Some(stream_name) = log_stream_name {
             vec![stream_name.to_string()]
         } else {
-            self.get_log_stream_names(&client, log_group_name, limit.map(|l| l / 10)).await?
+            self.get_log_stream_names(&client, log_group_name, limit.map(|l| l / 10))
+                .await?
         };
 
         let mut all_events = Vec::new();
-        
+
         for stream_name in log_streams {
-            let events = self.get_log_events_from_stream(
-                &client,
-                log_group_name,
-                &stream_name,
-                start_time,
-                end_time,
-                filter_pattern,
-                limit,
-            ).await?;
-            
+            let events = self
+                .get_log_events_from_stream(
+                    &client,
+                    log_group_name,
+                    &stream_name,
+                    start_time,
+                    end_time,
+                    filter_pattern,
+                    limit,
+                )
+                .await?;
+
             all_events.extend(events);
-            
+
             // Break if we have enough events
             if let Some(limit_val) = limit {
                 if all_events.len() >= limit_val as usize {
@@ -282,20 +285,20 @@ impl LogsService {
             .log_group_name(log_group_name)
             .order_by(logs::types::OrderBy::LastEventTime)
             .descending(true);
-            
+
         if let Some(limit_val) = limit {
             request = request.limit(limit_val);
         }
 
         let response = request.send().await?;
-        
+
         let stream_names = response
             .log_streams
             .unwrap_or_default()
             .into_iter()
             .filter_map(|stream| stream.log_stream_name)
             .collect();
-            
+
         Ok(stream_names)
     }
 
@@ -318,7 +321,7 @@ impl LogsService {
         if let Some(start) = start_time {
             request = request.start_time(start.timestamp_millis());
         }
-        
+
         if let Some(end) = end_time {
             request = request.end_time(end.timestamp_millis());
         }
@@ -328,7 +331,7 @@ impl LogsService {
         }
 
         let response = request.send().await?;
-        
+
         let mut events = Vec::new();
         if let Some(log_events) = response.events {
             for event in log_events {
@@ -340,7 +343,7 @@ impl LogsService {
                         }
                     }
                 }
-                
+
                 let event_json = self.log_event_to_json(&event, log_stream_name);
                 events.push(event_json);
             }
@@ -357,7 +360,11 @@ impl LogsService {
     }
 
     /// Convert log event to JSON
-    fn log_event_to_json(&self, event: &logs::types::OutputLogEvent, stream_name: &str) -> serde_json::Value {
+    fn log_event_to_json(
+        &self,
+        event: &logs::types::OutputLogEvent,
+        stream_name: &str,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(timestamp) = event.timestamp {
@@ -365,7 +372,7 @@ impl LogsService {
                 "Timestamp".to_string(),
                 serde_json::Value::Number(timestamp.into()),
             );
-            
+
             // Also add human-readable timestamp
             if let Some(dt) = DateTime::from_timestamp_millis(timestamp) {
                 json.insert(

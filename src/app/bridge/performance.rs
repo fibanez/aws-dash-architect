@@ -42,14 +42,18 @@ impl PerformanceTimer {
     pub fn end_phase(&mut self) {
         if let Some((phase_name, phase_start)) = self.current_phase.take() {
             let duration = phase_start.elapsed();
-            
+
             // Log phase completion with duration
             if duration.as_millis() > 100 {
-                warn!("🐌 PERF: {} - {}ms ⚠️ SLOW", phase_name, duration.as_millis());
+                warn!(
+                    "🐌 PERF: {} - {}ms ⚠️ SLOW",
+                    phase_name,
+                    duration.as_millis()
+                );
             } else {
                 info!("⚡ PERF: {} - {}ms", phase_name, duration.as_millis());
             }
-            
+
             self.phase_times.push((phase_name, duration));
         }
     }
@@ -62,35 +66,54 @@ impl PerformanceTimer {
         let total_duration = self.start_time.elapsed();
         let total_ms = total_duration.as_millis();
 
-        info!("✅ PERF: {} completed - {}ms", self.operation_name, total_ms);
+        info!(
+            "✅ PERF: {} completed - {}ms",
+            self.operation_name, total_ms
+        );
 
         // Performance analysis
         if total_ms > 500 {
-            warn!("🚨 PERF: {} took {}ms (expected: ~500ms) - PERFORMANCE ISSUE", 
-                self.operation_name, total_ms);
+            warn!(
+                "🚨 PERF: {} took {}ms (expected: ~500ms) - PERFORMANCE ISSUE",
+                self.operation_name, total_ms
+            );
         }
 
         // Bottleneck analysis
         if !self.phase_times.is_empty() {
             info!("📊 PERF: {} phase breakdown:", self.operation_name);
-            
+
             let mut sorted_phases = self.phase_times.clone();
             sorted_phases.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by duration descending
 
             for (phase_name, duration) in &sorted_phases {
                 let percentage = (duration.as_millis() as f64 / total_ms as f64) * 100.0;
-                let icon = if percentage > 30.0 { "🐌" } else if percentage > 10.0 { "⏳" } else { "⚡" };
-                
-                info!("📊 PERF:   {} {} - {}ms ({:.1}%)", 
-                    icon, phase_name, duration.as_millis(), percentage);
+                let icon = if percentage > 30.0 {
+                    "🐌"
+                } else if percentage > 10.0 {
+                    "⏳"
+                } else {
+                    "⚡"
+                };
+
+                info!(
+                    "📊 PERF:   {} {} - {}ms ({:.1}%)",
+                    icon,
+                    phase_name,
+                    duration.as_millis(),
+                    percentage
+                );
             }
 
             // Identify primary bottleneck
             if let Some((bottleneck_phase, bottleneck_duration)) = sorted_phases.first() {
-                let bottleneck_percentage = (bottleneck_duration.as_millis() as f64 / total_ms as f64) * 100.0;
+                let bottleneck_percentage =
+                    (bottleneck_duration.as_millis() as f64 / total_ms as f64) * 100.0;
                 if bottleneck_percentage > 30.0 {
-                    warn!("🎯 PERF: Primary bottleneck: {} ({:.1}% of total time)", 
-                        bottleneck_phase, bottleneck_percentage);
+                    warn!(
+                        "🎯 PERF: Primary bottleneck: {} ({:.1}% of total time)",
+                        bottleneck_phase, bottleneck_percentage
+                    );
                 }
             }
         }
@@ -147,24 +170,39 @@ impl AgentCreationMetrics {
     /// Analyze and warn about performance issues
     pub fn analyze_performance(&self) {
         let total_ms = self.total_duration.as_millis();
-        
+
         if total_ms > 5000 {
-            warn!("🚨 SEVERE: Agent creation took {}ms (>5s) - agent_type={}", total_ms, self.agent_type);
+            warn!(
+                "🚨 SEVERE: Agent creation took {}ms (>5s) - agent_type={}",
+                total_ms, self.agent_type
+            );
         } else if total_ms > 2000 {
-            warn!("⚠️ SLOW: Agent creation took {}ms (>2s) - agent_type={}", total_ms, self.agent_type);
+            warn!(
+                "⚠️ SLOW: Agent creation took {}ms (>2s) - agent_type={}",
+                total_ms, self.agent_type
+            );
         }
 
         // Specific phase warnings
         if self.agent_build_duration.as_millis() > 1000 {
-            warn!("🐌 Agent.build() is slow: {}ms - check model initialization", self.agent_build_duration.as_millis());
+            warn!(
+                "🐌 Agent.build() is slow: {}ms - check model initialization",
+                self.agent_build_duration.as_millis()
+            );
         }
 
         if self.execution_duration.as_millis() > 3000 {
-            warn!("🐌 Agent execution is slow: {}ms - check LLM response time", self.execution_duration.as_millis());
+            warn!(
+                "🐌 Agent execution is slow: {}ms - check LLM response time",
+                self.execution_duration.as_millis()
+            );
         }
 
         if self.credential_duration.as_millis() > 500 {
-            warn!("🐌 Credential retrieval is slow: {}ms - check AWS network latency", self.credential_duration.as_millis());
+            warn!(
+                "🐌 Credential retrieval is slow: {}ms - check AWS network latency",
+                self.credential_duration.as_millis()
+            );
         }
     }
 }

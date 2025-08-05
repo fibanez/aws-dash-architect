@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use awsdash::app::aws_identity::{AwsIdentityCenter, AwsCredentials, AwsAccount, DeviceAuthorizationData, LoginState};
+    use awsdash::app::aws_identity::{
+        AwsAccount, AwsCredentials, AwsIdentityCenter, DeviceAuthorizationData, LoginState,
+    };
     use chrono::Utc;
 
     #[test]
@@ -11,10 +13,16 @@ mod tests {
             "us-east-1".to_string(),
         );
 
-        assert_eq!(identity_center.identity_center_url, "https://example.awsapps.com/start");
+        assert_eq!(
+            identity_center.identity_center_url,
+            "https://example.awsapps.com/start"
+        );
         assert_eq!(identity_center.default_role_name, "awsdash");
         assert_eq!(identity_center.identity_center_region, "us-east-1");
-        assert_eq!(identity_center.start_url, "https://example.awsapps.com/start");
+        assert_eq!(
+            identity_center.start_url,
+            "https://example.awsapps.com/start"
+        );
         assert_eq!(identity_center.login_state, LoginState::NotLoggedIn);
         assert!(identity_center.access_token.is_none());
         assert!(identity_center.accounts.is_empty());
@@ -137,7 +145,10 @@ mod tests {
         };
         identity_center.update_account(account1_updated);
         assert_eq!(identity_center.accounts.len(), 1);
-        assert_eq!(identity_center.accounts[0].account_name, "TestAccount Updated");
+        assert_eq!(
+            identity_center.accounts[0].account_name,
+            "TestAccount Updated"
+        );
         assert_eq!(identity_center.accounts[0].role_name, "PowerUserAccess");
 
         // Add new account
@@ -203,7 +214,9 @@ mod tests {
             device_code: "test_device_code".to_string(),
             user_code: "TEST-CODE".to_string(),
             verification_uri: "https://device.sso.region.amazonaws.com/".to_string(),
-            verification_uri_complete: Some("https://device.sso.region.amazonaws.com/?user_code=TEST-CODE".to_string()),
+            verification_uri_complete: Some(
+                "https://device.sso.region.amazonaws.com/?user_code=TEST-CODE".to_string(),
+            ),
             expires_in: 600,
             interval: 5,
             start_time: Utc::now(),
@@ -212,7 +225,7 @@ mod tests {
         };
 
         identity_center.login_state = LoginState::DeviceAuthorization(device_auth);
-        
+
         match &identity_center.login_state {
             LoginState::DeviceAuthorization(data) => {
                 assert_eq!(data.user_code, "TEST-CODE");

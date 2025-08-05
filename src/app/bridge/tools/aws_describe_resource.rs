@@ -3,10 +3,7 @@
 //! This tool allows AI agents to get detailed information about specific AWS resources
 //! by providing either an ARN or individual components (account, region, resource type, resource ID).
 
-use crate::app::resource_explorer::{
-    aws_client::AWSResourceClient,
-    state::ResourceEntry,
-};
+use crate::app::resource_explorer::{aws_client::AWSResourceClient, state::ResourceEntry};
 use async_trait::async_trait;
 use serde_json;
 use std::sync::Arc;
@@ -46,24 +43,36 @@ impl AwsDescribeResourceTool {
     fn parse_arn(arn: &str) -> Result<(String, String, String, String), ToolError> {
         let parts: Vec<&str> = arn.split(':').collect();
         if parts.len() < 6 {
-            return Err(ToolError::InvalidParameters { 
-                        message: format!("Invalid ARN format: {}", arn)});
+            return Err(ToolError::InvalidParameters {
+                message: format!("Invalid ARN format: {}", arn),
+            });
         }
-        
+
         let service = parts[2];
         let region = parts[3];
         let account_id = parts[4];
         let resource_part = parts[5];
-        
+
         // Extract resource type and ID from resource part
         let (resource_type, resource_id) = if resource_part.contains('/') {
             let parts: Vec<&str> = resource_part.splitn(2, '/').collect();
-            (format!("AWS::{}::{}", service.to_uppercase(), parts[0]), parts[1].to_string())
+            (
+                format!("AWS::{}::{}", service.to_uppercase(), parts[0]),
+                parts[1].to_string(),
+            )
         } else {
-            (format!("AWS::{}::Unknown", service.to_uppercase()), resource_part.to_string())
+            (
+                format!("AWS::{}::Unknown", service.to_uppercase()),
+                resource_part.to_string(),
+            )
         };
 
-        Ok((account_id.to_string(), region.to_string(), resource_type, resource_id))
+        Ok((
+            account_id.to_string(),
+            region.to_string(),
+            resource_type,
+            resource_id,
+        ))
     }
 }
 
@@ -101,7 +110,7 @@ Examples:
                     "examples": ["arn:aws:ec2:us-east-1:123456789012:instance/i-1234567890abcdef0"]
                 },
                 "resource_type": {
-                    "type": "string", 
+                    "type": "string",
                     "description": "CloudFormation resource type (e.g., 'AWS::EC2::Instance'). Required if not using resource_arn.",
                     "examples": ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::Lambda::Function"]
                 },
@@ -130,7 +139,10 @@ Examples:
         _agent_context: Option<&stood::agent::AgentContext>,
     ) -> Result<ToolResult, ToolError> {
         let start_time = std::time::Instant::now();
-        info!("🔍 aws_describe_resources executing with parameters: {:?}", parameters);
+        info!(
+            "🔍 aws_describe_resources executing with parameters: {:?}",
+            parameters
+        );
 
         // Check if AWS client is available (try instance client first, then global)
         let global_client = get_global_aws_client();
@@ -143,16 +155,16 @@ Examples:
             })?;
 
         // Parse parameters
-        let params = parameters.ok_or_else(|| {
-            ToolError::InvalidParameters { 
-                        message: "No parameters provided".to_string()}
+        let params = parameters.ok_or_else(|| ToolError::InvalidParameters {
+            message: "No parameters provided".to_string(),
         })?;
 
         // Construct ResourceEntry from parameters
-        let resource_entry = if let Some(arn) = params.get("resource_arn").and_then(|v| v.as_str()) {
+        let resource_entry = if let Some(arn) = params.get("resource_arn").and_then(|v| v.as_str())
+        {
             // Parse ARN
             let (account_id, region, resource_type, resource_id) = Self::parse_arn(arn)?;
-            
+
             ResourceEntry {
                 resource_type,
                 account_id,
@@ -172,22 +184,30 @@ Examples:
             }
         } else {
             // Use individual components
-            let resource_type = params.get("resource_type")
+            let resource_type = params
+                .get("resource_type")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::InvalidParameters { 
-                        message: "Either resource_arn or resource_type must be provided".to_string()})?;
-            let account_id = params.get("account_id")
+                .ok_or_else(|| ToolError::InvalidParameters {
+                    message: "Either resource_arn or resource_type must be provided".to_string(),
+                })?;
+            let account_id = params
+                .get("account_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::InvalidParameters { 
-                        message: "Either resource_arn or account_id must be provided".to_string()})?;
-            let region = params.get("region")
+                .ok_or_else(|| ToolError::InvalidParameters {
+                    message: "Either resource_arn or account_id must be provided".to_string(),
+                })?;
+            let region = params
+                .get("region")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::InvalidParameters { 
-                        message: "Either resource_arn or region must be provided".to_string()})?;
-            let resource_id = params.get("resource_id")
+                .ok_or_else(|| ToolError::InvalidParameters {
+                    message: "Either resource_arn or region must be provided".to_string(),
+                })?;
+            let resource_id = params
+                .get("resource_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::InvalidParameters { 
-                        message: "Either resource_arn or resource_id must be provided".to_string()})?;
+                .ok_or_else(|| ToolError::InvalidParameters {
+                    message: "Either resource_arn or resource_id must be provided".to_string(),
+                })?;
 
             ResourceEntry {
                 resource_type: resource_type.to_string(),
@@ -209,11 +229,16 @@ Examples:
         };
 
         // Get detailed properties using the describe_resource API
-        info!("🔍 Fetching detailed properties for {}", resource_entry.resource_id);
-        let detailed_properties = aws_client.describe_resource(&resource_entry)
+        info!(
+            "🔍 Fetching detailed properties for {}",
+            resource_entry.resource_id
+        );
+        let detailed_properties = aws_client
+            .describe_resource(&resource_entry)
             .await
-            .map_err(|e| ToolError::ExecutionFailed { 
-                message: format!("Failed to describe AWS resource: {}", e)})?;
+            .map_err(|e| ToolError::ExecutionFailed {
+                message: format!("Failed to describe AWS resource: {}", e),
+            })?;
 
         let duration = start_time.elapsed();
 
@@ -225,7 +250,11 @@ Examples:
             display_name: resource_entry.display_name.clone(),
             status: resource_entry.status.clone(),
             properties: resource_entry.properties.clone(),
-            tags: resource_entry.tags.iter().map(|tag| format!("{}={}", tag.key, tag.value)).collect(),
+            tags: resource_entry
+                .tags
+                .iter()
+                .map(|tag| format!("{}={}", tag.key, tag.value))
+                .collect(),
         };
 
         let execution_summary = format!(

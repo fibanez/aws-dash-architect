@@ -26,7 +26,7 @@ impl AgentCancellationManager {
     /// Create a new cancellation token for an agent
     pub fn create_token(&self, agent_id: String) -> CancellationToken {
         let token = CancellationToken::new();
-        
+
         // Store the token for later cancellation
         match self.active_tokens.lock() {
             Ok(mut tokens) => {
@@ -34,10 +34,13 @@ impl AgentCancellationManager {
                 debug!("🎯 Created cancellation token for agent: {}", agent_id);
             }
             Err(e) => {
-                warn!("Failed to store cancellation token for agent {}: {}", agent_id, e);
+                warn!(
+                    "Failed to store cancellation token for agent {}: {}",
+                    agent_id, e
+                );
             }
         }
-        
+
         token
     }
 
@@ -90,13 +93,22 @@ impl AgentCancellationManager {
         match self.active_tokens.lock() {
             Ok(mut tokens) => {
                 if tokens.remove(agent_id).is_some() {
-                    debug!("✅ Removed cancellation token for completed agent: {}", agent_id);
+                    debug!(
+                        "✅ Removed cancellation token for completed agent: {}",
+                        agent_id
+                    );
                 } else {
-                    debug!("No cancellation token found to remove for agent: {}", agent_id);
+                    debug!(
+                        "No cancellation token found to remove for agent: {}",
+                        agent_id
+                    );
                 }
             }
             Err(e) => {
-                warn!("Failed to remove cancellation token for agent {}: {}", agent_id, e);
+                warn!(
+                    "Failed to remove cancellation token for agent {}: {}",
+                    agent_id, e
+                );
             }
         }
     }
@@ -140,20 +152,20 @@ mod tests {
     #[tokio::test]
     async fn test_cancellation_manager() {
         let manager = AgentCancellationManager::new();
-        
+
         // Test token creation
         let agent_id = "test-agent-123".to_string();
         let token = manager.create_token(agent_id.clone());
-        
+
         assert_eq!(manager.active_count(), 1);
         assert!(manager.has_active_token(&agent_id));
         assert!(!token.is_cancelled());
-        
+
         // Test individual cancellation
         assert!(manager.cancel_agent(&agent_id));
         assert!(token.is_cancelled());
         assert_eq!(manager.active_count(), 0);
-        
+
         // Test cancelling non-existent agent
         assert!(!manager.cancel_agent("non-existent"));
     }
@@ -161,22 +173,22 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_all() {
         let manager = AgentCancellationManager::new();
-        
+
         // Create multiple tokens
         let token1 = manager.create_token("agent1".to_string());
         let token2 = manager.create_token("agent2".to_string());
         let token3 = manager.create_token("agent3".to_string());
-        
+
         assert_eq!(manager.active_count(), 3);
         assert!(!token1.is_cancelled());
         assert!(!token2.is_cancelled());
         assert!(!token3.is_cancelled());
-        
+
         // Cancel all
         let cancelled_count = manager.cancel_all();
         assert_eq!(cancelled_count, 3);
         assert_eq!(manager.active_count(), 0);
-        
+
         // All tokens should be cancelled
         assert!(token1.is_cancelled());
         assert!(token2.is_cancelled());
@@ -188,7 +200,7 @@ mod tests {
         let manager = AgentCancellationManager::new();
         let agent_id = "test-agent".to_string();
         let token = manager.create_token(agent_id.clone());
-        
+
         // Simulate agent work with cancellation check
         let work_result = tokio::select! {
             _ = async {
@@ -209,7 +221,7 @@ mod tests {
                 manager.cancel_agent(&agent_id);
             } => "cancel_result"
         };
-        
+
         // Work should be cancelled before completion
         assert!(token.is_cancelled());
         assert_eq!(manager.active_count(), 0);

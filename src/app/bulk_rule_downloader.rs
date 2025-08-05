@@ -188,13 +188,13 @@ impl BulkRuleDownloader {
     ) -> Result<ComplianceRuleSet> {
         // Use GitHub API to download actual rules
         let rule_set = self.download_from_github(program).await?;
-        
+
         // Store the rule set
         self.storage.store_rule_set(&rule_set).await?;
-        
+
         // Index the rules
         self.rule_index.index_rule_set(&rule_set).await?;
-        
+
         Ok(rule_set)
     }
 
@@ -212,12 +212,12 @@ impl BulkRuleDownloader {
         programs: &[AvailableComplianceProgram],
     ) -> Result<Vec<ComplianceRuleSet>> {
         let mut rule_sets = Vec::new();
-        
+
         for program in programs {
             let rule_set = self.download_compliance_program_rules(program).await?;
             rule_sets.push(rule_set);
         }
-        
+
         Ok(rule_sets)
     }
 
@@ -269,31 +269,32 @@ impl BulkRuleDownloader {
     ) -> Result<ComplianceRuleSet> {
         // Create GitHub API client
         let github_client = GitHubApiClient::new().await?;
-        
+
         // Get repository structure to find .guard files for this program
         let repo_structure = github_client.get_repository_structure().await?;
-        
+
         // Find the program's directory in the structure
-        let program_files = repo_structure.get(&program.github_path)
+        let program_files = repo_structure
+            .get(&program.github_path)
             .cloned()
             .unwrap_or_else(|| {
                 // Fall back to generating placeholder rules if path not found
                 self.get_fallback_rules_for_program(program)
             });
-        
+
         let mut rules = HashMap::new();
         let mut download_attempts = 0;
-        
+
         // Download each .guard file
         for file_name in program_files {
             if file_name.ends_with(".guard") {
                 let file_path = format!("{}/{}", program.github_path, file_name);
                 let rule_name = file_name.trim_end_matches(".guard").to_string();
-                
+
                 // Attempt to download the file with retry logic
                 let mut attempt = 0;
                 let mut file_content = None;
-                
+
                 while attempt < self.max_retries {
                     match github_client.download_file_content(&file_path).await {
                         Ok(content) => {
@@ -302,23 +303,28 @@ impl BulkRuleDownloader {
                         }
                         Err(err) => {
                             attempt += 1;
-                            tracing::warn!("Failed to download {} (attempt {}): {}", file_path, attempt, err);
-                            
+                            tracing::warn!(
+                                "Failed to download {} (attempt {}): {}",
+                                file_path,
+                                attempt,
+                                err
+                            );
+
                             if attempt < self.max_retries {
                                 sleep(Duration::from_millis(self.retry_delay_ms)).await;
                             }
                         }
                     }
                 }
-                
+
                 download_attempts += 1;
-                
+
                 // Use downloaded content or fall back to placeholder
                 let content = file_content.unwrap_or_else(|| {
                     tracing::warn!("Using placeholder content for {}", rule_name);
                     self.generate_placeholder_rule_content(&rule_name, program)
                 });
-                
+
                 rules.insert(
                     rule_name.clone(),
                     GuardRuleFile {
@@ -329,23 +335,29 @@ impl BulkRuleDownloader {
                 );
             }
         }
-        
+
         // If no rules were downloaded, generate some placeholder rules
         if rules.is_empty() {
-            tracing::warn!("No rules downloaded for {} after {} attempts, generating placeholder rules", program.name, download_attempts);
+            tracing::warn!(
+                "No rules downloaded for {} after {} attempts, generating placeholder rules",
+                program.name, download_attempts
+            );
             return self.generate_placeholder_rule_set(program).await;
         }
-        
+
         Ok(ComplianceRuleSet {
             program_name: program.name.clone(),
             display_name: program.display_name.clone(),
             version: "1.0.0".to_string(),
-            source_url: format!("https://github.com/aws-cloudformation/aws-guard-rules-registry/tree/main/{}", program.github_path),
+            source_url: format!(
+                "https://github.com/aws-cloudformation/aws-guard-rules-registry/tree/main/{}",
+                program.github_path
+            ),
             download_date: Utc::now(),
             rules,
         })
     }
-    
+
     /// Get fallback rule file names for a program when GitHub API fails
     fn get_fallback_rules_for_program(&self, program: &AvailableComplianceProgram) -> Vec<String> {
         match program.name.as_str() {
@@ -361,9 +373,13 @@ impl BulkRuleDownloader {
             _ => vec!["generic_security_rule.guard".to_string()],
         }
     }
-    
+
     /// Generate placeholder rule content for a specific rule name
-    fn generate_placeholder_rule_content(&self, rule_name: &str, program: &AvailableComplianceProgram) -> String {
+    fn generate_placeholder_rule_content(
+        &self,
+        rule_name: &str,
+        program: &AvailableComplianceProgram,
+    ) -> String {
         match rule_name {
             "s3_bucket_ssl_requests_only" => self.get_s3_ssl_rule(),
             "iam_password_policy" => self.get_iam_password_rule(),
@@ -376,14 +392,14 @@ impl BulkRuleDownloader {
             ),
         }
     }
-    
+
     /// Generate placeholder rule set for testing - used as fallback when GitHub API fails
     async fn generate_placeholder_rule_set(
         &self,
         program: &AvailableComplianceProgram,
     ) -> Result<ComplianceRuleSet> {
         let mut rules = HashMap::new();
-        
+
         // Generate placeholder rules based on program type
         match program.name.as_str() {
             name if name.contains("nist") => {
@@ -393,7 +409,7 @@ impl BulkRuleDownloader {
                         content: self.get_s3_ssl_rule(),
                         file_path: "s3_bucket_ssl_requests_only.guard".to_string(),
                         last_modified: Utc::now(),
-                    }
+                    },
                 );
                 rules.insert(
                     "iam_password_policy".to_string(),
@@ -401,7 +417,7 @@ impl BulkRuleDownloader {
                         content: self.get_iam_password_rule(),
                         file_path: "iam_password_policy.guard".to_string(),
                         last_modified: Utc::now(),
-                    }
+                    },
                 );
                 rules.insert(
                     "ec2_security_group_attached".to_string(),
@@ -409,7 +425,7 @@ impl BulkRuleDownloader {
                         content: self.get_ec2_security_group_rule(),
                         file_path: "ec2_security_group_attached.guard".to_string(),
                         last_modified: Utc::now(),
-                    }
+                    },
                 );
             }
             name if name.contains("pci") => {
@@ -419,7 +435,7 @@ impl BulkRuleDownloader {
                         content: self.get_rds_encryption_rule(),
                         file_path: "rds_storage_encrypted.guard".to_string(),
                         last_modified: Utc::now(),
-                    }
+                    },
                 );
                 rules.insert(
                     "cloudtrail_enabled".to_string(),
@@ -427,7 +443,7 @@ impl BulkRuleDownloader {
                         content: self.get_cloudtrail_rule(),
                         file_path: "cloudtrail_enabled.guard".to_string(),
                         last_modified: Utc::now(),
-                    }
+                    },
                 );
             }
             _ => {
@@ -448,7 +464,10 @@ impl BulkRuleDownloader {
             program_name: program.name.clone(),
             display_name: program.display_name.clone(),
             version: "1.0.0".to_string(),
-            source_url: format!("https://github.com/aws-cloudformation/aws-guard-rules-registry/{}", program.github_path),
+            source_url: format!(
+                "https://github.com/aws-cloudformation/aws-guard-rules-registry/{}",
+                program.github_path
+            ),
             download_date: Utc::now(),
             rules,
         })
@@ -469,7 +488,8 @@ rule s3_bucket_ssl_requests_only {
             }
         }
     }
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     /// Get IAM password policy rule content
@@ -485,7 +505,8 @@ rule iam_password_policy {
             RequireSymbols == true
         }
     }
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     /// Get EC2 security group rule content
@@ -504,7 +525,8 @@ rule ec2_security_group_attached {
             }
         }
     }
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     /// Get RDS encryption rule content
@@ -516,7 +538,8 @@ rule rds_storage_encrypted {
             StorageEncrypted == true
         }
     }
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     /// Get CloudTrail rule content
@@ -530,7 +553,8 @@ rule cloudtrail_enabled {
             IsMultiRegionTrail == true
         }
     }
-}"#.to_string()
+}"#
+        .to_string()
     }
 }
 
@@ -556,7 +580,7 @@ impl RuleStorage {
     /// * `rule_set` - The rule set to store
     pub async fn store_rule_set(&mut self, rule_set: &ComplianceRuleSet) -> Result<()> {
         let program_dir = self.storage_dir.join(&rule_set.program_name);
-        
+
         // Create program directory
         if !program_dir.exists() {
             fs::create_dir_all(&program_dir)?;
@@ -603,7 +627,7 @@ impl RuleIndex {
         for (rule_name, rule_file) in &rule_set.rules {
             // Extract resource types from rule content
             let resource_types = self.extract_resource_types(&rule_file.content);
-            
+
             for resource_type in resource_types {
                 self.resource_type_index
                     .entry(resource_type)
@@ -618,7 +642,8 @@ impl RuleIndex {
                 .push(rule_name.clone());
 
             // Cache rule content
-            self.rule_content_cache.insert(rule_name.clone(), rule_file.content.clone());
+            self.rule_content_cache
+                .insert(rule_name.clone(), rule_file.content.clone());
         }
 
         Ok(())
@@ -634,7 +659,8 @@ impl RuleIndex {
     ///
     /// Vector of rule names that apply to the resource type
     pub async fn find_rules_by_resource_type(&self, resource_type: &str) -> Result<Vec<String>> {
-        Ok(self.resource_type_index
+        Ok(self
+            .resource_type_index
             .get(resource_type)
             .cloned()
             .unwrap_or_default())
@@ -650,7 +676,8 @@ impl RuleIndex {
     ///
     /// Vector of rule names in the program
     pub async fn find_rules_by_program(&self, program_name: &str) -> Result<Vec<String>> {
-        Ok(self.program_index
+        Ok(self
+            .program_index
             .get(program_name)
             .cloned()
             .unwrap_or_default())
@@ -675,7 +702,7 @@ impl RuleIndex {
     /// Extract AWS resource types from Guard rule content
     fn extract_resource_types(&self, content: &str) -> Vec<String> {
         let mut resource_types = Vec::new();
-        
+
         // Simple regex-like extraction (in a real implementation, you'd use proper parsing)
         for line in content.lines() {
             if line.trim().contains("AWS::") {
@@ -691,7 +718,7 @@ impl RuleIndex {
                 }
             }
         }
-        
+
         resource_types
     }
 }

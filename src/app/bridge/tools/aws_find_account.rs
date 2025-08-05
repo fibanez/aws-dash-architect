@@ -67,9 +67,7 @@ impl AwsFindAccountTool {
     }
 
     pub fn new_uninitialized() -> Self {
-        Self {
-            aws_identity: None,
-        }
+        Self { aws_identity: None }
     }
 
     pub fn set_aws_identity(&mut self, aws_identity: Option<Arc<Mutex<AwsIdentityCenter>>>) {
@@ -226,17 +224,22 @@ Examples:
         _agent_context: Option<&stood::agent::AgentContext>,
     ) -> Result<ToolResult, ToolError> {
         let start_time = std::time::Instant::now();
-        info!("🔍 aws_find_account executing with parameters: {:?}", parameters);
+        info!(
+            "🔍 aws_find_account executing with parameters: {:?}",
+            parameters
+        );
 
         // Parse parameters
         let params = parameters.unwrap_or_else(|| serde_json::json!({}));
-        
-        let query = params.get("query")
+
+        let query = params
+            .get("query")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
-        
-        let limit = params.get("limit")
+
+        let limit = params
+            .get("limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(10)
             .min(100) as usize;
@@ -245,10 +248,17 @@ Examples:
 
         // Search from AwsIdentityCenter
         let mut all_results = self.search_identity_accounts(query);
-        info!("📊 Found {} matches from AwsIdentityCenter", all_results.len());
+        info!(
+            "📊 Found {} matches from AwsIdentityCenter",
+            all_results.len()
+        );
 
         // Sort by match score (highest first)
-        all_results.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.match_score
+                .partial_cmp(&a.match_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let total_before_limit = all_results.len();
 

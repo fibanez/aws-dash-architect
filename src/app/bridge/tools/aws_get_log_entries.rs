@@ -9,7 +9,7 @@ use chrono::Utc;
 use serde_json;
 use std::sync::Arc;
 use stood::agent::Agent;
-use stood::telemetry::{TelemetryConfig, LogLevel};
+use stood::telemetry::{LogLevel, TelemetryConfig};
 use stood::tools::{Tool, ToolError, ToolResult};
 use tracing::{info, warn};
 
@@ -133,16 +133,14 @@ Be proactive in suggesting related log groups and time ranges if the initial sea
             info!("📡 Log analysis agent using Bridge event bubbling with user-friendly language");
             let callback_handler = SubAgentCallbackHandler::with_sender(
                 session_id.clone(),
-                "aws-log-analyzer".to_string(), 
-                bridge_sender
+                "aws-log-analyzer".to_string(),
+                bridge_sender,
             );
             agent_builder = agent_builder.with_callback_handler(callback_handler);
         } else {
             info!("📊 Log analysis agent without Bridge event bubbling (standalone mode)");
-            let callback_handler = SubAgentCallbackHandler::new(
-                session_id.clone(), 
-                "aws-log-analyzer".to_string()
-            );
+            let callback_handler =
+                SubAgentCallbackHandler::new(session_id.clone(), "aws-log-analyzer".to_string());
             agent_builder = agent_builder.with_callback_handler(callback_handler);
         }
 
@@ -360,5 +358,3 @@ impl Tool for AwsGetLogEntriesTool {
         // Agent is automatically dropped here, ensuring memory cleanup
     }
 }
-
-

@@ -1,8 +1,8 @@
+use anyhow::Result;
 use awsdash::app::cfn_guard::{
-    GuardValidator, GuardValidation, GuardViolation, ViolationSeverity, ComplianceProgram
+    ComplianceProgram, GuardValidation, GuardValidator, GuardViolation, ViolationSeverity,
 };
 use awsdash::app::cfn_template::CloudFormationTemplate;
-use anyhow::Result;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 async fn test_guard_validator_creation() {
     let compliance_programs = vec![ComplianceProgram::NIST80053R5];
     let validator = GuardValidator::new(compliance_programs).await;
-    
+
     assert!(validator.is_ok());
     let validator = validator.unwrap();
     assert_eq!(validator.get_compliance_programs().len(), 1);
@@ -22,7 +22,7 @@ async fn test_guard_validator_creation() {
 async fn test_basic_template_validation() {
     let compliance_programs = vec![ComplianceProgram::NIST80053R5];
     let validator = GuardValidator::new(compliance_programs).await.unwrap();
-    
+
     // Create a simple S3 bucket template
     let template_json = json!({
         "AWSTemplateFormatVersion": "2010-09-09",
@@ -35,10 +35,10 @@ async fn test_basic_template_validation() {
             }
         }
     });
-    
+
     let template = CloudFormationTemplate::from_json(&template_json.to_string()).unwrap();
     let result = validator.validate_template(&template).await;
-    
+
     assert!(result.is_ok());
     let validation = result.unwrap();
     assert_eq!(validation.total_rules > 0);
@@ -49,7 +49,7 @@ async fn test_basic_template_validation() {
 async fn test_violation_detection() {
     let compliance_programs = vec![ComplianceProgram::NIST80053R5];
     let validator = GuardValidator::new(compliance_programs).await.unwrap();
-    
+
     // Create a non-compliant S3 bucket (no encryption)
     let template_json = json!({
         "AWSTemplateFormatVersion": "2010-09-09",
@@ -63,10 +63,10 @@ async fn test_violation_detection() {
             }
         }
     });
-    
+
     let template = CloudFormationTemplate::from_json(&template_json.to_string()).unwrap();
     let result = validator.validate_template(&template).await;
-    
+
     assert!(result.is_ok());
     let validation = result.unwrap();
     assert!(!validation.compliant);
@@ -84,7 +84,7 @@ fn test_guard_violation_structure() {
         exempted: false,
         exemption_reason: None,
     };
-    
+
     assert_eq!(violation.rule_name, "S3_BUCKET_SSL_REQUESTS_ONLY");
     assert_eq!(violation.resource_name, "MyBucket");
     assert_eq!(violation.severity, ViolationSeverity::High);
@@ -104,9 +104,9 @@ fn test_compliance_program_variants() {
         ComplianceProgram::FedRAMP,
         ComplianceProgram::Custom("MyCustomProgram".to_string()),
     ];
-    
+
     assert_eq!(programs.len(), 8);
-    
+
     // Test that Custom variant works
     if let ComplianceProgram::Custom(name) = &programs[7] {
         assert_eq!(name, "MyCustomProgram");
@@ -122,7 +122,7 @@ fn test_violation_severity() {
     let high = ViolationSeverity::High;
     let medium = ViolationSeverity::Medium;
     let low = ViolationSeverity::Low;
-    
+
     // Test that we can create all severity levels
     assert_eq!(format!("{:?}", critical), "Critical");
     assert_eq!(format!("{:?}", high), "High");
@@ -151,19 +151,21 @@ fn test_guard_validation_aggregation() {
             exemption_reason: None,
         },
     ];
-    
+
     let validation = GuardValidation {
         violations: violations.clone(),
         compliant: false,
         total_rules: 10,
     };
-    
+
     assert!(!validation.compliant);
     assert_eq!(validation.violations.len(), 2);
     assert_eq!(validation.total_rules, 10);
-    
+
     // Test violation severity groupings
-    let critical_violations: Vec<_> = validation.violations.iter()
+    let critical_violations: Vec<_> = validation
+        .violations
+        .iter()
         .filter(|v| matches!(v.severity, ViolationSeverity::Critical))
         .collect();
     assert_eq!(critical_violations.len(), 1);
@@ -174,15 +176,15 @@ fn test_guard_validation_aggregation() {
 async fn test_empty_template_validation() {
     let compliance_programs = vec![ComplianceProgram::NIST80053R5];
     let validator = GuardValidator::new(compliance_programs).await.unwrap();
-    
+
     let empty_template_json = json!({
         "AWSTemplateFormatVersion": "2010-09-09",
         "Resources": {}
     });
-    
+
     let template = CloudFormationTemplate::from_json(&empty_template_json.to_string()).unwrap();
     let result = validator.validate_template(&template).await;
-    
+
     assert!(result.is_ok());
     let validation = result.unwrap();
     assert!(validation.compliant); // Empty template should be compliant
@@ -192,14 +194,11 @@ async fn test_empty_template_validation() {
 /// Test multiple compliance programs integration
 #[tokio::test]
 async fn test_multiple_compliance_programs() {
-    let compliance_programs = vec![
-        ComplianceProgram::NIST80053R5,
-        ComplianceProgram::PCIDSS,
-    ];
+    let compliance_programs = vec![ComplianceProgram::NIST80053R5, ComplianceProgram::PCIDSS];
     let validator = GuardValidator::new(compliance_programs).await.unwrap();
-    
+
     assert_eq!(validator.get_compliance_programs().len(), 2);
-    
+
     // Test validation with multiple programs
     let template_json = json!({
         "AWSTemplateFormatVersion": "2010-09-09",
@@ -212,10 +211,10 @@ async fn test_multiple_compliance_programs() {
             }
         }
     });
-    
+
     let template = CloudFormationTemplate::from_json(&template_json.to_string()).unwrap();
     let result = validator.validate_template(&template).await;
-    
+
     assert!(result.is_ok());
     // Should have rules from both compliance programs
     let validation = result.unwrap();

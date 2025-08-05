@@ -56,7 +56,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::app::cfn_guard::{GuardValidator, GuardValidation};
+use crate::app::cfn_guard::{GuardValidation, GuardValidator};
 
 /// Represents resource dependencies in CloudFormation templates.
 ///
@@ -1437,7 +1437,7 @@ impl CloudFormationTemplate {
     /// # async fn example() -> anyhow::Result<()> {
     /// let template = CloudFormationTemplate::from_file(Path::new("template.yaml"))?;
     /// let validator = GuardValidator::new(vec![ComplianceProgram::NIST80053R5]).await?;
-    /// 
+    ///
     /// let validation = template.validate_with_guard(&validator).await?;
     /// if !validation.compliant {
     ///     println!("Found {} violations", validation.violations.len());
@@ -1445,7 +1445,10 @@ impl CloudFormationTemplate {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn validate_with_guard(&self, validator: &mut GuardValidator) -> Result<GuardValidation> {
+    pub async fn validate_with_guard(
+        &self,
+        validator: &mut GuardValidator,
+    ) -> Result<GuardValidation> {
         validator.validate_template(self).await
     }
 }

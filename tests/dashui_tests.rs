@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use awsdash::app::dashui::app::{DashApp, ThemeChoice, FocusedWindow};
+    use awsdash::app::dashui::app::{DashApp, FocusedWindow, ThemeChoice};
 
     #[test]
     fn test_dashapp_default() {
@@ -40,10 +40,16 @@ mod tests {
     fn test_focused_window_equality() {
         assert_eq!(FocusedWindow::CommandPalette, FocusedWindow::CommandPalette);
         assert_ne!(FocusedWindow::CommandPalette, FocusedWindow::ResourceTypes);
-        
+
         // Test PropertyType with index
-        assert_eq!(FocusedWindow::PropertyType(0), FocusedWindow::PropertyType(0));
-        assert_ne!(FocusedWindow::PropertyType(0), FocusedWindow::PropertyType(1));
+        assert_eq!(
+            FocusedWindow::PropertyType(0),
+            FocusedWindow::PropertyType(0)
+        );
+        assert_ne!(
+            FocusedWindow::PropertyType(0),
+            FocusedWindow::PropertyType(1)
+        );
     }
 
     #[test]
@@ -56,13 +62,13 @@ mod tests {
 
         // Serialize
         let serialized = serde_json::to_string(&app).unwrap();
-        
+
         // Deserialize
         let deserialized: DashApp = serde_json::from_str(&serialized).unwrap();
-        
+
         // Check theme is preserved
         assert!(matches!(deserialized.theme, ThemeChoice::Mocha));
-        
+
         // Check that skipped fields are reset to defaults
         assert!(!deserialized.show_command_palette);
         assert!(deserialized.aws_identity_center.is_none());

@@ -480,7 +480,9 @@ mod tests {
                     if let Some(original_resource) = original_template.resources.get(resource_id) {
                         // Compare properties individually
                         for (prop_key, original_value) in &original_resource.properties {
-                            if let Some(converted_value) = template_resource.properties.get(prop_key) {
+                            if let Some(converted_value) =
+                                template_resource.properties.get(prop_key)
+                            {
                                 if original_value != converted_value {
                                     println!("FOUND BUG: Property '{}' type mismatch!", prop_key);
                                     println!(

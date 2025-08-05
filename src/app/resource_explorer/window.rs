@@ -63,7 +63,7 @@ impl ResourceExplorerWindow {
                 // Create AWS client with credential coordinator
                 let aws_client = Arc::new(AWSResourceClient::new(credential_coordinator));
                 self.aws_client = Some(aws_client.clone());
-                
+
                 // Set global AWS client for bridge tools
                 set_global_aws_client(Some(aws_client));
                 tracing::info!("🔧 AWS client created and set as global client for bridge tools");
@@ -71,7 +71,7 @@ impl ResourceExplorerWindow {
         } else {
             // Clear AWS client if identity center is removed
             self.aws_client = None;
-            
+
             // Clear global AWS client for bridge tools
             set_global_aws_client(None);
             tracing::info!("🔧 AWS client cleared from global bridge tools");

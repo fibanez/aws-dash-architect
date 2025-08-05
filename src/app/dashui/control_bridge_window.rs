@@ -6,13 +6,13 @@
 
 use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::bridge::{
-    aws_find_account_tool, aws_find_region_tool,
-    create_task_tool, todo_write_tool, todo_read_tool,
-    set_global_aws_credentials, set_global_bridge_sender, clear_global_bridge_sender,
-    get_global_cancellation_manager, set_global_model, get_global_model,
-    ModelConfig, ModelSettings
+    aws_find_account_tool, aws_find_region_tool, clear_global_bridge_sender, create_task_tool,
+    get_global_cancellation_manager, set_global_aws_credentials,
+    set_global_bridge_sender, set_global_model, todo_read_tool, todo_write_tool, ModelConfig,
+    ModelSettings,
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
+use crate::create_agent_with_model;
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
 use egui::{CollapsingHeader, Color32, RichText, ScrollArea, TextEdit, Window};
@@ -35,44 +35,44 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub enum SubAgentEvent {
     /// Processing started with task description
-    ProcessingStarted { 
-        timestamp: DateTime<Utc>, 
-        task_description: String 
+    ProcessingStarted {
+        timestamp: DateTime<Utc>,
+        task_description: String,
     },
     /// Model request sent to AI
-    ModelRequest { 
-        timestamp: DateTime<Utc>, 
+    ModelRequest {
+        timestamp: DateTime<Utc>,
         messages_count: usize,
-        raw_json: Option<String>
+        raw_json: Option<String>,
     },
     /// Model response received from AI
-    ModelResponse { 
-        timestamp: DateTime<Utc>, 
+    ModelResponse {
+        timestamp: DateTime<Utc>,
         response_length: usize,
-        tokens_used: Option<u32>
+        tokens_used: Option<u32>,
     },
     /// Tool execution started
-    ToolStarted { 
-        timestamp: DateTime<Utc>, 
+    ToolStarted {
+        timestamp: DateTime<Utc>,
         tool_name: String,
-        input_summary: Option<String>
+        input_summary: Option<String>,
     },
     /// Tool execution completed
-    ToolCompleted { 
-        timestamp: DateTime<Utc>, 
-        tool_name: String, 
+    ToolCompleted {
+        timestamp: DateTime<Utc>,
+        tool_name: String,
         success: bool,
-        output_summary: Option<String>
+        output_summary: Option<String>,
     },
     /// Task completed successfully
-    TaskComplete { 
-        timestamp: DateTime<Utc> 
-    },
+    TaskComplete { timestamp: DateTime<Utc> },
     /// Error occurred during processing
-    Error { 
-        timestamp: DateTime<Utc>, 
-        error: String 
+    Error {
+        timestamp: DateTime<Utc>,
+        error: String,
     },
+    /// JSON debug data from model interactions (for task agents)
+    JsonDebug(JsonDebugData),
 }
 
 /// Response from agent execution in separate thread
@@ -82,10 +82,22 @@ pub enum AgentResponse {
     Error(String),
     JsonDebug(JsonDebugData),
     StreamingUpdate(StreamingUpdate),
-    SubAgentEvent { agent_id: String, agent_type: String, event: SubAgentEvent },
-    AgentCreated { agent_id: String, agent_type: String },
-    AgentDestroyed { agent_id: String, agent_type: String },
-    ModelChanged { model_id: String },
+    SubAgentEvent {
+        agent_id: String,
+        agent_type: String,
+        event: SubAgentEvent,
+    },
+    AgentCreated {
+        agent_id: String,
+        agent_type: String,
+    },
+    AgentDestroyed {
+        agent_id: String,
+        agent_type: String,
+    },
+    ModelChanged {
+        model_id: String,
+    },
 }
 
 /// Real-time streaming updates from agent execution
@@ -182,6 +194,7 @@ pub struct Message {
     pub debug_info: Option<String>,
     pub nested_messages: Vec<Message>,
     pub agent_source: Option<String>, // Track which agent/tool generated this message
+    pub json_debug_data: Vec<JsonDebugData>, // JSON capture data for this message/agent
 }
 
 impl Message {
@@ -196,6 +209,7 @@ impl Message {
             debug_info: None,
             nested_messages: Vec::new(),
             agent_source: None,
+            json_debug_data: Vec::new(),
         }
     }
 
@@ -210,6 +224,7 @@ impl Message {
             debug_info: None,
             nested_messages: Vec::new(),
             agent_source: Some(agent_source),
+            json_debug_data: Vec::new(),
         }
     }
 
@@ -280,14 +295,14 @@ pub struct ControlBridgeWindow {
     message_expand_states: HashMap<String, bool>, // Track expand state by message ID
     // Active agent tracking for cancellation
     active_agents: Arc<Mutex<HashMap<String, String>>>, // agent_id -> agent_type mapping
-    main_agent_active: bool, // Track if main Bridge Agent is processing
+    main_agent_active: bool,                            // Track if main Bridge Agent is processing
     // Parent-child node relationships for sub-agent visibility
     active_agent_nodes: HashMap<String, String>, // agent_id -> parent_message_id mapping
-    
+
     // Model selection and configuration
     available_models: Vec<ModelConfig>, // Available AI models
-    model_settings: ModelSettings, // Model preferences and selection
-    model_changed: bool, // Flag to trigger agent recreation when model changes
+    model_settings: ModelSettings,      // Model preferences and selection
+    model_changed: bool,                // Flag to trigger agent recreation when model changes
 }
 
 impl Default for ControlBridgeWindow {
@@ -323,7 +338,7 @@ impl ControlBridgeWindow {
     fn get_task_description(agent_type: &str, task_description: &str) -> String {
         let task_verb = match agent_type {
             "aws-log-analyzer" => "🔍 Analyzing CloudWatch logs",
-            "aws-resource-auditor" => "📊 Auditing AWS resources", 
+            "aws-resource-auditor" => "📊 Auditing AWS resources",
             "aws-security-scanner" => "🔒 Scanning security posture",
             _ => "⚙️ Processing request", // Generic fallback
         };
@@ -335,7 +350,7 @@ impl ControlBridgeWindow {
 
         // Create response channel for thread communication
         let (response_sender, response_receiver) = mpsc::channel();
-        
+
         // Set global Bridge sender for log analysis event bubbling
         set_global_bridge_sender(response_sender.clone());
         info!("📡 Global Bridge sender configured for log analysis event bubbling");
@@ -348,8 +363,8 @@ impl ControlBridgeWindow {
             response_sender,
             debug_mode: false,
             show_json_debug: false, // Disable JSON debug by default
-            dark_mode: true,       // Default to dark mode
-            open: false,           // Start closed by default
+            dark_mode: true,        // Default to dark mode
+            open: false,            // Start closed by default
             auto_scroll: true,
             scroll_to_bottom: false,
             last_message_time: None,
@@ -369,7 +384,7 @@ impl ControlBridgeWindow {
             active_agents: Arc::new(Mutex::new(HashMap::new())),
             main_agent_active: false,
             active_agent_nodes: HashMap::new(),
-            
+
             // Initialize model configuration
             available_models: ModelConfig::default_models(),
             model_settings: ModelSettings::default(),
@@ -378,7 +393,7 @@ impl ControlBridgeWindow {
 
         // Set initial global model configuration
         set_global_model(app.model_settings.selected_model.clone());
-        
+
         // Add welcome message
         app.add_message(Message::new_with_agent(
             MessageRole::System,
@@ -392,13 +407,13 @@ impl ControlBridgeWindow {
     /// Cancel all active agents (main Bridge Agent and specialized agents)
     fn cancel_all_agents(&mut self) {
         info!("🛑 Cancelling all active agents with proper cancellation tokens");
-        
+
         // Cancel main Bridge Agent
         if self.main_agent_active {
             info!("🛑 Cancelling main Bridge Agent");
             self.processing_message = false;
             self.main_agent_active = false;
-            
+
             // Add cancellation message
             self.add_message(Message::new_with_agent(
                 MessageRole::System,
@@ -406,12 +421,16 @@ impl ControlBridgeWindow {
                 "ControlBridge".to_string(),
             ));
         }
-        
+
         // Actually cancel all running agents using the global cancellation manager
-        let cancelled_count = if let Some(cancellation_manager) = get_global_cancellation_manager() {
+        let cancelled_count = if let Some(cancellation_manager) = get_global_cancellation_manager()
+        {
             let count = cancellation_manager.cancel_all();
             if count > 0 {
-                info!("🛑 Cancelled {} running agents via cancellation tokens", count);
+                info!(
+                    "🛑 Cancelled {} running agents via cancellation tokens",
+                    count
+                );
                 count
             } else {
                 info!("🛑 No running agents to cancel");
@@ -421,7 +440,7 @@ impl ControlBridgeWindow {
             warn!("❌ No global cancellation manager available - cannot cancel running agents");
             0
         };
-        
+
         // Update UI tracking for active agents
         let ui_active_agents = {
             let mut agents = self.active_agents.lock().unwrap();
@@ -430,7 +449,7 @@ impl ControlBridgeWindow {
             agents.clear(); // Clear all active agents from UI tracking
             (count, agent_types)
         };
-        
+
         // Show appropriate cancellation messages
         if cancelled_count > 0 || ui_active_agents.0 > 0 {
             let total_cancelled = std::cmp::max(cancelled_count, ui_active_agents.0);
@@ -440,10 +459,10 @@ impl ControlBridgeWindow {
                 "ControlBridge".to_string(),
             ));
         }
-        
+
         // Reset UI state
         self.scroll_to_bottom = true;
-        
+
         info!("🛑 All agents cancelled - UI reset complete");
     }
 
@@ -532,7 +551,7 @@ impl ControlBridgeWindow {
                 Ok(mut identity) => match identity.get_default_role_credentials() {
                     Ok(creds) => {
                         let region = identity.identity_center_region.clone();
-                        
+
                         // Set global AWS credentials for standalone agents
                         set_global_aws_credentials(
                             creds.access_key_id.clone(),
@@ -540,9 +559,9 @@ impl ControlBridgeWindow {
                             creds.session_token.clone(),
                             region.clone(),
                         );
-                        
+
                         (creds, region)
-                    },
+                    }
                     Err(e) => {
                         let response = AgentResponse::Error(format!(
                             "Failed to get AWS Identity Center credentials: {}",
@@ -617,10 +636,8 @@ impl ControlBridgeWindow {
                             .service_attributes
                             .insert("deployment.environment".to_string(), "desktop-application".to_string());
 
-                        // TODO: Add model configuration once stood library model API is clarified
-                        // let model = ModelConfig::id_to_bedrock_model(&selected_model);
-                        let mut agent_builder = Agent::builder()
-                            // .model(model)  // TODO: Re-enable when model API is available
+                        // Configure model for this agent
+                        let mut agent_builder = create_agent_with_model!(Agent::builder(), &selected_model)
                             .system_prompt("You are the AWS Bridge Agent - a task orchestrator for AWS infrastructure management.
 
 IMPORTANT: Always use TodoWrite to plan and track multi-step tasks. This is CRITICAL for user visibility.
@@ -828,8 +845,9 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                                 
                                 // Notify UI thread that model was successfully changed
                                 if model_changed {
+                                    info!("✅ Model successfully changed to: {}", selected_model);
                                     if let Err(e) = sender.send(AgentResponse::ModelChanged { 
-                                        model_id: selected_model.clone() 
+                                        model_id: selected_model.clone()
                                     }) {
                                         error!("Failed to send model change notification to UI: {}", e);
                                     }
@@ -877,7 +895,6 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         debug!("Agent execution thread spawned, processing_message remains true until response received");
     }
 
-
     pub fn show(&mut self, ctx: &egui::Context, aws_identity: &Arc<Mutex<AwsIdentityCenter>>) {
         // Check for agent responses from background threads (non-blocking)
         while let Ok(response) = self.response_receiver.try_recv() {
@@ -889,7 +906,7 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
 
         // Control Bridge window - closable like other windows with stable title
         let window_title = "🚢 Control Bridge";
-        
+
         let window = Window::new(window_title)
             .movable(true)
             .resizable(true)
@@ -1057,24 +1074,36 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
             AgentResponse::StreamingUpdate(update) => {
                 self.handle_streaming_update(update);
             }
-            AgentResponse::SubAgentEvent { agent_id, agent_type, event } => {
+            AgentResponse::SubAgentEvent {
+                agent_id,
+                agent_type,
+                event,
+            } => {
                 self.handle_sub_agent_event(agent_id, agent_type, event);
             }
-            AgentResponse::AgentCreated { agent_id, agent_type } => {
+            AgentResponse::AgentCreated {
+                agent_id,
+                agent_type,
+            } => {
                 self.handle_agent_created(agent_id, agent_type);
             }
-            AgentResponse::AgentDestroyed { agent_id, agent_type } => {
+            AgentResponse::AgentDestroyed {
+                agent_id,
+                agent_type,
+            } => {
                 self.handle_agent_destroyed(agent_id, agent_type);
             }
             AgentResponse::ModelChanged { model_id } => {
                 info!("✅ Model successfully changed to: {}", model_id);
                 self.model_changed = false; // Reset the flag
-                
+
                 // Add a system message to indicate successful model change
                 self.add_message(Message::new_with_agent(
                     MessageRole::System,
-                    format!("🤖 Agent successfully updated to use {}", 
-                        ModelConfig::get_display_name(&self.available_models, &model_id)),
+                    format!(
+                        "🤖 Agent successfully updated to use {}",
+                        ModelConfig::get_display_name(&self.available_models, &model_id)
+                    ),
                     "ControlBridge".to_string(),
                 ));
                 self.scroll_to_bottom = true;
@@ -1082,49 +1111,129 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         }
     }
 
-    fn handle_sub_agent_event(&mut self, agent_id: String, agent_type: String, event: SubAgentEvent) {
-        debug!("📊 Received sub-agent event from {} {}: {:?}", agent_type, agent_id, event);
-        
+    fn handle_sub_agent_event(
+        &mut self,
+        agent_id: String,
+        agent_type: String,
+        event: SubAgentEvent,
+    ) {
+        debug!(
+            "📊 Received sub-agent event from {} {}: {:?}",
+            agent_type, agent_id, event
+        );
+
         // Create user-friendly message for the sub-agent event
         let (icon, content) = match &event {
-            SubAgentEvent::ProcessingStarted { timestamp, task_description } => {
-                ("🚀", format!("Started processing at {}: {}", 
-                    timestamp.format("%H:%M:%S"), task_description))
-            },
-            SubAgentEvent::ModelRequest { timestamp: _, messages_count, .. } => {
-                ("📤", format!("Requesting analysis from AI model ({} messages)", messages_count))
-            },
-            SubAgentEvent::ModelResponse { timestamp: _, response_length, tokens_used } => {
-                let token_info = tokens_used.map(|t| format!(" - {} tokens", t)).unwrap_or_default();
-                ("📥", format!("Received AI analysis results ({} chars{})", response_length, token_info))
-            },
-            SubAgentEvent::ToolStarted { timestamp, tool_name, .. } => {
+            SubAgentEvent::ProcessingStarted {
+                timestamp,
+                task_description,
+            } => (
+                "🚀",
+                format!(
+                    "Started processing at {}: {}",
+                    timestamp.format("%H:%M:%S"),
+                    task_description
+                ),
+            ),
+            SubAgentEvent::ModelRequest {
+                timestamp: _,
+                messages_count,
+                ..
+            } => (
+                "📤",
+                format!(
+                    "Requesting analysis from AI model ({} messages)",
+                    messages_count
+                ),
+            ),
+            SubAgentEvent::ModelResponse {
+                timestamp: _,
+                response_length,
+                tokens_used,
+            } => {
+                let token_info = tokens_used
+                    .map(|t| format!(" - {} tokens", t))
+                    .unwrap_or_default();
+                (
+                    "📥",
+                    format!(
+                        "Received AI analysis results ({} chars{})",
+                        response_length, token_info
+                    ),
+                )
+            }
+            SubAgentEvent::ToolStarted {
+                timestamp,
+                tool_name,
+                ..
+            } => {
                 let action = Self::get_user_friendly_action(tool_name);
-                ("🔧", format!("{} at {}", action, timestamp.format("%H:%M:%S")))
-            },
-            SubAgentEvent::ToolCompleted { timestamp, tool_name, success, output_summary } => {
+                (
+                    "🔧",
+                    format!("{} at {}", action, timestamp.format("%H:%M:%S")),
+                )
+            }
+            SubAgentEvent::ToolCompleted {
+                timestamp,
+                tool_name,
+                success,
+                output_summary,
+            } => {
                 let action = Self::get_user_friendly_action(tool_name);
                 let icon = if *success { "✅" } else { "❌" };
                 let result = if *success { "completed" } else { "failed" };
-                let summary = output_summary.as_ref()
+                let summary = output_summary
+                    .as_ref()
                     .map(|s| format!(" - {}", s))
                     .unwrap_or_default();
-                (icon, format!("{} {} at {}{}", 
-                    action, result, timestamp.format("%H:%M:%S"), summary))
-            },
-            SubAgentEvent::TaskComplete { timestamp } => {
-                ("🏁", format!("Task completed at {}", 
-                    timestamp.format("%H:%M:%S")))
-            },
-            SubAgentEvent::Error { timestamp, error } => {
-                ("❌", format!("Error at {}: {}", 
-                    timestamp.format("%H:%M:%S"), error))
+                (
+                    icon,
+                    format!(
+                        "{} {} at {}{}",
+                        action,
+                        result,
+                        timestamp.format("%H:%M:%S"),
+                        summary
+                    ),
+                )
+            }
+            SubAgentEvent::TaskComplete { timestamp } => (
+                "🏁",
+                format!("Task completed at {}", timestamp.format("%H:%M:%S")),
+            ),
+            SubAgentEvent::Error { timestamp, error } => (
+                "❌",
+                format!("Error at {}: {}", timestamp.format("%H:%M:%S"), error),
+            ),
+            SubAgentEvent::JsonDebug(json_data) => {
+                // Handle JSON debug data for task agents - add to parent message
+                if let Some(parent_id) = self.active_agent_nodes.get(&agent_id).cloned() {
+                    if let Some(parent_message) = self.messages.iter_mut().find(|m| m.id == parent_id) {
+                        parent_message.json_debug_data.push(json_data.clone());
+                        debug!("📊 Added JSON debug data to parent message for task agent {}", agent_id);
+                    }
+                }
+                
+                // Return a minimal display message for the tree node
+                let icon = match json_data.json_type {
+                    JsonDebugType::Request => "📤",
+                    JsonDebugType::Response => "📥",
+                };
+                (
+                    icon,
+                    format!("JSON debug data captured ({})", 
+                        match json_data.json_type {
+                            JsonDebugType::Request => "request",
+                            JsonDebugType::Response => "response",
+                        }
+                    ),
+                )
             },
         };
 
         // Find the parent message for this sub-agent
         let parent_message_id = self.active_agent_nodes.get(&agent_id).cloned();
-        
+
         if let Some(parent_id) = parent_message_id {
             // Find the parent message and add this as a nested message
             for message in &mut self.messages {
@@ -1135,10 +1244,11 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                         format!("{} {}", icon, content),
                         format!("SubAgent-{}", agent_id),
                     );
-                    
+
                     // Set child messages to CLOSED by default
-                    self.message_expand_states.insert(child_message.id.clone(), false);
-                    
+                    self.message_expand_states
+                        .insert(child_message.id.clone(), false);
+
                     message.add_nested_message(child_message);
                     break;
                 }
@@ -1153,13 +1263,13 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
 
     fn handle_agent_created(&mut self, agent_id: String, agent_type: String) {
         info!("🚀 Specialized task started: {} ({})", agent_type, agent_id);
-        
+
         // Track the agent in our active agents map
         {
             let mut agents = self.active_agents.lock().unwrap();
             agents.insert(agent_id.clone(), agent_type.clone());
         }
-        
+
         // Create user-friendly parent message with task-focused language
         let task_message = Self::get_task_description(&agent_type, "processing your request");
         let parent_message = Message::new_with_agent(
@@ -1167,26 +1277,31 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
             task_message,
             "ControlBridge".to_string(),
         );
-        
+
         // Set parent message to OPEN by default
-        self.message_expand_states.insert(parent_message.id.clone(), true);
-        
+        self.message_expand_states
+            .insert(parent_message.id.clone(), true);
+
         // Store the parent message ID for this agent
-        self.active_agent_nodes.insert(agent_id.clone(), parent_message.id.clone());
-        
+        self.active_agent_nodes
+            .insert(agent_id.clone(), parent_message.id.clone());
+
         self.add_message(parent_message);
         self.scroll_to_bottom = true;
     }
 
     fn handle_agent_destroyed(&mut self, agent_id: String, agent_type: String) {
-        info!("🏁 Specialized task completed: {} ({})", agent_type, agent_id);
-        
+        info!(
+            "🏁 Specialized task completed: {} ({})",
+            agent_type, agent_id
+        );
+
         // Remove the agent from our active agents map
         {
             let mut agents = self.active_agents.lock().unwrap();
             agents.remove(&agent_id);
         }
-        
+
         // Update the parent message to show completion
         if let Some(parent_message_id) = self.active_agent_nodes.get(&agent_id) {
             for message in &mut self.messages {
@@ -1194,7 +1309,7 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     // Update parent message to show completion
                     let completion_message = match agent_type.as_str() {
                         "aws-log-analyzer" => "🔍 ✅ CloudWatch log analysis complete",
-                        "aws-resource-auditor" => "📊 ✅ AWS resource audit complete", 
+                        "aws-resource-auditor" => "📊 ✅ AWS resource audit complete",
                         "aws-security-scanner" => "🔒 ✅ Security scan complete",
                         _ => "⚙️ ✅ Request processing complete",
                     };
@@ -1204,11 +1319,61 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 }
             }
         }
-        
+
         // Clean up parent-child relationship tracking
         self.active_agent_nodes.remove(&agent_id);
-        
+
         self.scroll_to_bottom = true;
+    }
+
+    /// Complete reset when changing models - provides clean slate for new agent
+    fn reset_for_model_change(&mut self, new_model_name: &str) {
+        info!("🧹 Performing complete reset for model change to: {}", new_model_name);
+
+        // Cancel any active processing and clear agents
+        self.cancel_all_agents();
+
+        // Clear conversation history for clean slate
+        self.messages.clear();
+        
+        // Reset input and streaming state
+        self.input_text.clear();
+        self.current_streaming_message = None;
+        self.streaming_tool_status.clear();
+        self.streaming_was_used = false;
+        
+        // Reset processing state
+        self.processing_message = false;
+        self.main_agent_active = false;
+        
+        // Clear agent tracking
+        {
+            let mut agents = self.active_agents.lock().unwrap();
+            agents.clear(); // Clear all active agents from UI tracking
+        }
+        self.active_agent_nodes.clear();
+        
+        // Reset message expand states
+        self.message_expand_states.clear();
+        
+        // Reset timing information
+        self.last_message_time = None;
+        self.processing_start_time = None;
+        
+        // Ensure we scroll to show any new content
+        self.scroll_to_bottom = true;
+        
+        // Add welcome message for new model
+        self.add_message(Message::new_with_agent(
+            MessageRole::System,
+            format!(
+                "🤖 Switched to {} - Starting fresh conversation. How can I help you with AWS infrastructure management?",
+                new_model_name
+            ),
+            "ControlBridge".to_string(),
+        ));
+        
+        info!("✅ Complete reset finished for model: {}", new_model_name);
     }
 
     fn ui_content(
@@ -1219,7 +1384,7 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
     ) {
         // Update dark mode based on current theme
         self.dark_mode = ui.visuals().dark_mode;
-        
+
         ui.vertical(|ui| {
             // Header with options
             ui.horizontal(|ui| {
@@ -1268,7 +1433,7 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
             let current_window_height = ui.available_height();
             let input_area_height = 120.0; // Reserve space for input area, buttons, and header
             let max_scroll_height = (current_window_height - input_area_height).min(600.0); // Reasonable max, similar to chat window
-            
+
             let scroll_area = ScrollArea::vertical()
                 .id_salt("control_bridge_scroll")
                 .auto_shrink([false, false]) // Don't auto-shrink - let user control window size
@@ -1364,63 +1529,50 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
             let mut model_selection_changed = None;
             ui.horizontal(|ui| {
                 ui.label("🤖 Model:");
-                
-                let current_model = self.model_settings.get_selected_model(&self.available_models);
+
+                let current_model = self
+                    .model_settings
+                    .get_selected_model(&self.available_models);
                 let current_display_name = current_model
                     .map(|m| m.display_name.clone())
                     .unwrap_or_else(|| "Unknown Model".to_string());
-                
+
                 let current_selected_model = self.model_settings.selected_model.clone();
                 let available_models = self.available_models.clone();
-                
+
                 egui::ComboBox::from_label("")
                     .selected_text(&current_display_name)
                     .show_ui(ui, |ui| {
                         for model in &available_models {
                             let is_selected = current_selected_model == model.model_id;
-                            if ui.selectable_value(
-                                &mut self.model_settings.selected_model, 
-                                model.model_id.clone(), 
-                                &model.display_name
-                            ).clicked() {
+                            if ui
+                                .selectable_value(
+                                    &mut self.model_settings.selected_model,
+                                    model.model_id.clone(),
+                                    &model.display_name,
+                                )
+                                .clicked()
+                            {
                                 if !is_selected {
-                                    model_selection_changed = Some((model.display_name.clone(), model.model_id.clone()));
+                                    model_selection_changed =
+                                        Some((model.display_name.clone(), model.model_id.clone()));
                                 }
                             }
                         }
                     });
-                
-                // Show loading indicator if model is being changed
-                if self.model_changed {
-                    ui.spinner();
-                    ui.label("Updating model...");
-                }
-                
-                // Add a tooltip with model description
-                if let Some(current_model) = current_model {
-                    ui.label("ℹ").on_hover_text(&current_model.description);
-                }
+
             });
-            
+
             // Handle model change outside the UI closure to avoid borrowing conflicts
             if let Some((display_name, model_id)) = model_selection_changed {
                 self.model_changed = true;
                 info!("🔄 Model changed to: {} ({})", display_name, model_id);
-                
+
                 // Update global model configuration
                 set_global_model(model_id.clone());
-                
-                // Cancel any active processing since we need to recreate agents
-                if self.processing_message || self.main_agent_active {
-                    self.cancel_all_agents();
-                    
-                    // Add informational message about model change
-                    self.add_message(Message::new_with_agent(
-                        MessageRole::System,
-                        format!("🤖 Model changed to {}. Agent will be recreated on next interaction.", display_name),
-                        "ControlBridge".to_string(),
-                    ));
-                }
+
+                // Perform complete reset for clean agent experience
+                self.reset_for_model_change(&display_name);
             }
 
             ui.add_space(5.0); // Small space after model selection
@@ -1454,8 +1606,9 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     let actual_active_count = get_global_cancellation_manager()
                         .map(|manager| manager.active_count())
                         .unwrap_or(0);
-                    let has_active_work = self.processing_message || ui_active_count > 0 || actual_active_count > 0;
-                    
+                    let has_active_work =
+                        self.processing_message || ui_active_count > 0 || actual_active_count > 0;
+
                     if has_active_work {
                         if ui.button("🛑 Stop").clicked() {
                             self.cancel_all_agents();
@@ -1605,6 +1758,51 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 for (j, nested_msg) in message.nested_messages.iter().enumerate() {
                     ui.indent(format!("nested_{}_{}", message.id, j), |ui| {
                         self.render_message(ui, nested_msg, index * 1000 + j);
+                    });
+                }
+            }
+
+            // JSON debug data from task agents (only show if JSON debug mode is enabled)
+            if self.show_json_debug && !message.json_debug_data.is_empty() {
+                ui.add_space(8.0); // Zen whitespace instead of separator
+                ui.label(format!(
+                    "📊 JSON Debug Data ({})",
+                    message.json_debug_data.len()
+                ));
+                for (j, json_data) in message.json_debug_data.iter().enumerate() {
+                    let json_type_str = match json_data.json_type {
+                        JsonDebugType::Request => "Model Request",
+                        JsonDebugType::Response => "Model Response",
+                    };
+                    let json_icon = match json_data.json_type {
+                        JsonDebugType::Request => "📤",
+                        JsonDebugType::Response => "📥",
+                    };
+                    
+                    ui.indent(format!("json_debug_{}_{}", message.id, j), |ui| {
+                        CollapsingHeader::new(format!("{} {} JSON", json_icon, json_type_str))
+                            .id_salt(format!("json_{}_{}", message.id, j))
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.style_mut().visuals.override_text_color =
+                                    Some(if self.dark_mode { Color32::from_rgb(144, 238, 144) } else { Color32::from_rgb(34, 139, 34) });
+                                
+                                // Display the JSON content with proper formatting
+                                ui.monospace(&json_data.json_content);
+                                
+                                // Show raw JSON if available
+                                if let Some(ref raw_json) = json_data.raw_json_content {
+                                    ui.add_space(6.0);
+                                    ui.label("🔴 Raw JSON (Provider API):");
+                                    ui.monospace(raw_json);
+                                }
+                                
+                                // Reset text color override
+                                ui.style_mut().visuals.override_text_color = None;
+                                
+                                ui.add_space(4.0);
+                                ui.label(format!("Captured: {}", json_data.timestamp.format("%H:%M:%S")));
+                            });
                     });
                 }
             }
@@ -1785,7 +1983,9 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     self.last_processing_time = Some(start_time.elapsed());
                 }
 
-                debug!("Streaming completed, processing_message = false, main_agent_active = false");
+                debug!(
+                    "Streaming completed, processing_message = false, main_agent_active = false"
+                );
             }
             StreamingUpdate::StreamingError { message } => {
                 error!("💥 Streaming error: {}", message);
@@ -2209,4 +2409,3 @@ impl CallbackHandler for StreamingGuiCallback {
         }
     }
 }
-

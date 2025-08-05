@@ -15,10 +15,12 @@ use uuid::Uuid;
 
 // Import bridge communication and task agent
 use super::super::agents::TaskAgent;
-use super::super::get_global_bridge_sender;
-use super::super::performance::{PerformanceTimer, AgentCreationMetrics};
 use super::super::cancellation::AgentCancellationManager;
-use crate::app::dashui::control_bridge_window::{AgentResponse as BridgeAgentResponse, SubAgentEvent};
+use super::super::get_global_bridge_sender;
+use super::super::performance::{AgentCreationMetrics, PerformanceTimer};
+use crate::app::dashui::control_bridge_window::{
+    AgentResponse as BridgeAgentResponse, SubAgentEvent,
+};
 use crate::time_phase;
 
 /// Active task tracking information
@@ -82,13 +84,18 @@ impl CreateTaskTool {
                 } else {
                     Ok(strings)
                 }
-            },
+            }
             _ => Err("Value must be a string or array of strings".to_string()),
         }
     }
 
     /// Validate AWS context parameters
-    fn validate_parameters(&self, account_ids: &[String], regions: &[String], task_description: &str) -> Result<(), ToolError> {
+    fn validate_parameters(
+        &self,
+        account_ids: &[String],
+        regions: &[String],
+        task_description: &str,
+    ) -> Result<(), ToolError> {
         // Validate account IDs
         for account_id in account_ids {
             if account_id.is_empty() || account_id == "current" {
@@ -99,7 +106,10 @@ impl CreateTaskTool {
 
             if account_id.len() != 12 || !account_id.chars().all(|c| c.is_ascii_digit()) {
                 return Err(ToolError::InvalidParameters {
-                    message: format!("account_id '{}' must be exactly 12 digits (e.g., '123456789012')", account_id),
+                    message: format!(
+                        "account_id '{}' must be exactly 12 digits (e.g., '123456789012')",
+                        account_id
+                    ),
                 });
             }
         }
@@ -155,12 +165,13 @@ impl CreateTaskTool {
         account_ids: &[String],
         regions: &[String],
     ) -> Result<serde_json::Value, ToolError> {
-        let mut inner_timer = PerformanceTimer::new(&format!("Generic Task Agent: {}", task_description));
+        let mut inner_timer =
+            PerformanceTimer::new(&format!("Generic Task Agent: {}", task_description));
         info!("🎯 Creating and executing generic task agent with cancellation support");
 
         // Create cancellation token for this task
         let cancellation_token = self.cancellation_manager.create_token(task_id.to_string());
-        
+
         // Create task agent
         let mut agent = time_phase!(inner_timer, "Task Agent creation", {
             TaskAgent::create(
@@ -210,7 +221,7 @@ impl CreateTaskTool {
 
         // Clean up cancellation token on successful completion
         self.cancellation_manager.remove_token(task_id);
-        
+
         inner_timer.complete();
         info!("✅ Generic task agent completed successfully");
         Ok(result)
@@ -283,7 +294,7 @@ impl Tool for CreateTaskTool {
         // Start comprehensive performance timing
         let mut perf_timer = PerformanceTimer::new("Task Creation");
         let creation_start = Instant::now();
-        
+
         info!("🎯 Executing Create_Task tool");
 
         let params = time_phase!(perf_timer, "Parameter extraction", {
@@ -296,40 +307,45 @@ impl Tool for CreateTaskTool {
         });
 
         // Extract and validate parameters
-        let (task_description, account_ids, regions) = time_phase!(perf_timer, "Parameter parsing & validation", {
-            let task_description = params
-                .get("task_description")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::InvalidParameters {
-                    message: "task_description is required".to_string(),
-                })?;
+        let (task_description, account_ids, regions) =
+            time_phase!(perf_timer, "Parameter parsing & validation", {
+                let task_description = params
+                    .get("task_description")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolError::InvalidParameters {
+                        message: "task_description is required".to_string(),
+                    })?;
 
-            let account_ids = params
-                .get("account_ids")
-                .ok_or_else(|| ToolError::InvalidParameters {
-                    message: "account_ids is required".to_string(),
-                })
-                .and_then(|v| Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
-                    message: format!("Invalid account_ids parameter: {}", e),
-                }))?;
+                let account_ids = params
+                    .get("account_ids")
+                    .ok_or_else(|| ToolError::InvalidParameters {
+                        message: "account_ids is required".to_string(),
+                    })
+                    .and_then(|v| {
+                        Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
+                            message: format!("Invalid account_ids parameter: {}", e),
+                        })
+                    })?;
 
-            let regions = params
-                .get("regions")
-                .ok_or_else(|| ToolError::InvalidParameters {
-                    message: "regions is required".to_string(),
-                })
-                .and_then(|v| Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
-                    message: format!("Invalid regions parameter: {}", e),
-                }))?;
+                let regions = params
+                    .get("regions")
+                    .ok_or_else(|| ToolError::InvalidParameters {
+                        message: "regions is required".to_string(),
+                    })
+                    .and_then(|v| {
+                        Self::parse_string_or_array(v).map_err(|e| ToolError::InvalidParameters {
+                            message: format!("Invalid regions parameter: {}", e),
+                        })
+                    })?;
 
-            // Validate parameters
-            self.validate_parameters(&account_ids, &regions, task_description)?;
+                // Validate parameters
+                self.validate_parameters(&account_ids, &regions, task_description)?;
 
-            // Check concurrency limits
-            self.check_concurrency_limit()?;
+                // Check concurrency limits
+                self.check_concurrency_limit()?;
 
-            (task_description, account_ids, regions)
-        });
+                (task_description, account_ids, regions)
+            });
 
         // Setup task tracking and notifications
         let task_id = time_phase!(perf_timer, "Task setup & tracking", {
@@ -367,10 +383,10 @@ impl Tool for CreateTaskTool {
                     agent_id: task_id.clone(),
                     agent_type: "generic-task-agent".to_string(),
                 });
-                
+
                 // Send ProcessingStarted event to create parent node with task-focused language
                 let full_task_description = format!("⚙️ Processing task: {}", task_description);
-                
+
                 let _ = bridge_sender.send(BridgeAgentResponse::SubAgentEvent {
                     agent_id: task_id.clone(),
                     agent_type: "generic-task-agent".to_string(),
@@ -386,13 +402,14 @@ impl Tool for CreateTaskTool {
 
         // Create and execute task agent
         let task_result = time_phase!(perf_timer, "Task creation & execution", {
-            self.create_and_execute_task(&task_id, task_description, &account_ids, &regions).await
+            self.create_and_execute_task(&task_id, task_description, &account_ids, &regions)
+                .await
         });
 
         // Complete performance timing and determine success before cleanup
         let total_duration = creation_start.elapsed();
         let success = task_result.is_ok();
-        
+
         // Send appropriate completion or error event
         if let Some(bridge_sender) = get_global_bridge_sender() {
             if success {
@@ -448,17 +465,18 @@ impl Tool for CreateTaskTool {
             agent_id: task_id.clone(),
             total_duration,
             validation_duration: std::time::Duration::from_millis(50),
-            credential_duration: std::time::Duration::from_millis(100),  
+            credential_duration: std::time::Duration::from_millis(100),
             builder_setup_duration: std::time::Duration::from_millis(200),
             agent_build_duration: std::time::Duration::from_millis(1000),
-            execution_duration: total_duration.saturating_sub(std::time::Duration::from_millis(1350)),
+            execution_duration: total_duration
+                .saturating_sub(std::time::Duration::from_millis(1350)),
             success,
         };
 
         // Log structured performance metrics
         metrics.log_structured();
         metrics.analyze_performance();
-        
+
         // Complete the performance timer
         perf_timer.complete();
 
@@ -503,33 +521,67 @@ mod tests {
         let tool = CreateTaskTool::new();
 
         // Valid parameters
-        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["us-east-1".to_string()], "Analyze Lambda function errors in production environment").is_ok());
+        assert!(tool
+            .validate_parameters(
+                &vec!["123456789012".to_string()],
+                &vec!["us-east-1".to_string()],
+                "Analyze Lambda function errors in production environment"
+            )
+            .is_ok());
 
         // Invalid account_id - too short
-        assert!(tool.validate_parameters(&vec!["12345".to_string()], &vec!["us-east-1".to_string()], "Valid task description").is_err());
+        assert!(tool
+            .validate_parameters(
+                &vec!["12345".to_string()],
+                &vec!["us-east-1".to_string()],
+                "Valid task description"
+            )
+            .is_err());
 
         // Invalid account_id - contains letters
-        assert!(tool.validate_parameters(&vec!["12345678901a".to_string()], &vec!["us-east-1".to_string()], "Valid task description").is_err());
+        assert!(tool
+            .validate_parameters(
+                &vec!["12345678901a".to_string()],
+                &vec!["us-east-1".to_string()],
+                "Valid task description"
+            )
+            .is_err());
 
         // Invalid region - empty
-        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["".to_string()], "Valid task description").is_err());
+        assert!(tool
+            .validate_parameters(
+                &vec!["123456789012".to_string()],
+                &vec!["".to_string()],
+                "Valid task description"
+            )
+            .is_err());
 
         // Invalid task_description - too short
-        assert!(tool.validate_parameters(&vec!["123456789012".to_string()], &vec!["us-east-1".to_string()], "Too short").is_err());
+        assert!(tool
+            .validate_parameters(
+                &vec!["123456789012".to_string()],
+                &vec!["us-east-1".to_string()],
+                "Too short"
+            )
+            .is_err());
 
         // Valid multiple accounts and regions
-        assert!(tool.validate_parameters(
-            &vec!["123456789012".to_string(), "123456789013".to_string()], 
-            &vec!["us-east-1".to_string(), "eu-west-1".to_string()], 
-            "Multi-region Lambda performance analysis"
-        ).is_ok());
+        assert!(tool
+            .validate_parameters(
+                &vec!["123456789012".to_string(), "123456789013".to_string()],
+                &vec!["us-east-1".to_string(), "eu-west-1".to_string()],
+                "Multi-region Lambda performance analysis"
+            )
+            .is_ok());
 
         // Invalid - one bad account in array
-        assert!(tool.validate_parameters(
-            &vec!["123456789012".to_string(), "invalid".to_string()], 
-            &vec!["us-east-1".to_string()], 
-            "Valid task description"
-        ).is_err());
+        assert!(tool
+            .validate_parameters(
+                &vec!["123456789012".to_string(), "invalid".to_string()],
+                &vec!["us-east-1".to_string()],
+                "Valid task description"
+            )
+            .is_err());
     }
 
     #[tokio::test]

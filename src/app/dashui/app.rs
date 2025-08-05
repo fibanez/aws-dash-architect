@@ -7,9 +7,9 @@ use super::chat_window::ChatWindow;
 use super::cloudformation_command_palette::{
     CloudFormationCommandAction, CloudFormationCommandPalette, CloudFormationPaletteResult,
 };
-use super::control_bridge_window::ControlBridgeWindow;
 use super::cloudformation_scene_graph::CloudFormationSceneGraph;
 use super::command_palette::{CommandAction, CommandPalette};
+use super::control_bridge_window::ControlBridgeWindow;
 use super::credentials_debug_window::CredentialsDebugWindow;
 use super::deployment_info_window::DeploymentInfoWindow;
 use super::download_manager::DownloadManager;
@@ -326,7 +326,6 @@ impl DashApp {
         // Open the login window
         self.aws_login_window.open = true;
     }
-
 
     /// Start the shake animation for all windows
     pub fn start_shake_animation(&mut self) {
@@ -2620,13 +2619,14 @@ impl DashApp {
 
                 // Update the identity center reference
                 self.aws_identity_center = Some(aws_identity.clone());
-                
+
                 // Set global AwsIdentity for bridge tools
                 set_global_aws_identity(Some(aws_identity.clone()));
 
                 // Proactively initialize ResourceExplorer with AWS Identity Center
                 // This ensures the AWS client is available for bridge tools even if the window isn't open
-                self.resource_explorer.set_aws_identity_center(Some(aws_identity.clone()));
+                self.resource_explorer
+                    .set_aws_identity_center(Some(aws_identity.clone()));
                 tracing::info!("🚀 ResourceExplorer proactively initialized for bridge tools");
 
                 // Initialize CloudFormation Manager with shared AWS Explorer infrastructure
@@ -2673,10 +2673,10 @@ impl DashApp {
                 tracing::info!("Clearing AWS Identity Center reference due to logout");
                 self.aws_identity_center = None;
                 self.cloudformation_manager = None;
-                
+
                 // Clear global AwsIdentity for bridge tools
                 set_global_aws_identity(None);
-                
+
                 // Clear ResourceExplorer AWS client
                 self.resource_explorer.set_aws_identity_center(None);
                 tracing::info!("🧹 ResourceExplorer cleared on logout");
@@ -2721,7 +2721,20 @@ impl DashApp {
             .min_height(0.0)
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::RIGHT), |ui| {
-                    egui::warn_if_debug_build(ui);
+                    // Show custom debug info with git information
+                    if cfg!(debug_assertions) {
+                        let git_branch = env!("GIT_BRANCH");
+                        let git_commit = env!("GIT_COMMIT");
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Debug Build - {}@{}",
+                                git_branch,
+                                git_commit
+                            ))
+                            .small()
+                            .color(egui::Color32::from_rgb(255, 165, 0)) // Orange color
+                        );
+                    }
                 });
             });
     }
@@ -2863,7 +2876,7 @@ impl DashApp {
                     });
                 });
             self.control_bridge_window.open = is_open;
-            
+
             if open_login {
                 self.aws_login_window.open = true;
                 self.set_focused_window(FocusedWindow::AwsLogin);

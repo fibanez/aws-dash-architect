@@ -4,12 +4,10 @@
 //! Replaces hardcoded agent types with dynamic task-based agent creation.
 
 use crate::app::bridge::{
-    aws_describe_log_groups_tool, aws_get_log_events_tool, 
-    aws_list_resources_tool, aws_describe_resource_tool,
-    aws_find_account_tool, aws_find_region_tool,
-    todo_write_tool, todo_read_tool, get_global_aws_credentials,
-    PerformanceTimer, SubAgentCallbackHandler, get_global_bridge_sender,
-    get_global_model, ModelConfig
+    aws_describe_log_groups_tool, aws_describe_resource_tool, aws_find_account_tool,
+    aws_find_region_tool, aws_get_log_events_tool, aws_list_resources_tool,
+    get_global_aws_credentials, get_global_bridge_sender, get_global_model, todo_read_tool,
+    todo_write_tool, ModelConfig, PerformanceTimer, SubAgentCallbackHandler,
 };
 use crate::time_phase;
 use chrono::Utc;
@@ -17,6 +15,7 @@ use serde_json;
 use stood::agent::Agent;
 use stood::telemetry::TelemetryConfig;
 use tracing::{debug, info, warn};
+use crate::create_agent_with_model;
 
 /// Generic Task Agent - Handles any AWS task based on description
 pub struct TaskAgent;
@@ -32,21 +31,24 @@ impl TaskAgent {
     ) -> Result<Agent, stood::StoodError> {
         let mut perf_timer = PerformanceTimer::new("Generic Task Agent Creation");
         info!("🎯 Creating Generic Task Agent for: {}", task_description);
-        
-        debug!("🎯 Task context - Accounts: {:?}, Regions: {:?}", account_ids, regions);
+
+        debug!(
+            "🎯 Task context - Accounts: {:?}, Regions: {:?}",
+            account_ids, regions
+        );
 
         // Determine model to use (parameter > global > default)
         let selected_model = model_id
             .or_else(|| get_global_model())
             .unwrap_or_else(|| ModelConfig::default_model_id());
-        
+
         info!("🤖 Task agent will use model: {}", selected_model);
 
         // Create dynamic system prompt based on task description
         let system_prompt = time_phase!(perf_timer, "System prompt creation", {
             Self::create_system_prompt(&task_description, &account_ids, &regions)
         });
-        
+
         // Configure telemetry for the task agent
         let mut telemetry_config = time_phase!(perf_timer, "Telemetry configuration", {
             TelemetryConfig::default()
@@ -58,37 +60,32 @@ impl TaskAgent {
 
         // Enable debug tracing for detailed task tracking
         telemetry_config.enable_debug_tracing = true;
-        telemetry_config.service_attributes.insert(
-            "agent.type".to_string(), 
-            "generic-task-agent".to_string()
-        );
-        telemetry_config.service_attributes.insert(
-            "task.description".to_string(), 
-            task_description.clone()
-        );
-        telemetry_config.service_attributes.insert(
-            "aws.account_ids".to_string(), 
-            account_ids.join(",")
-        );
-        telemetry_config.service_attributes.insert(
-            "aws.regions".to_string(), 
-            regions.join(",")
-        );
-        telemetry_config.service_attributes.insert(
-            "task.id".to_string(), 
-            task_id.clone()
-        );
+        telemetry_config
+            .service_attributes
+            .insert("agent.type".to_string(), "generic-task-agent".to_string());
+        telemetry_config
+            .service_attributes
+            .insert("task.description".to_string(), task_description.clone());
+        telemetry_config
+            .service_attributes
+            .insert("aws.account_ids".to_string(), account_ids.join(","));
+        telemetry_config
+            .service_attributes
+            .insert("aws.regions".to_string(), regions.join(","));
+        telemetry_config
+            .service_attributes
+            .insert("task.id".to_string(), task_id.clone());
 
         // Add unique session identifier for this task agent instance
         let session_id = format!("task-agent-{}", Utc::now().timestamp_millis());
-        telemetry_config.service_attributes.insert("session.id".to_string(), session_id);
+        telemetry_config
+            .service_attributes
+            .insert("session.id".to_string(), session_id);
 
         // Build the generic task agent with all AWS tools
         let mut agent_builder = time_phase!(perf_timer, "Agent builder setup", {
-            // TODO: Add model configuration once stood library model API is clarified
-            // let model = ModelConfig::id_to_bedrock_model(&selected_model);
-            let mut builder = Agent::builder()
-                // .model(model)  // TODO: Re-enable when model API is available
+            // Configure model for this agent
+            let mut builder = create_agent_with_model!(Agent::builder(), &selected_model)
                 .system_prompt(system_prompt)
                 .with_telemetry(telemetry_config)
                 .with_think_tool("Think carefully about what we need to do next")
@@ -96,15 +93,12 @@ impl TaskAgent {
                     // Task management tools for progress tracking
                     todo_write_tool(),
                     todo_read_tool(),
-                    
                     // AWS CloudWatch tools for log analysis
                     aws_describe_log_groups_tool(None),
                     aws_get_log_events_tool(None),
-                    
                     // AWS resource tools for resource operations
                     aws_list_resources_tool(None),
                     aws_describe_resource_tool(None),
-                    
                     // AWS context tools (no API calls)
                     aws_find_account_tool(),
                     aws_find_region_tool(),
@@ -113,18 +107,17 @@ impl TaskAgent {
             // Add callback handler for event bubbling to Bridge UI
             if let Some(bridge_sender) = get_global_bridge_sender() {
                 info!("📡 Task agent using Bridge event bubbling with user-friendly language");
-                builder = builder.with_callback_handler(
-                    SubAgentCallbackHandler::with_sender(
-                        task_id.clone(),
-                        "generic-task-agent".to_string(),
-                        bridge_sender,
-                    ),
-                );
+                builder = builder.with_callback_handler(SubAgentCallbackHandler::with_sender(
+                    task_id.clone(),
+                    "generic-task-agent".to_string(),
+                    bridge_sender,
+                ));
             } else {
                 info!("📊 Task agent without Bridge event bubbling (standalone mode)");
-                builder = builder.with_callback_handler(
-                    SubAgentCallbackHandler::new(task_id.clone(), "generic-task-agent".to_string()),
-                );
+                builder = builder.with_callback_handler(SubAgentCallbackHandler::new(
+                    task_id.clone(),
+                    "generic-task-agent".to_string(),
+                ));
             }
 
             builder
@@ -132,9 +125,16 @@ impl TaskAgent {
 
         // Add AWS credentials if available globally (same pattern as specialized agents)
         time_phase!(perf_timer, "Credential configuration", {
-            if let Some((access_key, secret_key, session_token, region_creds)) = get_global_aws_credentials() {
+            if let Some((access_key, secret_key, session_token, region_creds)) =
+                get_global_aws_credentials()
+            {
                 info!("🔐 Using global AWS credentials for task agent");
-                agent_builder = agent_builder.with_credentials(access_key, secret_key, session_token, region_creds);
+                agent_builder = agent_builder.with_credentials(
+                    access_key,
+                    secret_key,
+                    session_token,
+                    region_creds,
+                );
             } else {
                 warn!("⚠️ No global AWS credentials available for task agent - using default credential chain");
             }
@@ -150,20 +150,25 @@ impl TaskAgent {
     }
 
     /// Create dynamic system prompt based on task description and context
-    fn create_system_prompt(task_description: &str, account_ids: &[String], regions: &[String]) -> String {
+    fn create_system_prompt(
+        task_description: &str,
+        account_ids: &[String],
+        regions: &[String],
+    ) -> String {
         let accounts_text = if account_ids.len() == 1 {
             format!("- Account ID: {}", account_ids[0])
         } else {
             format!("- Account IDs: {}", account_ids.join(", "))
         };
-        
+
         let regions_text = if regions.len() == 1 {
             format!("- Region: {}", regions[0])
         } else {
             format!("- Regions: {}", regions.join(", "))
         };
-        
-        format!(r#"You are an AWS task specialist. Execute this specific task: {}
+
+        format!(
+            r#"You are an AWS task specialist. Execute this specific task: {}
 
 AWS Context:
 {}
@@ -220,10 +225,10 @@ Remember to use TodoWrite at the beginning to organize your approach to this tas
         task_description: &str,
     ) -> Result<serde_json::Value, stood::StoodError> {
         info!("🎯 Executing task: {}", task_description);
-        
+
         // Execute the task
         let result = agent.execute(task_description).await?;
-        
+
         info!("✅ Task completed successfully");
         debug!("Task result: {} chars", result.response.len());
 
@@ -251,11 +256,11 @@ mod tests {
     #[test]
     fn test_system_prompt_creation() {
         let prompt = TaskAgent::create_system_prompt(
-            "Analyze Lambda function performance", 
+            "Analyze Lambda function performance",
             &vec!["123456789012".to_string()],
-            &vec!["us-east-1".to_string()]
+            &vec!["us-east-1".to_string()],
         );
-        
+
         assert!(prompt.contains("Analyze Lambda function performance"));
         assert!(prompt.contains("123456789012"));
         assert!(prompt.contains("us-east-1"));
@@ -267,11 +272,11 @@ mod tests {
     #[test]
     fn test_system_prompt_creation_multiple_accounts_regions() {
         let prompt = TaskAgent::create_system_prompt(
-            "Analyze multi-region Lambda performance", 
+            "Analyze multi-region Lambda performance",
             &vec!["123456789012".to_string(), "123456789013".to_string()],
-            &vec!["us-east-1".to_string(), "eu-west-1".to_string()]
+            &vec!["us-east-1".to_string(), "eu-west-1".to_string()],
         );
-        
+
         assert!(prompt.contains("Analyze multi-region Lambda performance"));
         assert!(prompt.contains("Account IDs: 123456789012, 123456789013"));
         assert!(prompt.contains("Regions: us-east-1, eu-west-1"));
@@ -285,11 +290,11 @@ mod tests {
         let task_description = "Test AWS resource analysis".to_string();
         let account_ids = vec!["123456789012".to_string()];
         let regions = vec!["us-east-1".to_string()];
-        
+
         // Test that we can create the components without actually building the agent
         // (since we need real AWS credentials for that)
         let prompt = TaskAgent::create_system_prompt(&task_description, &account_ids, &regions);
-        
+
         assert!(!prompt.is_empty());
         assert!(prompt.contains("Test AWS resource analysis"));
         assert!(prompt.contains("TodoWrite"));

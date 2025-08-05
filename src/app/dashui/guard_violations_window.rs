@@ -82,17 +82,18 @@ impl GuardViolationsWindow {
     }
 
     fn should_show_violation(&self, violation: &GuardViolation) -> bool {
-        let severity_match = self.show_severity_filter
+        let severity_match = self
+            .show_severity_filter
             .get(&violation.severity)
             .copied()
             .unwrap_or(true);
-            
+
         let exemption_match = if violation.exempted {
             self.show_exempted
         } else {
             self.show_non_exempted
         };
-        
+
         severity_match && exemption_match
     }
 }

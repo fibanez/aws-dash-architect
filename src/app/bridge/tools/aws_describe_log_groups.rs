@@ -63,7 +63,7 @@ impl Tool for AwsDescribeLogGroupsTool {
                     "description": "AWS account ID (optional, uses current account if not specified)"
                 },
                 "region": {
-                    "type": "string", 
+                    "type": "string",
                     "description": "AWS region (optional, uses current region if not specified)"
                 },
                 "log_group_name_prefix": {
@@ -89,19 +89,21 @@ impl Tool for AwsDescribeLogGroupsTool {
         info!("🔍 Executing AWS Describe Log Groups tool");
 
         // Get AWS client - prefer passed client over global
-        let aws_client = self.aws_client
+        let aws_client = self
+            .aws_client
             .clone()
             .or_else(get_global_aws_client)
             .ok_or_else(|| {
                 warn!("❌ AWS client not available for describe log groups operation");
                 ToolError::ExecutionFailed {
-                    message: "AWS client not configured. Please ensure AWS credentials are set up".to_string(),
+                    message: "AWS client not configured. Please ensure AWS credentials are set up"
+                        .to_string(),
                 }
             })?;
 
         // Parse parameters
         let params = parameters.unwrap_or_default();
-        
+
         let account_id = params
             .get("account_id")
             .and_then(|v| v.as_str())
@@ -112,9 +114,7 @@ impl Tool for AwsDescribeLogGroupsTool {
             .and_then(|v| v.as_str())
             .unwrap_or("us-east-1"); // Default to us-east-1 if not specified
 
-        let name_prefix = params
-            .get("log_group_name_prefix")
-            .and_then(|v| v.as_str());
+        let name_prefix = params.get("log_group_name_prefix").and_then(|v| v.as_str());
 
         let limit = params
             .get("limit")
@@ -123,18 +123,23 @@ impl Tool for AwsDescribeLogGroupsTool {
             .unwrap_or(50)
             .min(50);
 
-        info!("📋 Describing log groups for account: {}, region: {}, prefix: {:?}, limit: {}", 
-              account_id, region, name_prefix, limit);
+        info!(
+            "📋 Describing log groups for account: {}, region: {}, prefix: {:?}, limit: {}",
+            account_id, region, name_prefix, limit
+        );
 
         // Get logs service and describe log groups
         let logs_service = aws_client.get_logs_service();
-        
-        match logs_service.describe_log_groups(account_id, region, name_prefix, Some(limit)).await {
+
+        match logs_service
+            .describe_log_groups(account_id, region, name_prefix, Some(limit))
+            .await
+        {
             Ok(log_groups) => {
                 let count = log_groups.len();
-                
+
                 info!("✅ Successfully described {} log groups", count);
-                
+
                 let response = serde_json::json!({
                     "success": true,
                     "account_id": account_id,
@@ -152,7 +157,10 @@ impl Tool for AwsDescribeLogGroupsTool {
             Err(e) => {
                 warn!("❌ Failed to describe log groups: {}", e);
                 Err(ToolError::ExecutionFailed {
-                    message: format!("Failed to describe log groups in account {} region {}: {}", account_id, region, e),
+                    message: format!(
+                        "Failed to describe log groups in account {} region {}: {}",
+                        account_id, region, e
+                    ),
                 })
             }
         }

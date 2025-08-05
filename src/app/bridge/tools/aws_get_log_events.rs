@@ -48,11 +48,11 @@ impl AwsGetLogEventsTool {
         if let Ok(dt) = DateTime::parse_from_rfc3339(time_str) {
             return Ok(dt.with_timezone(&Utc));
         }
-        
+
         if let Ok(dt) = DateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S") {
             return Ok(dt.with_timezone(&Utc));
         }
-        
+
         if let Ok(dt) = DateTime::parse_from_str(time_str, "%Y-%m-%d") {
             return Ok(dt.with_timezone(&Utc));
         }
@@ -113,7 +113,7 @@ impl Tool for AwsGetLogEventsTool {
                     "description": "AWS account ID (optional, uses current account if not specified)"
                 },
                 "region": {
-                    "type": "string", 
+                    "type": "string",
                     "description": "AWS region (optional, uses current region if not specified)"
                 },
                 "log_stream_name": {
@@ -151,19 +151,21 @@ impl Tool for AwsGetLogEventsTool {
         info!("🔍 Executing AWS Get Log Events tool");
 
         // Get AWS client - prefer passed client over global
-        let aws_client = self.aws_client
+        let aws_client = self
+            .aws_client
             .clone()
             .or_else(get_global_aws_client)
             .ok_or_else(|| {
                 warn!("❌ AWS client not available for get log events operation");
                 ToolError::ExecutionFailed {
-                    message: "AWS client not configured. Please ensure AWS credentials are set up".to_string(),
+                    message: "AWS client not configured. Please ensure AWS credentials are set up"
+                        .to_string(),
                 }
             })?;
 
         // Parse parameters
         let params = parameters.unwrap_or_default();
-        
+
         let log_group_name = params
             .get("log_group_name")
             .and_then(|v| v.as_str())
@@ -184,13 +186,9 @@ impl Tool for AwsGetLogEventsTool {
             .and_then(|v| v.as_str())
             .unwrap_or("us-east-1"); // Default to us-east-1 if not specified
 
-        let log_stream_name = params
-            .get("log_stream_name")
-            .and_then(|v| v.as_str());
+        let log_stream_name = params.get("log_stream_name").and_then(|v| v.as_str());
 
-        let filter_pattern = params
-            .get("filter_pattern")
-            .and_then(|v| v.as_str());
+        let filter_pattern = params.get("filter_pattern").and_then(|v| v.as_str());
 
         let limit = params
             .get("limit")
@@ -200,7 +198,8 @@ impl Tool for AwsGetLogEventsTool {
             .min(1000);
 
         // Parse time parameters
-        let start_time = if let Some(start_str) = params.get("start_time").and_then(|v| v.as_str()) {
+        let start_time = if let Some(start_str) = params.get("start_time").and_then(|v| v.as_str())
+        {
             match self.parse_time_string(start_str) {
                 Ok(dt) => Some(dt),
                 Err(e) => {
@@ -233,22 +232,25 @@ impl Tool for AwsGetLogEventsTool {
 
         // Get logs service and retrieve log events
         let logs_service = aws_client.get_logs_service();
-        
-        match logs_service.get_log_events(
-            account_id,
-            region,
-            log_group_name,
-            log_stream_name,
-            start_time,
-            end_time,
-            filter_pattern,
-            Some(limit),
-        ).await {
+
+        match logs_service
+            .get_log_events(
+                account_id,
+                region,
+                log_group_name,
+                log_stream_name,
+                start_time,
+                end_time,
+                filter_pattern,
+                Some(limit),
+            )
+            .await
+        {
             Ok(log_events) => {
                 let count = log_events.len();
-                
+
                 info!("✅ Successfully retrieved {} log events", count);
-                
+
                 let response = serde_json::json!({
                     "success": true,
                     "account_id": account_id,
@@ -270,7 +272,10 @@ impl Tool for AwsGetLogEventsTool {
             Err(e) => {
                 warn!("❌ Failed to get log events: {}", e);
                 Err(ToolError::ExecutionFailed {
-                    message: format!("Failed to get log events from {} in account {} region {}: {}", log_group_name, account_id, region, e),
+                    message: format!(
+                        "Failed to get log events from {} in account {} region {}: {}",
+                        log_group_name, account_id, region, e
+                    ),
                 })
             }
         }

@@ -184,13 +184,13 @@ mod cloudformation_graph_verification_tests;
 // UI tests were removed due to compilation issues and import problems.
 // See tests/UI_TESTING_SETUP.md for complete archive and restoration notes.
 // Approximately 20 UI test files with ~100-150 tests were removed covering:
-// - Basic UI components and interactions  
+// - Basic UI components and interactions
 // - CloudFormation forms and editors
 // - Visual consistency and styling
 // - Window management and workflows
 
 // ================================================================================================
-// AWS Identity and Authentication Tests - Core authentication workflow testing  
+// AWS Identity and Authentication Tests - Core authentication workflow testing
 // ================================================================================================
 
 /// AWS Identity Center authentication workflow and state management testing
@@ -224,7 +224,6 @@ mod window_trait_implementation_tests;
 
 /// Project management functionality and file operations testing
 mod projects_tests;
-
 
 // ================================================================================================
 // Test Infrastructure and Utilities

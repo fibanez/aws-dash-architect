@@ -558,9 +558,7 @@ mod tests {
         });
 
         let create_result = tool.execute(Some(create_params), None).await.unwrap();
-        let created_todo_id = create_result.content["todos"][0]["id"]
-            .as_str()
-            .unwrap();
+        let created_todo_id = create_result.content["todos"][0]["id"].as_str().unwrap();
 
         // Then update it
         let update_params = serde_json::json!({
@@ -601,4 +599,3 @@ mod tests {
         assert!(todo.completed_at.is_some());
     }
 }
-

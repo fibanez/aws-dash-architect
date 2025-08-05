@@ -370,4 +370,3 @@ mod tests {
         assert_eq!(summary["has_active_tasks"], true);
     }
 }
-

@@ -23,16 +23,19 @@ use super::tools::*;
 static GLOBAL_AWS_CLIENT: RwLock<Option<Arc<AWSResourceClient>>> = RwLock::new(None);
 
 /// Global AWS credentials for standalone agents
-static GLOBAL_AWS_CREDENTIALS: RwLock<Option<(String, String, Option<String>, String)>> = RwLock::new(None);
+static GLOBAL_AWS_CREDENTIALS: RwLock<Option<(String, String, Option<String>, String)>> =
+    RwLock::new(None);
 
 /// Global Bridge response channel for log analysis event bubbling
 static GLOBAL_BRIDGE_SENDER: RwLock<Option<mpsc::Sender<AgentResponse>>> = RwLock::new(None);
 
 /// Global shared TODO storage for all agents
-static GLOBAL_TODO_STORAGE: RwLock<Option<Arc<Mutex<HashMap<String, Vec<TodoItem>>>>>> = RwLock::new(None);
+static GLOBAL_TODO_STORAGE: RwLock<Option<Arc<Mutex<HashMap<String, Vec<TodoItem>>>>>> =
+    RwLock::new(None);
 
 /// Global agent cancellation manager for stopping running agents
-static GLOBAL_CANCELLATION_MANAGER: RwLock<Option<Arc<AgentCancellationManager>>> = RwLock::new(None);
+static GLOBAL_CANCELLATION_MANAGER: RwLock<Option<Arc<AgentCancellationManager>>> =
+    RwLock::new(None);
 
 /// Global model configuration for agent creation
 static GLOBAL_MODEL_CONFIG: RwLock<Option<String>> = RwLock::new(None);
@@ -41,8 +44,15 @@ static GLOBAL_MODEL_CONFIG: RwLock<Option<String>> = RwLock::new(None);
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
     match GLOBAL_AWS_CLIENT.write() {
         Ok(mut guard) => {
-            let client_status = if client.is_some() { "✅ Set" } else { "❌ Cleared" };
-            info!("🔧 Global AWS client updated for bridge tools: {}", client_status);
+            let client_status = if client.is_some() {
+                "✅ Set"
+            } else {
+                "❌ Cleared"
+            };
+            info!(
+                "🔧 Global AWS client updated for bridge tools: {}",
+                client_status
+            );
             *guard = client;
         }
         Err(e) => {
@@ -56,7 +66,14 @@ pub fn get_global_aws_client() -> Option<Arc<AWSResourceClient>> {
     match GLOBAL_AWS_CLIENT.read() {
         Ok(guard) => {
             let client = guard.clone();
-            info!("🔍 Global AWS client access: {}", if client.is_some() { "✅ Available" } else { "❌ Not set" });
+            info!(
+                "🔍 Global AWS client access: {}",
+                if client.is_some() {
+                    "✅ Available"
+                } else {
+                    "❌ Not set"
+                }
+            );
             client
         }
         Err(e) => {
@@ -86,7 +103,6 @@ pub struct ResourceSummary {
     /// Resource tags
     pub tags: Vec<String>,
 }
-
 
 /// Individual tool constructors for explicit tool selection
 /// Creates AWS List Resources tool
@@ -147,12 +163,12 @@ pub fn todo_read_tool() -> Box<dyn Tool> {
 /// Creates Create_Task tool for flexible task-based agent orchestration
 pub fn create_task_tool() -> Box<dyn Tool> {
     let tool = CreateTaskTool::new();
-    
+
     // Set the global cancellation manager if not already set
     if get_global_cancellation_manager().is_none() {
         set_global_cancellation_manager(tool.cancellation_manager());
     }
-    
+
     Box::new(tool)
 }
 
@@ -179,7 +195,14 @@ pub fn get_global_aws_credentials() -> Option<(String, String, Option<String>, S
     match GLOBAL_AWS_CREDENTIALS.read() {
         Ok(guard) => {
             let has_creds = guard.is_some();
-            info!("🔍 Global AWS credentials access: {}", if has_creds { "✅ Available" } else { "❌ Not set" });
+            info!(
+                "🔍 Global AWS credentials access: {}",
+                if has_creds {
+                    "✅ Available"
+                } else {
+                    "❌ Not set"
+                }
+            );
             guard.clone()
         }
         Err(e) => {
@@ -220,7 +243,14 @@ pub fn get_global_bridge_sender() -> Option<mpsc::Sender<AgentResponse>> {
     match GLOBAL_BRIDGE_SENDER.read() {
         Ok(guard) => {
             let has_sender = guard.is_some();
-            info!("📡 Global Bridge response channel access: {}", if has_sender { "✅ Available" } else { "❌ Not set" });
+            info!(
+                "📡 Global Bridge response channel access: {}",
+                if has_sender {
+                    "✅ Available"
+                } else {
+                    "❌ Not set"
+                }
+            );
             guard.clone()
         }
         Err(e) => {
@@ -277,7 +307,10 @@ pub fn get_global_todo_storage() -> Option<Arc<Mutex<HashMap<String, Vec<TodoIte
                 match GLOBAL_TODO_STORAGE.read() {
                     Ok(guard) => guard.clone(),
                     Err(e) => {
-                        error!("❌ Failed to read global TODO storage after initialization: {}", e);
+                        error!(
+                            "❌ Failed to read global TODO storage after initialization: {}",
+                            e
+                        );
                         None
                     }
                 }
@@ -308,7 +341,7 @@ pub fn get_global_cancellation_manager() -> Option<Arc<AgentCancellationManager>
     match GLOBAL_CANCELLATION_MANAGER.read() {
         Ok(guard) => {
             let manager = guard.clone();
-            info!("🛑 Global cancellation manager access: {}", if manager.is_some() { "✅ Available" } else { "❌ Not set" });
+            // Remove excessive logging that floods the log in render loops
             manager
         }
         Err(e) => {
@@ -349,7 +382,14 @@ pub fn get_global_model() -> Option<String> {
     match GLOBAL_MODEL_CONFIG.read() {
         Ok(guard) => {
             let model = guard.clone();
-            info!("🤖 Global model access: {}", if model.is_some() { "✅ Available" } else { "❌ Not set" });
+            info!(
+                "🤖 Global model access: {}",
+                if model.is_some() {
+                    "✅ Available"
+                } else {
+                    "❌ Not set"
+                }
+            );
             model
         }
         Err(e) => {

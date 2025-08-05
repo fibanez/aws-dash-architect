@@ -153,13 +153,13 @@ impl ComplianceDiscovery {
     pub async fn discover_available_programs(&mut self) -> Result<Vec<AvailableComplianceProgram>> {
         // Get repository structure from GitHub
         let repo_structure = self.github_client.get_repository_structure().await?;
-        
+
         // Parse structure to extract compliance programs
         let programs = self.parse_repository_structure(repo_structure).await?;
-        
+
         // Cache the results
         self.cache_programs(&programs).await?;
-        
+
         Ok(programs)
     }
 
@@ -170,14 +170,14 @@ impl ComplianceDiscovery {
     /// Cached programs or error if cache doesn't exist or is invalid
     pub async fn get_cached_programs(&self) -> Result<Vec<AvailableComplianceProgram>> {
         let cache_file = self.cache_dir.join("available_programs.json");
-        
+
         if !cache_file.exists() {
             return Err(anyhow!("No cached compliance programs found"));
         }
 
         let content = fs::read_to_string(&cache_file)?;
         let cache: ComplianceProgramCache = serde_json::from_str(&content)?;
-        
+
         Ok(cache.programs)
     }
 
@@ -188,29 +188,29 @@ impl ComplianceDiscovery {
     /// True if cache is stale and needs refresh
     pub async fn needs_cache_refresh(&self) -> Result<bool> {
         let cache_file = self.cache_dir.join("available_programs.json");
-        
+
         if !cache_file.exists() {
             return Ok(true);
         }
 
         let content = fs::read_to_string(&cache_file)?;
         let cache: ComplianceProgramCache = serde_json::from_str(&content)?;
-        
+
         let now = Utc::now();
         let cache_age = now.signed_duration_since(cache.last_updated);
         let max_age = chrono::Duration::hours(self.cache_refresh_hours as i64);
-        
+
         Ok(cache_age > max_age)
     }
 
     /// Invalidate the cache
     pub async fn invalidate_cache(&mut self) -> Result<()> {
         let cache_file = self.cache_dir.join("available_programs.json");
-        
+
         if cache_file.exists() {
             fs::remove_file(&cache_file)?;
         }
-        
+
         Ok(())
     }
 
@@ -226,17 +226,20 @@ impl ComplianceDiscovery {
     pub async fn search_programs(&self, query: &str) -> Result<Vec<AvailableComplianceProgram>> {
         let programs = self.get_cached_programs().await?;
         let query_lower = query.to_lowercase();
-        
+
         let filtered: Vec<AvailableComplianceProgram> = programs
             .into_iter()
             .filter(|program| {
                 program.name.to_lowercase().contains(&query_lower)
                     || program.display_name.to_lowercase().contains(&query_lower)
                     || program.description.to_lowercase().contains(&query_lower)
-                    || program.tags.iter().any(|tag| tag.to_lowercase().contains(&query_lower))
+                    || program
+                        .tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&query_lower))
             })
             .collect();
-        
+
         Ok(filtered)
     }
 
@@ -249,14 +252,17 @@ impl ComplianceDiscovery {
     /// # Returns
     ///
     /// Programs in the specified category
-    pub async fn filter_by_category(&self, category: &str) -> Result<Vec<AvailableComplianceProgram>> {
+    pub async fn filter_by_category(
+        &self,
+        category: &str,
+    ) -> Result<Vec<AvailableComplianceProgram>> {
         let programs = self.get_cached_programs().await?;
-        
+
         let filtered: Vec<AvailableComplianceProgram> = programs
             .into_iter()
             .filter(|program| program.category == category)
             .collect();
-        
+
         Ok(filtered)
     }
 
@@ -266,7 +272,7 @@ impl ComplianceDiscovery {
         structure: HashMap<String, Vec<String>>,
     ) -> Result<Vec<AvailableComplianceProgram>> {
         let mut programs = Vec::new();
-        
+
         for (path, files) in structure {
             // Look for Guard rule directories
             if path.contains("rules/") && path.contains("cfn-guard") {
@@ -275,7 +281,7 @@ impl ComplianceDiscovery {
                 if let Some(program_name) = path_parts.last() {
                     // Count .guard files
                     let rule_count = files.iter().filter(|f| f.ends_with(".guard")).count();
-                    
+
                     if rule_count > 0 {
                         let program = self.create_compliance_program_from_path(
                             program_name,
@@ -287,7 +293,7 @@ impl ComplianceDiscovery {
                 }
             }
         }
-        
+
         Ok(programs)
     }
 
@@ -298,11 +304,11 @@ impl ComplianceDiscovery {
             last_updated: Utc::now(),
             cache_version: "1.0".to_string(),
         };
-        
+
         let cache_file = self.cache_dir.join("available_programs.json");
         let json = serde_json::to_string_pretty(&cache)?;
         fs::write(&cache_file, json)?;
-        
+
         Ok(())
     }
 
@@ -314,8 +320,9 @@ impl ComplianceDiscovery {
         rule_count: usize,
     ) -> AvailableComplianceProgram {
         // Generate display name and metadata from program name
-        let (display_name, description, category, tags) = self.generate_program_metadata(program_name);
-        
+        let (display_name, description, category, tags) =
+            self.generate_program_metadata(program_name);
+
         AvailableComplianceProgram {
             name: program_name.to_string(),
             display_name,
@@ -328,9 +335,12 @@ impl ComplianceDiscovery {
     }
 
     /// Generate metadata for a compliance program based on its name
-    fn generate_program_metadata(&self, program_name: &str) -> (String, String, String, Vec<String>) {
+    fn generate_program_metadata(
+        &self,
+        program_name: &str,
+    ) -> (String, String, String, Vec<String>) {
         let name_lower = program_name.to_lowercase();
-        
+
         // Generate display name
         let display_name = if name_lower.contains("nist_800_53") {
             if name_lower.contains("rev_5") {
@@ -395,19 +405,39 @@ impl ComplianceDiscovery {
         // Generate tags
         let mut tags = Vec::new();
         if name_lower.contains("nist") {
-            tags.extend(vec!["government".to_string(), "cybersecurity".to_string(), "federal".to_string()]);
+            tags.extend(vec![
+                "government".to_string(),
+                "cybersecurity".to_string(),
+                "federal".to_string(),
+            ]);
         }
         if name_lower.contains("pci") {
-            tags.extend(vec!["payment".to_string(), "financial".to_string(), "industry".to_string()]);
+            tags.extend(vec![
+                "payment".to_string(),
+                "financial".to_string(),
+                "industry".to_string(),
+            ]);
         }
         if name_lower.contains("hipaa") {
-            tags.extend(vec!["healthcare".to_string(), "privacy".to_string(), "medical".to_string()]);
+            tags.extend(vec![
+                "healthcare".to_string(),
+                "privacy".to_string(),
+                "medical".to_string(),
+            ]);
         }
         if name_lower.contains("sox") {
-            tags.extend(vec!["financial".to_string(), "audit".to_string(), "public-company".to_string()]);
+            tags.extend(vec![
+                "financial".to_string(),
+                "audit".to_string(),
+                "public-company".to_string(),
+            ]);
         }
         if name_lower.contains("fedramp") {
-            tags.extend(vec!["government".to_string(), "cloud".to_string(), "federal".to_string()]);
+            tags.extend(vec![
+                "government".to_string(),
+                "cloud".to_string(),
+                "federal".to_string(),
+            ]);
         }
 
         // Add common security tags
@@ -444,7 +474,8 @@ impl GitHubApiClient {
             self.api_base_url, self.repository
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&tree_url)
             .header("Accept", "application/vnd.github.v3+json")
             .send()
@@ -452,7 +483,10 @@ impl GitHubApiClient {
 
         if !response.status().is_success() {
             // Fall back to placeholder structure if API fails
-            tracing::warn!("GitHub API request failed with status: {}, falling back to placeholder data", response.status());
+            tracing::warn!(
+                "GitHub API request failed with status: {}, falling back to placeholder data",
+                response.status()
+            );
             return self.get_placeholder_structure().await;
         }
 
@@ -461,12 +495,15 @@ impl GitHubApiClient {
 
         // Group files by their directory paths
         for item in tree.tree {
-            if item.item_type == "blob" && item.path.contains("rules/") && item.path.ends_with(".guard") {
+            if item.item_type == "blob"
+                && item.path.contains("rules/")
+                && item.path.ends_with(".guard")
+            {
                 // Extract directory path
                 if let Some(dir_path) = item.path.rfind('/') {
                     let directory = item.path[..dir_path].to_string();
                     let filename = item.path[dir_path + 1..].to_string();
-                    
+
                     structure
                         .entry(directory)
                         .or_insert_with(Vec::new)
@@ -477,7 +514,9 @@ impl GitHubApiClient {
 
         // If we got empty results, fall back to placeholder
         if structure.is_empty() {
-            tracing::warn!("Got empty repository structure from GitHub API, falling back to placeholder data");
+            tracing::warn!(
+                "Got empty repository structure from GitHub API, falling back to placeholder data"
+            );
             return self.get_placeholder_structure().await;
         }
 
@@ -487,7 +526,7 @@ impl GitHubApiClient {
     /// Get placeholder repository structure as fallback
     async fn get_placeholder_structure(&self) -> Result<HashMap<String, Vec<String>>> {
         let mut structure = HashMap::new();
-        
+
         // Add some realistic placeholder paths based on the actual AWS Guard Rules Registry
         structure.insert(
             "rules/aws-control-tower/cfn-guard/nist_800_53_rev_5".to_string(),
@@ -497,24 +536,24 @@ impl GitHubApiClient {
                 "ec2_security_group_attached_to_eni.guard".to_string(),
                 "rds_instance_encryption_enabled.guard".to_string(),
                 "cloudtrail_enabled_in_all_regions.guard".to_string(),
-            ]
+            ],
         );
-        
+
         structure.insert(
             "rules/aws-control-tower/cfn-guard/pci_dss".to_string(),
             vec![
                 "rds_storage_encrypted.guard".to_string(),
                 "s3_bucket_public_access_prohibited.guard".to_string(),
                 "cloudtrail_enabled.guard".to_string(),
-            ]
+            ],
         );
-        
+
         structure.insert(
             "rules/aws-control-tower/cfn-guard/hipaa".to_string(),
             vec![
                 "s3_bucket_server_side_encryption_enabled.guard".to_string(),
                 "rds_instance_encryption_enabled.guard".to_string(),
-            ]
+            ],
         );
 
         structure.insert(
@@ -522,7 +561,7 @@ impl GitHubApiClient {
             vec![
                 "s3_bucket_encryption_enabled.guard".to_string(),
                 "cloudwatch_log_group_encrypted.guard".to_string(),
-            ]
+            ],
         );
 
         structure.insert(
@@ -530,9 +569,9 @@ impl GitHubApiClient {
             vec![
                 "cloudtrail_log_file_validation_enabled.guard".to_string(),
                 "s3_bucket_versioning_enabled.guard".to_string(),
-            ]
+            ],
         );
-        
+
         Ok(structure)
     }
 
@@ -551,7 +590,8 @@ impl GitHubApiClient {
             self.api_base_url, self.repository, file_path
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&contents_url)
             .header("Accept", "application/vnd.github.v3.raw")
             .send()

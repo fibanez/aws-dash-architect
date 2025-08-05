@@ -3,10 +3,7 @@
 //! This tool allows AI agents to search for AWS regions using fuzzy matching
 //! on region codes and display names without making API calls.
 
-use crate::app::{
-    cfn_resources::AWS_REGIONS,
-    resource_explorer::dialogs::get_default_regions,
-};
+use crate::app::{cfn_resources::AWS_REGIONS, resource_explorer::dialogs::get_default_regions};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -91,7 +88,10 @@ impl AwsFindRegionTool {
         }
 
         // Word boundary matching (for multi-word display names)
-        if target_lower.split_whitespace().any(|word| word.starts_with(&query_lower)) {
+        if target_lower
+            .split_whitespace()
+            .any(|word| word.starts_with(&query_lower))
+        {
             return 0.8;
         }
 
@@ -223,30 +223,42 @@ Examples:
         _agent_context: Option<&stood::agent::AgentContext>,
     ) -> Result<ToolResult, ToolError> {
         let start_time = std::time::Instant::now();
-        info!("🔍 aws_find_region executing with parameters: {:?}", parameters);
+        info!(
+            "🔍 aws_find_region executing with parameters: {:?}",
+            parameters
+        );
 
         // Parse parameters
         let params = parameters.unwrap_or_else(|| serde_json::json!({}));
-        
-        let query = params.get("query")
+
+        let query = params
+            .get("query")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
-        
-        let defaults_only = params.get("defaults_only")
+
+        let defaults_only = params
+            .get("defaults_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        
-        let limit = params.get("limit")
+
+        let limit = params
+            .get("limit")
             .and_then(|v| v.as_u64())
             .unwrap_or(20)
             .min(100) as usize;
 
-        info!("🔍 Searching for regions matching: '{}' (defaults_only: {})", query, defaults_only);
+        info!(
+            "🔍 Searching for regions matching: '{}' (defaults_only: {})",
+            query, defaults_only
+        );
 
         // Search from static AWS regions
         let mut all_results = self.search_static_regions(query);
-        info!("📊 Found {} matches from static AWS regions", all_results.len());
+        info!(
+            "📊 Found {} matches from static AWS regions",
+            all_results.len()
+        );
 
         // Filter to defaults only if requested
         if defaults_only {
@@ -255,7 +267,8 @@ Examples:
 
         // Sort by match score (highest first), then by default status
         all_results.sort_by(|a, b| {
-            b.match_score.partial_cmp(&a.match_score)
+            b.match_score
+                .partial_cmp(&a.match_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| b.is_default.cmp(&a.is_default))
         });
@@ -271,7 +284,11 @@ Examples:
             format!(
                 "Listed {} AWS regions{} (showing {} of {}) in {:.2}s",
                 final_results.len(),
-                if defaults_only { " (defaults only)" } else { "" },
+                if defaults_only {
+                    " (defaults only)"
+                } else {
+                    ""
+                },
                 final_results.len(),
                 total_before_limit,
                 duration.as_secs_f64()
@@ -281,7 +298,11 @@ Examples:
                 "Found {} AWS regions matching '{}'{} (showing {} of {}) in {:.2}s",
                 total_before_limit,
                 query,
-                if defaults_only { " (defaults only)" } else { "" },
+                if defaults_only {
+                    " (defaults only)"
+                } else {
+                    ""
+                },
                 final_results.len(),
                 total_before_limit,
                 duration.as_secs_f64()
