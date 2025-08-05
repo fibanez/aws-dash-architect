@@ -56,6 +56,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::app::cfn_guard::{GuardValidator, GuardValidation};
+
 /// Represents resource dependencies in CloudFormation templates.
 ///
 /// CloudFormation allows dependencies to be specified as either a single resource name
@@ -515,6 +517,46 @@ impl CloudFormationTemplate {
                 }
             }
         }
+    }
+
+    /// Parse a CloudFormation template from a JSON string.
+    ///
+    /// This method parses a JSON string representation of a CloudFormation template
+    /// and returns a structured CloudFormationTemplate object.
+    ///
+    /// # Arguments
+    ///
+    /// * `json_content` - JSON string containing the CloudFormation template
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed template or an error if parsing fails.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if:
+    /// - The JSON string is malformed
+    /// - The JSON structure doesn't match the CloudFormation template schema
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aws_dash::app::cfn_template::CloudFormationTemplate;
+    ///
+    /// let json_str = r#"{
+    ///     "AWSTemplateFormatVersion": "2010-09-09",
+    ///     "Resources": {
+    ///         "MyBucket": {
+    ///             "Type": "AWS::S3::Bucket"
+    ///         }
+    ///     }
+    /// }"#;
+    ///
+    /// let template = CloudFormationTemplate::from_json(json_str)?;
+    /// ```
+    pub fn from_json(json_content: &str) -> Result<Self> {
+        serde_json::from_str::<CloudFormationTemplate>(json_content)
+            .map_err(|e| anyhow!("Failed to parse JSON: {}", e))
     }
 
     /// Save the template to a JSON or YAML file.
@@ -1363,5 +1405,47 @@ impl CloudFormationTemplate {
                 // No dependencies in primitive values
             }
         }
+    }
+
+    /// Validate the template against CloudFormation Guard rules.
+    ///
+    /// This method performs policy-as-code validation using CloudFormation Guard
+    /// rules for the specified compliance programs. It checks for security
+    /// misconfigurations, compliance violations, and best practice deviations.
+    ///
+    /// # Arguments
+    ///
+    /// * `validator` - The Guard validator containing loaded compliance rules
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the Guard validation results with any violations found.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if:
+    /// - The template cannot be serialized to JSON for Guard validation
+    /// - The Guard validation process fails
+    /// - There are issues with the loaded rules
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aws_dash::app::cfn_template::CloudFormationTemplate;
+    /// use aws_dash::app::cfn_guard::{GuardValidator, ComplianceProgram};
+    ///
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let template = CloudFormationTemplate::from_file(Path::new("template.yaml"))?;
+    /// let validator = GuardValidator::new(vec![ComplianceProgram::NIST80053R5]).await?;
+    /// 
+    /// let validation = template.validate_with_guard(&validator).await?;
+    /// if !validation.compliant {
+    ///     println!("Found {} violations", validation.violations.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn validate_with_guard(&self, validator: &GuardValidator) -> Result<GuardValidation> {
+        validator.validate_template(self).await
     }
 }

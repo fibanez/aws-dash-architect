@@ -111,6 +111,9 @@ aws-sdk-batch = "1.67"
 aws-sdk-firehose = "1.67"
 aws-sdk-quicksight = "1.67"
 
+# CloudFormation Guard
+cfn-guard = "3.1.2"
+
 # HTTP and web
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 url = "2.4"

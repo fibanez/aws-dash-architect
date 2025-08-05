@@ -38,6 +38,7 @@ pub mod bedrock_client;
 pub mod bridge;
 pub mod cf_syntax;
 pub mod cfn_dag;
+pub mod cfn_guard;
 pub mod cfn_intrinsic_functions;
 pub mod cfn_resource_icons;
 pub mod cfn_resource_policies;
