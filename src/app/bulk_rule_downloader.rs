@@ -332,7 +332,7 @@ impl BulkRuleDownloader {
         
         // If no rules were downloaded, generate some placeholder rules
         if rules.is_empty() {
-            tracing::warn!("No rules downloaded for {}, generating placeholder rules", program.name);
+            tracing::warn!("No rules downloaded for {} after {} attempts, generating placeholder rules", program.name, download_attempts);
             return self.generate_placeholder_rule_set(program).await;
         }
         
@@ -562,8 +562,8 @@ impl RuleStorage {
             fs::create_dir_all(&program_dir)?;
         }
 
-        // Store individual rule files
-        for (rule_name, rule_file) in &rule_set.rules {
+        // Store individual rule files  
+        for (_rule_name, rule_file) in &rule_set.rules {
             let rule_path = program_dir.join(&rule_file.file_path);
             fs::write(&rule_path, &rule_file.content)?;
         }

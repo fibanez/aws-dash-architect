@@ -250,15 +250,100 @@ impl ResourceNormalizer for ServiceNameResourceNormalizer {
         entry: &ResourceEntry,
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        // Implement based on your service's relationships
-        // Example: VPC relationships, attached resources, etc.
-        Vec::new()
+        let mut relationships = Vec::new();
+        
+        // Example: Find resources this service relates to
+        for resource in all_resources {
+            match resource.resource_type.as_str() {
+                "AWS::EC2::VPC" => {
+                    // Example: Service deployed in VPC
+                    relationships.push(ResourceRelationship {
+                        relationship_type: RelationshipType::Uses,
+                        target_resource_id: resource.resource_id.clone(),
+                        target_resource_type: resource.resource_type.clone(),
+                    });
+                }
+                "AWS::IAM::Role" => {
+                    // Example: Service assumes IAM role
+                    relationships.push(ResourceRelationship {
+                        relationship_type: RelationshipType::Uses,
+                        target_resource_id: resource.resource_id.clone(),
+                        target_resource_type: resource.resource_type.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        
+        relationships
     }
 
     fn resource_type(&self) -> &'static str {
         "AWS::ServiceName::Resource"
     }
 }
+```
+
+### **ResourceRelationship System (Updated Structure)**
+
+**⚠️ IMPORTANT: ResourceRelationship Structure Changed**
+
+The relationship system uses the following **current structure**:
+
+```rust
+pub struct ResourceRelationship {
+    pub relationship_type: RelationshipType,     // Enum: Uses, Contains, AttachedTo
+    pub target_resource_id: String,             // ID of target resource
+    pub target_resource_type: String,           // Type like "AWS::EC2::VPC"
+}
+
+pub enum RelationshipType {
+    Uses,            // Resource uses/depends on target (EC2 uses SecurityGroup)
+    Contains,        // Resource contains target (VPC contains Subnet)
+    AttachedTo,      // Resource attached to target (EBS attached to EC2)
+}
+```
+
+**Examples of proper relationship creation:**
+```rust
+// Lambda function uses IAM role
+relationships.push(ResourceRelationship {
+    relationship_type: RelationshipType::Uses,
+    target_resource_id: role_resource.resource_id.clone(),
+    target_resource_type: "AWS::IAM::Role".to_string(),
+});
+
+// VPC contains subnet  
+relationships.push(ResourceRelationship {
+    relationship_type: RelationshipType::Contains,
+    target_resource_id: subnet_resource.resource_id.clone(),
+    target_resource_type: "AWS::EC2::Subnet".to_string(),
+});
+
+// EBS volume attached to EC2 instance
+relationships.push(ResourceRelationship {
+    relationship_type: RelationshipType::AttachedTo,
+    target_resource_id: instance_resource.resource_id.clone(),
+    target_resource_type: "AWS::EC2::Instance".to_string(),
+});
+```
+
+**⚠️ Old Structure (DO NOT USE):**
+```rust
+// ❌ OUTDATED - Will cause compilation errors
+ResourceRelationship {
+    source_id: entry.resource_id.clone(),        // Field removed
+    target_id: resource.resource_id.clone(),     // Field renamed
+    relationship_type: "uses".to_string(),       // Now enum, not string
+    description: "description".to_string(),      // Field removed
+}
+```
+
+**Migration Pattern:**
+- Remove `source_id` and `description` fields
+- Change `target_id` → `target_resource_id`
+- Add `target_resource_type` field
+- Change `relationship_type` from String to `RelationshipType` enum
 ```
 
 **⚠️ Common Pitfalls:**

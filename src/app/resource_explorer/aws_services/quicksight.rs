@@ -382,6 +382,10 @@ impl QuickSightService {
                 "DataSourceId".to_string(),
                 serde_json::Value::String(data_source_id.clone()),
             );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(data_source_id.clone()),
+            );
         }
         if let Some(name) = &data_source.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
@@ -488,6 +492,10 @@ impl QuickSightService {
                 "DashboardId".to_string(),
                 serde_json::Value::String(dashboard_id.clone()),
             );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(dashboard_id.clone()),
+            );
         }
         if let Some(name) = &dashboard.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
@@ -572,6 +580,10 @@ impl QuickSightService {
         if let Some(data_set_id) = &data_set.data_set_id {
             json.insert(
                 "DataSetId".to_string(),
+                serde_json::Value::String(data_set_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
                 serde_json::Value::String(data_set_id.clone()),
             );
         }

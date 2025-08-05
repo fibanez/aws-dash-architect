@@ -348,6 +348,10 @@ mod tests {
             environment_compliance: std::collections::HashMap::new(),
             default_region: Some("us-east-1".to_string()),
             cfn_template: None,
+            compliance_programs: Vec::new(),
+            guard_rules_enabled: true,
+            custom_guard_rules: Vec::new(),
+            environment_compliance: std::collections::HashMap::new(),
         }
     }
 

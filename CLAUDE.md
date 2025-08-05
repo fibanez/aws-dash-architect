@@ -27,7 +27,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build/Lint/Test Commands
 
-⚠️ **MEMORY CONSTRAINT WARNING**: This system has many CPUs but limited memory. Always use `-j 4` with cargo test commands to prevent memory exhaustion and crashes.
+⚠️ **MEMORY CONSTRAINT WARNING**: This system has many CPUs but limited memory. The test scripts now use full CPU parallelism (28 cores) with memory monitoring to maximize performance while preventing crashes.
+
+### Compilation Caching
+
+**sccache** is configured to accelerate Rust compilations across all working trees:
+- **Configuration**: Global Cargo config at `~/.cargo/config.toml` sets `rustc-wrapper = "sccache"`
+- **Cache Location**: `/home/fernando/.cache/sccache` (shared across all projects)
+- **Cache Size**: 20 GiB limit (increased for aws-dash project complexity and multiple working trees)
+- **Check Status**: `sccache --show-stats` to view cache hit/miss statistics
+- **Clear Cache**: `sccache --zero-stats` to reset statistics
+
+### Build Commands
 
 - Build: `cargo build`
 - Check: `cargo check`
@@ -35,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::all`
 - Format: `cargo fmt --all`
 - Full check: `./check.sh` (runs all checks in sequence with chunked tests)
-- Single test: `cargo test <test_name> -j 4` (always use -j 4 to limit memory usage)
+- Single test: `cargo test <test_name>` (use test scripts for memory-monitored execution)
 - The application log files is located in $HOME/.local/share/awsdash/logs/awsdash.log - this file can be used to troubleshoot or debug errors
 - When creating tests don't create mock tests.  All tests are either unit test, non-mock integration tests, or e2e test with no mocks
 
@@ -106,12 +117,12 @@ VERBOSE=true ./scripts/test-chunks.sh ui    # Same as Level 3
 VERBOSE=false ./scripts/test-chunks.sh ui   # Same as Level 0
 ```
 
-- **Legacy commands** (avoid for large test runs due to memory constraints):
-  - All tests: `cargo test --workspace --all-targets --all-features -j 4` 
-  - Integration tests: `cargo test --test aws_real_world_templates -j 4 -- --ignored`
+- **Legacy commands** (use test scripts instead for memory monitoring):
+  - All tests: `cargo test --workspace --all-targets --all-features` 
+  - Integration tests: `cargo test --test aws_real_world_templates -- --ignored`
   - Integration tests (script): `./scripts/run-integration-tests.sh`
 
-⚠️ **IMPORTANT**: Always use `-j 4` flag with `cargo test` to limit parallel jobs and prevent memory exhaustion. Never run `cargo test` without job limits on this system.
+⚠️ **IMPORTANT**: Use the test scripts (`./scripts/test-chunks.sh`, `./scripts/test-with-memory-monitor.sh`) for memory-monitored execution. Direct `cargo test` commands now use full CPU parallelism but may exhaust memory without monitoring.
 
 ## Code Style Guidelines
 

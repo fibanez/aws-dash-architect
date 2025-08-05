@@ -1,11 +1,14 @@
-use super::state::*;
+use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+pub mod accessanalyzer;
 pub mod acm;
 pub mod acmpca;
+pub mod amplify;
 pub mod apigateway;
 pub mod apigatewayv2;
+pub mod apprunner;
 pub mod appsync;
 pub mod athena;
 pub mod backup;
@@ -15,17 +18,25 @@ pub mod cloudformation;
 pub mod cloudfront;
 pub mod cloudtrail;
 pub mod cloudwatch;
+pub mod connect;
 pub mod codebuild;
 pub mod codecommit;
 pub mod codepipeline;
 pub mod cognito;
+pub mod config_rule;
 pub mod configservice;
+pub mod databrew;
+pub mod datasync;
+pub mod detective;
+pub mod documentdb;
 pub mod dynamodb;
 pub mod ec2;
 pub mod ecs;
 pub mod efs;
 pub mod eks;
 pub mod elasticache;
+pub mod fsx;
+pub mod globalaccelerator;
 pub mod elb;
 pub mod elbv2;
 pub mod eventbridge;
@@ -33,33 +44,47 @@ pub mod glue;
 pub mod greengrass;
 pub mod guardduty;
 pub mod iam;
+pub mod inspector;
 pub mod iot;
 pub mod kinesis;
 pub mod kinesisfirehose;
+pub mod lakeformation;
 pub mod lambda;
+pub mod lex;
+pub mod macie;
 pub mod logs;
 pub mod mq;
+pub mod msk;
 pub mod neptune;
 pub mod opensearch;
 pub mod organizations_ou;
 pub mod organizations_policy;
+pub mod polly;
 pub mod quicksight;
 pub mod rds;
 pub mod redshift;
+pub mod rekognition;
 pub mod route53;
 pub mod s3;
 pub mod sagemaker;
 pub mod sagemaker_model;
 pub mod sagemaker_training_job;
+pub mod securityhub;
 pub mod sns;
 pub mod sqs;
 pub mod ssm;
+pub mod timestream;
+pub mod transfer;
 pub mod wafv2;
+pub mod workspaces;
 
+pub use accessanalyzer::*;
 pub use acm::*;
 pub use acmpca::*;
+pub use amplify::*;
 pub use apigateway::*;
 pub use apigatewayv2::*;
+pub use apprunner::*;
 pub use appsync::*;
 pub use athena::*;
 pub use backup::*;
@@ -69,17 +94,25 @@ pub use cloudformation::*;
 pub use cloudfront::*;
 pub use cloudtrail::*;
 pub use cloudwatch::*;
+pub use connect::*;
 pub use codebuild::*;
 pub use codecommit::*;
 pub use codepipeline::*;
 pub use cognito::*;
+pub use config_rule::*;
 pub use configservice::*;
+pub use databrew::*;
+pub use datasync::*;
+pub use detective::*;
+pub use documentdb::*;
 pub use dynamodb::*;
 pub use ec2::*;
 pub use ecs::*;
 pub use efs::*;
 pub use eks::*;
 pub use elasticache::*;
+pub use fsx::*;
+pub use globalaccelerator::*;
 pub use elb::*;
 pub use elbv2::*;
 pub use eventbridge::*;
@@ -87,28 +120,40 @@ pub use glue::*;
 pub use greengrass::*;
 pub use guardduty::*;
 pub use iam::*;
+pub use inspector::*;
 pub use iot::*;
 pub use kinesis::*;
 pub use kinesisfirehose::*;
+pub use lakeformation::*;
 pub use lambda::*;
+pub use lex::*;
+pub use macie::*;
 pub use logs::*;
 pub use mq::*;
+pub use msk::*;
 pub use neptune::*;
 pub use opensearch::*;
 pub use organizations_ou::*;
 pub use organizations_policy::*;
+pub use polly::*;
 pub use quicksight::*;
 pub use rds::*;
 pub use redshift::*;
+pub use rekognition::*;
 pub use route53::*;
 pub use s3::*;
 pub use sagemaker::*;
 pub use sagemaker_model::*;
 pub use sagemaker_training_job::*;
+pub use securityhub::*;
 pub use sns::*;
 pub use sqs::*;
 pub use ssm::*;
+pub use timestream::*;
+pub use fsx::*;
+pub use transfer::*;
 pub use wafv2::*;
+pub use workspaces::*;
 
 /// Trait for normalizing different AWS service responses into consistent ResourceEntry format
 pub trait ResourceNormalizer {
@@ -199,6 +244,11 @@ impl NormalizerFactory {
             "AWS::EFS::FileSystem" => Some(Box::new(EfsFileSystemNormalizer)),
             "AWS::CloudTrail::Trail" => Some(Box::new(CloudTrailNormalizer)),
             "AWS::Config::ConfigurationRecorder" => Some(Box::new(ConfigServiceNormalizer)),
+            "AWS::Config::ConfigRule" => Some(Box::new(ConfigRuleNormalizer)),
+            "AWS::DataBrew::Job" => Some(Box::new(DataBrewJobNormalizer)),
+            "AWS::DataBrew::Dataset" => Some(Box::new(DataBrewDatasetNormalizer)),
+            "AWS::Detective::Graph" => Some(Box::new(DetectiveNormalizer)),
+            "AWS::AccessAnalyzer::Analyzer" => Some(Box::new(AccessAnalyzerNormalizer)),
             "AWS::SSM::Parameter" => Some(Box::new(SSMParameterNormalizer)),
             "AWS::SSM::Document" => Some(Box::new(SSMDocumentNormalizer)),
             "AWS::Backup::BackupPlan" => Some(Box::new(BackupPlanNormalizer)),
@@ -207,6 +257,8 @@ impl NormalizerFactory {
             "AWS::Events::Rule" => Some(Box::new(EventBridgeRuleNormalizer)),
             "AWS::AppSync::GraphQLApi" => Some(Box::new(AppSyncGraphQLApiNormalizer)),
             "AWS::AmazonMQ::Broker" => Some(Box::new(MQBrokerNormalizer)),
+            "AWS::MSK::Cluster" => Some(Box::new(MskNormalizer)),
+            "AWS::LakeFormation::DataLakeSettings" => Some(Box::new(LakeFormationNormalizer)),
             "AWS::CodePipeline::Pipeline" => Some(Box::new(CodePipelinePipelineNormalizer)),
             "AWS::CodeBuild::Project" => Some(Box::new(CodeBuildProjectNormalizer)),
             "AWS::CodeCommit::Repository" => Some(Box::new(CodeCommitRepositoryNormalizer)),
@@ -220,6 +272,7 @@ impl NormalizerFactory {
             "AWS::ACMPCA::CertificateAuthority" => Some(Box::new(AcmPcaNormalizer)),
             "AWS::WAFv2::WebACL" => Some(Box::new(WafV2WebAclNormalizer)),
             "AWS::GuardDuty::Detector" => Some(Box::new(GuardDutyDetectorNormalizer)),
+            "AWS::SecurityHub::Hub" => Some(Box::new(SecurityHubNormalizer)),
             "AWS::CloudFront::Distribution" => Some(Box::new(CloudFrontDistributionNormalizer)),
             "AWS::ElastiCache::CacheCluster" => Some(Box::new(ElastiCacheCacheClusterNormalizer)),
             "AWS::ElastiCache::ReplicationGroup" => {
@@ -239,6 +292,27 @@ impl NormalizerFactory {
             "AWS::QuickSight::DataSource" => Some(Box::new(QuickSightDataSourceNormalizer)),
             "AWS::QuickSight::Dashboard" => Some(Box::new(QuickSightDashboardNormalizer)),
             "AWS::QuickSight::DataSet" => Some(Box::new(QuickSightDataSetNormalizer)),
+            "AWS::Macie::Session" => Some(Box::new(MacieResourceNormalizer)),
+            "AWS::Inspector::Configuration" => Some(Box::new(InspectorResourceNormalizer)),
+            "AWS::Timestream::Database" => Some(Box::new(TimestreamResourceNormalizer)),
+            "AWS::DocumentDB::Cluster" => Some(Box::new(DocumentDbResourceNormalizer)),
+            "AWS::Transfer::Server" => Some(Box::new(TransferResourceNormalizer)),
+            "AWS::DataSync::Task" => Some(Box::new(DataSyncResourceNormalizer)),
+            "AWS::FSx::FileSystem" => Some(Box::new(FsxResourceNormalizer)),
+            "AWS::FSx::Backup" => Some(Box::new(FsxBackupResourceNormalizer)),
+            "AWS::WorkSpaces::Workspace" => Some(Box::new(WorkSpacesResourceNormalizer)),
+            "AWS::WorkSpaces::Directory" => Some(Box::new(WorkSpacesDirectoryResourceNormalizer)),
+            "AWS::AppRunner::Service" => Some(Box::new(AppRunnerResourceNormalizer)),
+            "AWS::AppRunner::Connection" => Some(Box::new(AppRunnerConnectionResourceNormalizer)),
+            "AWS::GlobalAccelerator::Accelerator" => Some(Box::new(GlobalAcceleratorNormalizer)),
+            "AWS::Connect::Instance" => Some(Box::new(ConnectNormalizer)),
+            "AWS::Amplify::App" => Some(Box::new(AmplifyNormalizer)),
+            "AWS::Lex::Bot" => Some(Box::new(LexBotNormalizer)),
+            "AWS::Rekognition::Collection" => Some(Box::new(RekognitionCollectionNormalizer)),
+            "AWS::Rekognition::StreamProcessor" => Some(Box::new(RekognitionStreamProcessorNormalizer)),
+            "AWS::Polly::Voice" => Some(Box::new(PollyVoiceNormalizer)),
+            "AWS::Polly::Lexicon" => Some(Box::new(PollyLexiconNormalizer)),
+            "AWS::Polly::SynthesisTask" => Some(Box::new(PollySynthesisTaskNormalizer)),
             _ => None,
         }
     }
@@ -300,6 +374,11 @@ impl NormalizerFactory {
             "AWS::EFS::FileSystem",
             "AWS::CloudTrail::Trail",
             "AWS::Config::ConfigurationRecorder",
+            "AWS::Config::ConfigRule",
+            "AWS::DataBrew::Job",
+            "AWS::DataBrew::Dataset",
+            "AWS::Detective::Graph",
+            "AWS::AccessAnalyzer::Analyzer",
             "AWS::SSM::Parameter",
             "AWS::SSM::Document",
             "AWS::Backup::BackupPlan",
@@ -308,6 +387,8 @@ impl NormalizerFactory {
             "AWS::Events::Rule",
             "AWS::AppSync::GraphQLApi",
             "AWS::AmazonMQ::Broker",
+            "AWS::MSK::Cluster",
+            "AWS::LakeFormation::DataLakeSettings",
             "AWS::CodePipeline::Pipeline",
             "AWS::CodeBuild::Project",
             "AWS::CodeCommit::Repository",
@@ -319,6 +400,7 @@ impl NormalizerFactory {
             "AWS::ACMPCA::CertificateAuthority",
             "AWS::WAFv2::WebACL",
             "AWS::GuardDuty::Detector",
+            "AWS::SecurityHub::Hub",
             "AWS::CloudFront::Distribution",
             "AWS::ElastiCache::CacheCluster",
             "AWS::ElastiCache::ReplicationGroup",
@@ -334,6 +416,27 @@ impl NormalizerFactory {
             "AWS::QuickSight::DataSource",
             "AWS::QuickSight::Dashboard",
             "AWS::QuickSight::DataSet",
+            "AWS::Macie::Session",
+            "AWS::Inspector::Configuration",
+            "AWS::Timestream::Database",
+            "AWS::DocumentDB::Cluster",
+            "AWS::Transfer::Server",
+            "AWS::DataSync::Task",
+            "AWS::FSx::FileSystem",
+            "AWS::FSx::Backup",
+            "AWS::WorkSpaces::Workspace",
+            "AWS::WorkSpaces::Directory",
+            "AWS::AppRunner::Service",
+            "AWS::AppRunner::Connection",
+            "AWS::GlobalAccelerator::Accelerator",
+            "AWS::Connect::Instance",
+            "AWS::Amplify::App",
+            "AWS::Lex::Bot",
+            "AWS::Rekognition::Collection",
+            "AWS::Rekognition::StreamProcessor",
+            "AWS::Polly::Voice",
+            "AWS::Polly::Lexicon",
+            "AWS::Polly::SynthesisTask",
         ]
     }
 }

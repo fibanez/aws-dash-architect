@@ -193,6 +193,10 @@ impl BatchService {
                 "Name".to_string(),
                 serde_json::Value::String(job_queue_name.clone()),
             );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(job_queue_name.clone()),
+            );
         }
 
         if let Some(job_queue_arn) = &queue.job_queue_arn {
@@ -308,6 +312,10 @@ impl BatchService {
             );
             json.insert(
                 "Name".to_string(),
+                serde_json::Value::String(compute_environment_name.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
                 serde_json::Value::String(compute_environment_name.clone()),
             );
         }

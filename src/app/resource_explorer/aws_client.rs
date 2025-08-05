@@ -157,6 +157,10 @@ impl AWSResourceClient {
         GlueService::new(Arc::clone(&self.credential_coordinator))
     }
 
+    fn get_lakeformation_service(&self) -> LakeFormationService {
+        LakeFormationService::new(Arc::clone(&self.credential_coordinator))
+    }
+
     fn get_athena_service(&self) -> AthenaService {
         AthenaService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -197,6 +201,26 @@ impl AWSResourceClient {
         ConfigService::new(Arc::clone(&self.credential_coordinator))
     }
 
+    fn get_databrew_service(&self) -> DataBrewService {
+        DataBrewService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_codeartifact_service(&self) -> CodeArtifactService {
+        CodeArtifactService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_codedeploy_service(&self) -> CodeDeployService {
+        CodeDeployService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_appconfig_service(&self) -> AppConfigService {
+        AppConfigService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_cloudtraildata_service(&self) -> CloudTrailDataService {
+        CloudTrailDataService::new(Arc::clone(&self.credential_coordinator))
+    }
+
     // Phase 2 Batch 1: High-value services
     fn get_acm_service(&self) -> AcmService {
         AcmService::new(Arc::clone(&self.credential_coordinator))
@@ -216,6 +240,42 @@ impl AWSResourceClient {
 
     fn get_guardduty_service(&self) -> GuardDutyService {
         GuardDutyService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_securityhub_service(&self) -> SecurityHubService {
+        SecurityHubService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_detective_service(&self) -> DetectiveService {
+        DetectiveService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_accessanalyzer_service(&self) -> AccessAnalyzerService {
+        AccessAnalyzerService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_macie_service(&self) -> MacieService {
+        MacieService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_inspector_service(&self) -> InspectorService {
+        InspectorService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_timestream_service(&self) -> TimestreamService {
+        TimestreamService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_documentdb_service(&self) -> DocumentDbService {
+        DocumentDbService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_transfer_service(&self) -> TransferService {
+        TransferService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_datasync_service(&self) -> DataSyncService {
+        DataSyncService::new(Arc::clone(&self.credential_coordinator))
     }
 
     // Phase 2 Batch 2: Analytics & search services
@@ -238,6 +298,10 @@ impl AWSResourceClient {
 
     fn get_mq_service(&self) -> MQService {
         MQService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_msk_service(&self) -> MskService {
+        MskService::new(Arc::clone(&self.credential_coordinator))
     }
 
     fn get_organizations_service(&self) -> OrganizationsService {
@@ -302,6 +366,42 @@ impl AWSResourceClient {
 
     fn get_kinesisfirehose_service(&self) -> KinesisFirehoseService {
         KinesisFirehoseService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_fsx_service(&self) -> FsxService {
+        FsxService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_workspaces_service(&self) -> WorkSpacesService {
+        WorkSpacesService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_apprunner_service(&self) -> AppRunnerService {
+        AppRunnerService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_globalaccelerator_service(&self) -> GlobalAcceleratorService {
+        GlobalAcceleratorService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_connect_service(&self) -> ConnectService {
+        ConnectService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_amplify_service(&self) -> AmplifyService {
+        AmplifyService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_lex_service(&self) -> LexService {
+        LexService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_rekognition_service(&self) -> RekognitionService {
+        RekognitionService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_polly_service(&self) -> PollyService {
+        PollyService::new(Arc::clone(&self.credential_coordinator))
     }
 
     /// Query AWS resources for all combinations of accounts, regions, and resource types in parallel
@@ -683,6 +783,11 @@ impl AWSResourceClient {
                     .await?
             }
             "AWS::Glue::Job" => self.get_glue_service().list_jobs(account, region).await?,
+            "AWS::LakeFormation::DataLakeSettings" => {
+                self.get_lakeformation_service()
+                    .list_data_lake_settings(account, region)
+                    .await?
+            }
             "AWS::Athena::WorkGroup" => {
                 self.get_athena_service()
                     .list_work_groups(account, region)
@@ -729,6 +834,61 @@ impl AWSResourceClient {
                     .list_configuration_recorders(account, region)
                     .await?
             }
+            "AWS::Config::ConfigRule" => {
+                self.get_config_service()
+                    .list_config_rules(account, region)
+                    .await?
+            }
+            "AWS::DataBrew::Job" => {
+                self.get_databrew_service()
+                    .list_jobs(account, region)
+                    .await?
+            }
+            "AWS::DataBrew::Dataset" => {
+                self.get_databrew_service()
+                    .list_datasets(account, region)
+                    .await?
+            }
+            "AWS::CodeArtifact::Domain" => {
+                self.get_codeartifact_service()
+                    .list_domains(account, region)
+                    .await?
+            }
+            "AWS::CodeArtifact::Repository" => {
+                self.get_codeartifact_service()
+                    .list_repositories(account, region)
+                    .await?
+            }
+            "AWS::CodeDeploy::Application" => {
+                self.get_codedeploy_service()
+                    .list_applications(account, region)
+                    .await?
+            }
+            "AWS::CodeDeploy::DeploymentGroup" => {
+                self.get_codedeploy_service()
+                    .list_deployment_groups(account, region)
+                    .await?
+            }
+            "AWS::AppConfig::Application" => {
+                self.get_appconfig_service()
+                    .list_applications(account, region)
+                    .await?
+            }
+            "AWS::AppConfig::Environment" => {
+                self.get_appconfig_service()
+                    .list_environments(account, region)
+                    .await?
+            }
+            "AWS::AppConfig::ConfigurationProfile" => {
+                self.get_appconfig_service()
+                    .list_configuration_profiles(account, region)
+                    .await?
+            }
+            "AWS::CloudTrail::EventDataStore" => {
+                self.get_cloudtraildata_service()
+                    .list_event_data_stores(account, region)
+                    .await?
+            }
             // Phase 2 Batch 1: High-value services
             "AWS::CertificateManager::Certificate" => {
                 self.get_acm_service()
@@ -763,6 +923,21 @@ impl AWSResourceClient {
             "AWS::GuardDuty::Detector" => {
                 self.get_guardduty_service()
                     .list_detectors(account, region)
+                    .await?
+            }
+            "AWS::SecurityHub::Hub" => {
+                self.get_securityhub_service()
+                    .list_hubs(account, region)
+                    .await?
+            }
+            "AWS::Detective::Graph" => {
+                self.get_detective_service()
+                    .list_graphs(account, region)
+                    .await?
+            }
+            "AWS::AccessAnalyzer::Analyzer" => {
+                self.get_accessanalyzer_service()
+                    .list_analyzers(account, region)
                     .await?
             }
             // Phase 2 Batch 2: Analytics & search services
@@ -906,6 +1081,116 @@ impl AWSResourceClient {
             "AWS::KinesisFirehose::DeliveryStream" => {
                 self.get_kinesisfirehose_service()
                     .list_delivery_streams(account, region)
+                    .await?
+            }
+            "AWS::MSK::Cluster" => {
+                self.get_msk_service()
+                    .list_clusters(account, region)
+                    .await?
+            }
+            "AWS::Macie::Session" => {
+                self.get_macie_service()
+                    .list_classification_jobs(account, region)
+                    .await?
+            }
+            "AWS::Inspector::Configuration" => {
+                self.get_inspector_service()
+                    .list_findings(account, region)
+                    .await?
+            }
+            "AWS::Timestream::Database" => {
+                self.get_timestream_service()
+                    .list_databases(account, region)
+                    .await?
+            }
+            "AWS::DocumentDB::Cluster" => {
+                self.get_documentdb_service()
+                    .list_clusters(account, region)
+                    .await?
+            }
+            "AWS::Transfer::Server" => {
+                self.get_transfer_service()
+                    .list_servers(account, region)
+                    .await?
+            }
+            "AWS::DataSync::Task" => {
+                self.get_datasync_service()
+                    .list_tasks(account, region)
+                    .await?
+            }
+            "AWS::FSx::FileSystem" => {
+                self.get_fsx_service()
+                    .list_file_systems(account, region)
+                    .await?
+            }
+            "AWS::FSx::Backup" => {
+                self.get_fsx_service()
+                    .list_backups(account, region)
+                    .await?
+            }
+            "AWS::WorkSpaces::Workspace" => {
+                self.get_workspaces_service()
+                    .list_workspaces(account, region)
+                    .await?
+            }
+            "AWS::WorkSpaces::Directory" => {
+                self.get_workspaces_service()
+                    .list_directories(account, region)
+                    .await?
+            }
+            "AWS::AppRunner::Service" => {
+                self.get_apprunner_service()
+                    .list_services(account, region)
+                    .await?
+            }
+            "AWS::AppRunner::Connection" => {
+                self.get_apprunner_service()
+                    .list_connections(account, region)
+                    .await?
+            }
+            "AWS::GlobalAccelerator::Accelerator" => {
+                self.get_globalaccelerator_service()
+                    .list_accelerators(account, region)
+                    .await?
+            }
+            "AWS::Connect::Instance" => {
+                self.get_connect_service()
+                    .list_instances(account, region)
+                    .await?
+            }
+            "AWS::Amplify::App" => {
+                self.get_amplify_service()
+                    .list_apps(account, region)
+                    .await?
+            }
+            "AWS::Lex::Bot" => {
+                self.get_lex_service()
+                    .list_bots(account, region)
+                    .await?
+            }
+            "AWS::Rekognition::Collection" => {
+                self.get_rekognition_service()
+                    .list_collections(account, region)
+                    .await?
+            }
+            "AWS::Rekognition::StreamProcessor" => {
+                self.get_rekognition_service()
+                    .list_stream_processors(account, region)
+                    .await?
+            }
+            "AWS::Polly::Voice" => {
+                self.get_polly_service()
+                    .describe_voices(account, region)
+                    .await?
+            }
+            "AWS::Polly::Lexicon" => {
+                self.get_polly_service()
+                    .list_lexicons(account, region)
+                    .await?
+            }
+            "AWS::Polly::SynthesisTask" => {
+                self.get_polly_service()
+                    .list_speech_synthesis_tasks(account, region)
                     .await?
             }
             _ => {
@@ -1411,6 +1696,15 @@ impl AWSResourceClient {
                     )
                     .await
             }
+            "AWS::LakeFormation::DataLakeSettings" => {
+                self.get_lakeformation_service()
+                    .describe_data_lake_settings(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
             "AWS::Athena::WorkGroup" => {
                 self.get_athena_service()
                     .describe_work_group(
@@ -1501,6 +1795,105 @@ impl AWSResourceClient {
                     )
                     .await
             }
+            "AWS::Config::ConfigRule" => {
+                self.get_config_service()
+                    .describe_config_rule(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::DataBrew::Job" => {
+                self.get_databrew_service()
+                    .describe_job(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::DataBrew::Dataset" => {
+                self.get_databrew_service()
+                    .describe_dataset(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::CodeArtifact::Domain" => {
+                self.get_codeartifact_service()
+                    .describe_domain(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::CodeArtifact::Repository" => {
+                self.get_codeartifact_service()
+                    .describe_repository(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::CodeDeploy::Application" => {
+                self.get_codedeploy_service()
+                    .describe_application(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::CodeDeploy::DeploymentGroup" => {
+                self.get_codedeploy_service()
+                    .describe_deployment_group(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AppConfig::Application" => {
+                self.get_appconfig_service()
+                    .describe_application(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AppConfig::Environment" => {
+                self.get_appconfig_service()
+                    .describe_environment(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AppConfig::ConfigurationProfile" => {
+                self.get_appconfig_service()
+                    .describe_configuration_profile(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::CloudTrail::EventDataStore" => {
+                self.get_cloudtraildata_service()
+                    .describe_event_data_store(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
             // Phase 2 Batch 1: High-value services
             "AWS::CertificateManager::Certificate" => {
                 self.get_acm_service()
@@ -1559,6 +1952,33 @@ impl AWSResourceClient {
             "AWS::GuardDuty::Detector" => {
                 self.get_guardduty_service()
                     .describe_detector(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::SecurityHub::Hub" => {
+                self.get_securityhub_service()
+                    .describe_hub(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Detective::Graph" => {
+                self.get_detective_service()
+                    .describe_graph(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AccessAnalyzer::Analyzer" => {
+                self.get_accessanalyzer_service()
+                    .describe_analyzer(
                         &resource.account_id,
                         &resource.region,
                         &resource.resource_id,
@@ -1831,6 +2251,195 @@ impl AWSResourceClient {
                         &resource.resource_id,
                     )
                     .await
+            }
+            "AWS::MSK::Cluster" => {
+                self.get_msk_service()
+                    .describe_cluster(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Macie::Session" => {
+                self.get_macie_service()
+                    .get_macie_session(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Inspector::Configuration" => {
+                self.get_inspector_service()
+                    .get_inspector_configuration(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Timestream::Database" => {
+                self.get_timestream_service()
+                    .get_timestream_service(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::DocumentDB::Cluster" => {
+                self.get_documentdb_service()
+                    .get_cluster_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Transfer::Server" => {
+                self.get_transfer_service()
+                    .describe_server(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::DataSync::Task" => {
+                self.get_datasync_service()
+                    .describe_task(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::FSx::FileSystem" => {
+                self.get_fsx_service()
+                    .describe_file_system(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::FSx::Backup" => {
+                self.get_fsx_service()
+                    .describe_backup(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::WorkSpaces::Workspace" => {
+                self.get_workspaces_service()
+                    .describe_workspace(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::WorkSpaces::Directory" => {
+                self.get_workspaces_service()
+                    .describe_directory(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AppRunner::Service" => {
+                self.get_apprunner_service()
+                    .describe_service(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::AppRunner::Connection" => {
+                // App Runner connections don't have detailed describe operations
+                // Return the raw properties as detailed info
+                Ok(resource.raw_properties.clone())
+            }
+            "AWS::GlobalAccelerator::Accelerator" => {
+                self.get_globalaccelerator_service()
+                    .describe_accelerator(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Connect::Instance" => {
+                self.get_connect_service()
+                    .describe_instance(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Amplify::App" => {
+                self.get_amplify_service()
+                    .get_app(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Lex::Bot" => {
+                self.get_lex_service()
+                    .describe_bot(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Rekognition::Collection" => {
+                self.get_rekognition_service()
+                    .describe_collection(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Rekognition::StreamProcessor" => {
+                self.get_rekognition_service()
+                    .describe_stream_processor(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Polly::Lexicon" => {
+                self.get_polly_service()
+                    .get_lexicon(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Polly::SynthesisTask" => {
+                self.get_polly_service()
+                    .get_speech_synthesis_task(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Polly::Voice" => {
+                // Voices don't have individual describe operations
+                Ok(resource.raw_properties.clone())
             }
             _ => Err(anyhow::anyhow!(
                 "Describe operation not supported for resource type: {}",

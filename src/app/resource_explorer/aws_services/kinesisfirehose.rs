@@ -140,6 +140,10 @@ impl KinesisFirehoseService {
             "Name".to_string(),
             serde_json::Value::String(stream.delivery_stream_name.clone()),
         );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(stream.delivery_stream_name.clone()),
+        );
 
         json.insert(
             "DeliveryStreamArn".to_string(),

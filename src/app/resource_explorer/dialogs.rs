@@ -890,6 +890,21 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "GuardDuty".to_string(),
         ),
         ResourceTypeSelection::new(
+            "AWS::SecurityHub::Hub".to_string(),
+            "Security Hub Service".to_string(),
+            "Security Hub".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Detective::Graph".to_string(),
+            "Detective Security Investigation".to_string(),
+            "Detective".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::AccessAnalyzer::Analyzer".to_string(),
+            "IAM Access Analyzer".to_string(),
+            "Access Analyzer".to_string(),
+        ),
+        ResourceTypeSelection::new(
             "AWS::CloudFront::Distribution".to_string(),
             "Content Delivery Network".to_string(),
             "CloudFront".to_string(),
@@ -955,6 +970,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "Kinesis Data Firehose".to_string(),
         ),
         ResourceTypeSelection::new(
+            "AWS::MSK::Cluster".to_string(),
+            "MSK Kafka Cluster".to_string(),
+            "MSK".to_string(),
+        ),
+        ResourceTypeSelection::new(
             "AWS::QuickSight::DataSource".to_string(),
             "QuickSight Data Source".to_string(),
             "QuickSight".to_string(),
@@ -968,6 +988,26 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::QuickSight::DataSet".to_string(),
             "QuickSight Data Set".to_string(),
             "QuickSight".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Macie::Session".to_string(),
+            "Macie Session".to_string(),
+            "Security".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Inspector::Configuration".to_string(),
+            "Inspector Configuration".to_string(),
+            "Security".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Timestream::Database".to_string(),
+            "Timestream Database".to_string(),
+            "Database".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::DocumentDB::Cluster".to_string(),
+            "DocumentDB Cluster".to_string(),
+            "Database".to_string(),
         ),
         // RDS Resources
         ResourceTypeSelection::new(
@@ -1135,6 +1175,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "Glue ETL Job".to_string(),
             "Glue".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::LakeFormation::DataLakeSettings".to_string(),
+            "Lake Formation Data Lake Settings".to_string(),
+            "Lake Formation".to_string(),
+        ),
         // Athena Resources
         ResourceTypeSelection::new(
             "AWS::Athena::WorkGroup".to_string(),
@@ -1159,6 +1204,51 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "EFS File System".to_string(),
             "EFS".to_string(),
         ),
+        // Transfer Family Resources
+        ResourceTypeSelection::new(
+            "AWS::Transfer::Server".to_string(),
+            "Transfer Family Server".to_string(),
+            "Transfer Family".to_string(),
+        ),
+        // DataSync Resources
+        ResourceTypeSelection::new(
+            "AWS::DataSync::Task".to_string(),
+            "DataSync Task".to_string(),
+            "DataSync".to_string(),
+        ),
+        // FSx Resources
+        ResourceTypeSelection::new(
+            "AWS::FSx::FileSystem".to_string(),
+            "FSx File System".to_string(),
+            "FSx".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::FSx::Backup".to_string(),
+            "FSx Backup".to_string(),
+            "FSx".to_string(),
+        ),
+        // WorkSpaces Resources
+        ResourceTypeSelection::new(
+            "AWS::WorkSpaces::Workspace".to_string(),
+            "WorkSpaces Workspace".to_string(),
+            "WorkSpaces".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::WorkSpaces::Directory".to_string(),
+            "WorkSpaces Directory".to_string(),
+            "WorkSpaces".to_string(),
+        ),
+        // App Runner Resources
+        ResourceTypeSelection::new(
+            "AWS::AppRunner::Service".to_string(),
+            "App Runner Service".to_string(),
+            "App Runner".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::AppRunner::Connection".to_string(),
+            "App Runner Connection".to_string(),
+            "App Runner".to_string(),
+        ),
         // CloudTrail Resources
         ResourceTypeSelection::new(
             "AWS::CloudTrail::Trail".to_string(),
@@ -1170,6 +1260,66 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::Config::ConfigurationRecorder".to_string(),
             "Config Configuration Recorder".to_string(),
             "Config".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Config::ConfigRule".to_string(),
+            "Config Rule".to_string(),
+            "Config".to_string(),
+        ),
+        // Data Preparation Resources
+        ResourceTypeSelection::new(
+            "AWS::DataBrew::Job".to_string(),
+            "DataBrew Job".to_string(),
+            "DataBrew".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::DataBrew::Dataset".to_string(),
+            "DataBrew Dataset".to_string(),
+            "DataBrew".to_string(),
+        ),
+        // Code Artifact Resources
+        ResourceTypeSelection::new(
+            "AWS::CodeArtifact::Domain".to_string(),
+            "CodeArtifact Domain".to_string(),
+            "CodeArtifact".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CodeArtifact::Repository".to_string(),
+            "CodeArtifact Repository".to_string(),
+            "CodeArtifact".to_string(),
+        ),
+        // CodeDeploy Resources
+        ResourceTypeSelection::new(
+            "AWS::CodeDeploy::Application".to_string(),
+            "CodeDeploy Application".to_string(),
+            "CodeDeploy".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CodeDeploy::DeploymentGroup".to_string(),
+            "CodeDeploy Deployment Group".to_string(),
+            "CodeDeploy".to_string(),
+        ),
+        // AppConfig Resources
+        ResourceTypeSelection::new(
+            "AWS::AppConfig::Application".to_string(),
+            "AppConfig Application".to_string(),
+            "AppConfig".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::AppConfig::Environment".to_string(),
+            "AppConfig Environment".to_string(),
+            "AppConfig".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::AppConfig::ConfigurationProfile".to_string(),
+            "AppConfig Configuration Profile".to_string(),
+            "AppConfig".to_string(),
+        ),
+        // CloudTrail Lake Resources
+        ResourceTypeSelection::new(
+            "AWS::CloudTrail::EventDataStore".to_string(),
+            "CloudTrail Event Data Store".to_string(),
+            "CloudTrail".to_string(),
         ),
         // Systems Manager Resources
         ResourceTypeSelection::new(
@@ -1253,6 +1403,53 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::GreengrassV2::ComponentVersion".to_string(),
             "Greengrass Component Version".to_string(),
             "Greengrass".to_string(),
+        ),
+        // New Phase 1 Core Infrastructure Services
+        ResourceTypeSelection::new(
+            "AWS::GlobalAccelerator::Accelerator".to_string(),
+            "Global Accelerator".to_string(),
+            "GlobalAccelerator".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Connect::Instance".to_string(),
+            "Connect Instance".to_string(),
+            "Connect".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Amplify::App".to_string(),
+            "Amplify App".to_string(),
+            "Amplify".to_string(),
+        ),
+        // New Phase 2 AI/ML Services
+        ResourceTypeSelection::new(
+            "AWS::Lex::Bot".to_string(),
+            "Lex Bot".to_string(),
+            "Lex".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Rekognition::Collection".to_string(),
+            "Rekognition Collection".to_string(),
+            "Rekognition".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Rekognition::StreamProcessor".to_string(),
+            "Rekognition Stream Processor".to_string(),
+            "Rekognition".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Polly::Voice".to_string(),
+            "Polly Voice".to_string(),
+            "Polly".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Polly::Lexicon".to_string(),
+            "Polly Lexicon".to_string(),
+            "Polly".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Polly::SynthesisTask".to_string(),
+            "Polly Synthesis Task".to_string(),
+            "Polly".to_string(),
         ),
     ]
 }
