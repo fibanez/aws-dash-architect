@@ -5,14 +5,19 @@
 
 pub mod agents;
 pub mod cancellation;
+pub mod debug_logger;
 pub mod model_config;
 pub mod performance;
 pub mod sub_agent_callback_handler;
 pub mod tools;
 pub mod tools_registry;
 
+#[cfg(test)]
+mod debug_logger_test;
+
 pub use agents::*;
 pub use cancellation::*;
+pub use debug_logger::*;
 pub use model_config::*;
 pub use performance::*;
 pub use sub_agent_callback_handler::*;

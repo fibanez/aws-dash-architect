@@ -6,8 +6,9 @@
 use crate::app::bridge::{
     aws_describe_log_groups_tool, aws_describe_resource_tool, aws_find_account_tool,
     aws_find_region_tool, aws_get_log_events_tool, aws_list_resources_tool,
-    get_global_aws_credentials, get_global_bridge_sender, get_global_model, todo_read_tool,
-    todo_write_tool, ModelConfig, PerformanceTimer, SubAgentCallbackHandler,
+    get_global_aws_credentials, get_global_model, todo_read_tool,
+    todo_write_tool, ModelConfig, PerformanceTimer,
+    BridgeDebugEvent, log_bridge_debug_event,
 };
 use crate::time_phase;
 use chrono::Utc;
@@ -15,6 +16,7 @@ use serde_json;
 use stood::agent::Agent;
 use stood::telemetry::TelemetryConfig;
 use tracing::{debug, info, warn};
+use uuid;
 use crate::create_agent_with_model;
 
 /// Generic Task Agent - Handles any AWS task based on description
@@ -85,8 +87,8 @@ impl TaskAgent {
         // Build the generic task agent with all AWS tools
         let mut agent_builder = time_phase!(perf_timer, "Agent builder setup", {
             // Configure model for this agent
-            let mut builder = create_agent_with_model!(Agent::builder(), &selected_model)
-                .system_prompt(system_prompt)
+            let builder = create_agent_with_model!(Agent::builder(), &selected_model)
+                .system_prompt(system_prompt.clone())
                 .with_telemetry(telemetry_config)
                 .with_think_tool("Think carefully about what we need to do next")
                 .tools(vec![
@@ -104,21 +106,10 @@ impl TaskAgent {
                     aws_find_region_tool(),
                 ]);
 
-            // Add callback handler for event bubbling to Bridge UI
-            if let Some(bridge_sender) = get_global_bridge_sender() {
-                info!("📡 Task agent using Bridge event bubbling with user-friendly language");
-                builder = builder.with_callback_handler(SubAgentCallbackHandler::with_sender(
-                    task_id.clone(),
-                    "generic-task-agent".to_string(),
-                    bridge_sender,
-                ));
-            } else {
-                info!("📊 Task agent without Bridge event bubbling (standalone mode)");
-                builder = builder.with_callback_handler(SubAgentCallbackHandler::new(
-                    task_id.clone(),
-                    "generic-task-agent".to_string(),
-                ));
-            }
+            // Remove all streaming callbacks to let agent event loop work naturally
+            // The task agent will handle its own tool calling loop without interference
+            info!("📡 Task agent created without streaming callbacks for natural event loop");
+            // Note: The Bridge will capture the final result, not intermediate streaming
 
             builder
         });
@@ -142,6 +133,14 @@ impl TaskAgent {
 
         let agent = time_phase!(perf_timer, "Agent.build() - CRITICAL TIMING", {
             agent_builder.build().await?
+        });
+
+        // Log TaskAgent creation for debugging
+        log_bridge_debug_event(BridgeDebugEvent::TaskAgentCreated {
+            timestamp: Utc::now(),
+            task_id: task_id.clone(),
+            full_system_prompt: system_prompt,
+            model_id: selected_model.clone(),
         });
 
         perf_timer.complete();
@@ -226,11 +225,33 @@ Remember to use TodoWrite at the beginning to organize your approach to this tas
     ) -> Result<serde_json::Value, stood::StoodError> {
         info!("🎯 Executing task: {}", task_description);
 
+        // Generate a task ID for this execution
+        let task_id = uuid::Uuid::new_v4().to_string();
+        
+        // Log task prompt being sent for debugging
+        log_bridge_debug_event(BridgeDebugEvent::TaskPromptSent {
+            timestamp: Utc::now(),
+            task_id: task_id.clone(),
+            user_message: task_description.to_string(),
+            model_id: "task-agent-model".to_string(), // TODO: get actual model ID
+        });
+
         // Execute the task
         let result = agent.execute(task_description).await?;
 
         info!("✅ Task completed successfully");
         debug!("Task result: {} chars", result.response.len());
+        
+        // Log task response received for debugging
+        use crate::app::bridge::extract_tool_calls_from_response;
+        let tool_calls_requested = extract_tool_calls_from_response(&result.response);
+        
+        log_bridge_debug_event(BridgeDebugEvent::TaskResponseReceived {
+            timestamp: Utc::now(),
+            task_id: task_id.clone(),
+            full_response: result.response.clone(),
+            tool_calls_requested,
+        });
 
         // Return structured result
         Ok(serde_json::json!({

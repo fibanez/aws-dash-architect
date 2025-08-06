@@ -9,71 +9,26 @@ use crate::app::bridge::{
     aws_find_account_tool, aws_find_region_tool, clear_global_bridge_sender, create_task_tool,
     get_global_cancellation_manager, set_global_aws_credentials,
     set_global_bridge_sender, set_global_model, todo_read_tool, todo_write_tool, ModelConfig,
-    ModelSettings,
+    ModelSettings, BridgeDebugEvent, init_bridge_debug_logger, log_bridge_debug_event,
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
 use crate::create_agent_with_model;
-use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
 use egui::{CollapsingHeader, Color32, RichText, ScrollArea, TextEdit, Window};
-use serde_json;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
-use stood::agent::callbacks::events::ResponseType;
-use stood::agent::callbacks::{CallbackError, CallbackEvent, CallbackHandler, ToolEvent};
 use stood::agent::{result::AgentResult, Agent};
+use stood::agent::callbacks::{CallbackError, CallbackEvent, CallbackHandler, ToolEvent};
 use stood::telemetry::TelemetryConfig;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
+use async_trait::async_trait;
 
 // ============================================================================
 // MESSAGE SYSTEM FOR egui
 // ============================================================================
 
-/// Universal sub-agent events bubbled up from all specialized agents
-#[derive(Debug, Clone)]
-pub enum SubAgentEvent {
-    /// Processing started with task description
-    ProcessingStarted {
-        timestamp: DateTime<Utc>,
-        task_description: String,
-    },
-    /// Model request sent to AI
-    ModelRequest {
-        timestamp: DateTime<Utc>,
-        messages_count: usize,
-        raw_json: Option<String>,
-    },
-    /// Model response received from AI
-    ModelResponse {
-        timestamp: DateTime<Utc>,
-        response_length: usize,
-        tokens_used: Option<u32>,
-    },
-    /// Tool execution started
-    ToolStarted {
-        timestamp: DateTime<Utc>,
-        tool_name: String,
-        input_summary: Option<String>,
-    },
-    /// Tool execution completed
-    ToolCompleted {
-        timestamp: DateTime<Utc>,
-        tool_name: String,
-        success: bool,
-        output_summary: Option<String>,
-    },
-    /// Task completed successfully
-    TaskComplete { timestamp: DateTime<Utc> },
-    /// Error occurred during processing
-    Error {
-        timestamp: DateTime<Utc>,
-        error: String,
-    },
-    /// JSON debug data from model interactions (for task agents)
-    JsonDebug(JsonDebugData),
-}
+// Removed SubAgentEvent - agents now handle their own event loops without streaming
 
 /// Response from agent execution in separate thread
 #[derive(Debug)]
@@ -81,48 +36,21 @@ pub enum AgentResponse {
     Success(AgentResult),
     Error(String),
     JsonDebug(JsonDebugData),
-    StreamingUpdate(StreamingUpdate),
-    SubAgentEvent {
-        agent_id: String,
-        agent_type: String,
-        event: SubAgentEvent,
-    },
-    AgentCreated {
-        agent_id: String,
-        agent_type: String,
-    },
-    AgentDestroyed {
-        agent_id: String,
-        agent_type: String,
-    },
     ModelChanged {
         model_id: String,
+    },
+    // Tool callback responses for creating tree structure
+    ToolCallStart {
+        parent_message: Message,
+    },
+    ToolCallComplete {
+        parent_message_id: String,
+        child_message: Message,
     },
 }
 
 /// Real-time streaming updates from agent execution
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields may be used for future streaming functionality
-pub enum StreamingUpdate {
-    /// Content chunk received during streaming
-    ContentChunk { content: String, is_complete: bool },
-    /// Tool execution started
-    ToolStarted {
-        name: String,
-        input: serde_json::Value,
-    },
-    /// Tool execution completed successfully
-    ToolCompleted {
-        name: String,
-        output: Option<serde_json::Value>,
-    },
-    /// Tool execution failed
-    ToolFailed { name: String, error: String },
-    /// Agent execution completed
-    Complete { result: AgentResult },
-    /// Error during streaming
-    StreamingError { message: String },
-}
+// Removed StreamingUpdate - using blocking execution
 
 /// JSON debug data captured from model interactions
 #[derive(Debug, Clone)]
@@ -271,9 +199,6 @@ pub struct ControlBridgeWindow {
 
     // Agent processing
     processing_message: bool,
-    current_streaming_message: Option<Message>, // Currently streaming message
-    streaming_tool_status: Vec<String>,         // Active tool status messages
-    streaming_was_used: bool, // Track if streaming was used to prevent duplicate messages
 
     // Option change tracking
     #[allow(dead_code)] // For future state tracking functionality
@@ -319,31 +244,7 @@ impl Drop for ControlBridgeWindow {
 }
 
 impl ControlBridgeWindow {
-    /// Convert technical tool names to user-friendly action descriptions
-    fn get_user_friendly_action(tool_name: &str) -> String {
-        match tool_name {
-            "aws_describe_log_groups" => "Discovering log groups".to_string(),
-            "aws_get_log_events" => "Retrieving log entries".to_string(),
-            "aws_list_resources" => "Listing AWS resources".to_string(),
-            "aws_describe_resource" => "Analyzing resource details".to_string(),
-            "todo_write" => "Planning task steps".to_string(),
-            "todo_read" => "Checking task progress".to_string(),
-            "create_agent" => "Delegating specialized task".to_string(),
-            "create_task" => "Creating task agent".to_string(),
-            _ => format!("Running {}", tool_name), // Fallback for unknown tools
-        }
-    }
-
-    /// Convert agent type to user-friendly task description
-    fn get_task_description(agent_type: &str, task_description: &str) -> String {
-        let task_verb = match agent_type {
-            "aws-log-analyzer" => "🔍 Analyzing CloudWatch logs",
-            "aws-resource-auditor" => "📊 Auditing AWS resources",
-            "aws-security-scanner" => "🔒 Scanning security posture",
-            _ => "⚙️ Processing request", // Generic fallback
-        };
-        format!("{}: {}", task_verb, task_description)
-    }
+    // Removed get_user_friendly_action and get_task_description - no longer needed after removing streaming
 
     pub fn new() -> Self {
         info!("🚢 Initializing Control Bridge (Agent will be created on first message)");
@@ -369,9 +270,6 @@ impl ControlBridgeWindow {
             scroll_to_bottom: false,
             last_message_time: None,
             processing_message: false,
-            current_streaming_message: None,
-            streaming_tool_status: Vec::new(),
-            streaming_was_used: false,
             prev_debug_mode: false,
             prev_json_debug: false,
             show_debug_panel: false,
@@ -521,18 +419,20 @@ impl ControlBridgeWindow {
 
         // Process with Control Bridge Agent
         info!("🤖 Starting agent processing for input");
+        
+        // Log Bridge session start for debugging
+        let session_id = format!("bridge-session-{}", chrono::Utc::now().timestamp_millis());
+        log_bridge_debug_event(BridgeDebugEvent::BridgeAgentStart {
+            timestamp: Utc::now(),
+            user_request: input.clone(),
+            session_id: session_id.clone(),
+        });
+        
         self.processing_message = true;
         self.main_agent_active = true; // Track main agent activity
         self.processing_start_time = Some(std::time::Instant::now());
 
-        // Initialize streaming message
-        self.current_streaming_message = Some(Message::new_with_agent(
-            MessageRole::Assistant,
-            String::new(), // Start with empty content
-            "ControlBridge".to_string(),
-        ));
-        self.streaming_tool_status.clear();
-        self.streaming_was_used = false; // Reset streaming flag
+        // No streaming - agent will execute until complete
 
         debug!("Set processing_message = true, spawning async task");
 
@@ -631,25 +531,54 @@ impl ControlBridgeWindow {
                         let session_id = format!("aws-dash-bridge-{}", chrono::Utc::now().timestamp_millis());
                         telemetry_config
                             .service_attributes
-                            .insert("session.id".to_string(), session_id);
+                            .insert("session.id".to_string(), session_id.clone());
+
+                        // Initialize bridge debug logger
+                        if let Err(e) = init_bridge_debug_logger() {
+                            warn!("Failed to initialize bridge debug logger: {}", e);
+                        } else {
+                            info!("🔍 Bridge debug logger initialized successfully");
+                        }
                         telemetry_config
                             .service_attributes
                             .insert("deployment.environment".to_string(), "desktop-application".to_string());
 
                         // Configure model for this agent
-                        let mut agent_builder = create_agent_with_model!(Agent::builder(), &selected_model)
+                        let agent_builder = create_agent_with_model!(Agent::builder(), &selected_model)
                             .system_prompt("You are the AWS Bridge Agent - a task orchestrator for AWS infrastructure management.
+
+🔴 CRITICAL: ALWAYS PROVIDE A FINAL RESPONSE TO THE USER!
+
+When you use tools, you MUST follow this exact pattern:
+1. Call the tool(s) needed
+2. Receive the tool results
+3. **ALWAYS write a final response that presents the tool results to the user**
+
+NEVER end your turn immediately after calling a tool. You MUST summarize what the tool found.
+
+Example of CORRECT behavior:
+User: 'list aws accounts'
+Assistant: I'll search for available AWS accounts.
+[calls aws_find_account tool]
+[receives tool results]
+Assistant: I found 3 AWS accounts:
+- Production (123456789012)
+- Staging (234567890123)  
+- Development (345678901234)
+
+Example of WRONG behavior (DO NOT DO THIS):
+User: 'list aws accounts'
+Assistant: [calls aws_find_account tool]
+[ends without presenting results - THIS IS WRONG!]
 
 IMPORTANT: Always use TodoWrite to plan and track multi-step tasks. This is CRITICAL for user visibility.
 
 DO NOT attempt complex AWS operations directly. Instead, create specialized task agents via create_task.
 
 CRITICAL REQUIREMENTS for AWS operations:
-- Account ID (use aws_find_account if user doesn't specify)
-- Region (use aws_find_region if user doesn't specify)  
+- Account ID (use aws_find_account if user doesn't specify - then SHOW THE RESULTS!)
+- Region (use aws_find_region if user doesn't specify - then SHOW THE RESULTS!)  
 - Resource identifier (ID, name, or ARN)
-
-NEVER proceed with AWS operations without these three pieces of information.
 
 Available tools:
 - create_task: Launch task-specific agents for any AWS operation using natural language descriptions
@@ -689,10 +618,14 @@ You:
 4. Monitor task agent progress
 5. Present results and mark todos complete
 
-Be concise and direct. Minimize output while being helpful.
+RESPONSE GUIDELINES:
+1. **ALWAYS present tool results** - This is your #1 priority
+2. Be concise AFTER presenting the results
+3. Focus on answering what the user asked
 
 Tone and style
-You should be concise, direct, and to the point. When you run a non-trivial aws commands, you
+🔴 **TOOL RESULTS FIRST**: Always show what tools found before being concise.
+You should be direct and to the point AFTER presenting tool results. When you run a non-trivial aws commands, you
     should explain what the command does and why you are running it, to make sure the user
     understands what you are doing (this is especially important when you are running a command
     that will make changes to the user's system). Remember that your output will be displayed on a
@@ -712,11 +645,17 @@ You should be concise, direct, and to the point. When you run a non-trivial aws 
     action), unless the user asks you to. IMPORTANT: Keep your responses short, since they will be
     displayed on a command line interface. You MUST answer concisely with fewer than 4 lines (not
     including tool use or code generation), unless user asks for detail. Answer the user's question
-    directly, without elaboration, explanation, or details. One word answers are best. Avoid
-    introductions, conclusions, and explanations. You MUST avoid text before/after your response,
-    such as 'The answer is .', 'Here is the content of the file...' or 'Based on the information
-provided, the answer is...' or 'Here is what I will do next...'. Here are some examples to
-demonstrate appropriate verbosity: user: 2 + 2 assistant: 4
+    directly, without elaboration, explanation, or details. 
+    EXCEPTION: You MUST present tool results. After tools, be concise.
+    For tool results, say what you found: 'Found 3 accounts: [details]'
+    Avoid unnecessary phrases like 'Based on the information...' 
+    Here are some examples to demonstrate appropriate verbosity:
+    user: 2 + 2 
+    assistant: 4
+    
+    user: list aws accounts
+    assistant: [calls aws_find_account]
+    Found 3 AWS accounts: Production (123456789012), Staging (234567890123), Development (345678901234)
 
 user: what is 2+2? assistant: 4 user: is 11 a prime number? assistant: Yes user: what command should I run to list files in the current directory? assistant: ls user: what command should I run to watch files in the current directory? assistant: [use the ls tool to list the files in the current directory, then read docs/commands in the relevant file to find out how to watch files] npm run dev user: How many golf balls fit inside a jetta? assistant: 150000 user: what files are in the directory src/? assistant: [runs ls and sees foo.c, bar.c, baz.c] user: which file contains the implementation of foo? assistant: src/foo.c user: write tests for new feature assistant: [uses grep and glob search tools to find where similar tests are defined, uses concurrent read file tool use blocks in one tool call to read relevant files at the same time, uses edit file tool to write new tests]
 
@@ -818,15 +757,17 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                                 aws_find_region_tool(),      // KEEP: Region search (no API)
                             ]); // Updated toolset for dynamic task-based architecture
 
-                        // Always add JSON capture callback to ensure we never lose JSON data
-                        info!("📊 Adding JSON capture callback handler (always active)");
-                        agent_builder = agent_builder
-                            .with_callback_handler(JsonCaptureHandler::new(sender.clone()));
-
-                        // Add streaming callback for real-time GUI updates
-                        info!("📵 Adding streaming GUI callback handler for real-time updates");
-                        agent_builder = agent_builder
-                            .with_callback_handler(StreamingGuiCallback::new(sender.clone()));
+                        // Add tool callback handler to create tree structure for tool calls
+                        let tool_callback_handler = BridgeToolCallbackHandler::new(sender.clone());
+                        let agent_builder = agent_builder.with_callback_handler(tool_callback_handler);
+                        info!("🔍 Bridge agent created with tool callback handler for tree visualization");
+                        
+                        // Only log to debug file, don't interfere with event loop
+                        log_bridge_debug_event(BridgeDebugEvent::BridgeAgentStart {
+                            timestamp: Utc::now(),
+                            session_id: session_id.clone(),
+                            user_request: input.clone(),
+                        });
 
                         match agent_builder.build().await {
                             Ok(new_agent) => {
@@ -863,11 +804,52 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                         }
                     }
 
-                    // Execute with the agent
+                    // Execute with the agent - let the event loop handle all tool calls naturally
                     if let Some(ref mut agent) = agent_guard.as_mut() {
+                        info!("🚀 Executing Bridge agent with natural event loop (no streaming)");
+                        
+                        // Log the prompt being sent
+                        log_bridge_debug_event(BridgeDebugEvent::BridgePromptSent {
+                            timestamp: Utc::now(),
+                            session_id: session_id.clone(),
+                            model_id: selected_model.clone(),
+                            system_prompt: "Bridge system prompt".to_string(),
+                            user_message: input.clone(),
+                        });
+                        
+                        let _start_time = std::time::Instant::now();
                         match agent.execute(&input).await {
-                            Ok(result) => Ok(result),
-                            Err(e) => Err(format!("Control Bridge Agent execution failed: {}", e)),
+                            Ok(result) => {
+                                // Log detailed response information
+                                info!("🔍 Bridge Agent Response Details:");
+                                info!("  Response length: {} chars", result.response.len());
+                                info!("  Response is empty: {}", result.response.trim().is_empty());
+                                info!("  First 200 chars: {}", &result.response.chars().take(200).collect::<String>());
+                                info!("  Tools used: {}", result.used_tools);
+                                info!("  Tools called: {:?}", result.tools_called);
+                                info!("  Success: {}", result.success);
+                                
+                                // Log the response
+                                log_bridge_debug_event(BridgeDebugEvent::BridgeResponseReceived {
+                                    timestamp: Utc::now(),
+                                    session_id: session_id.clone(),
+                                    full_response: result.response.clone(),
+                                    tool_calls_requested: result.tools_called.clone(),
+                                });
+                                Ok(result)
+                            },
+                            Err(e) => {
+                                log_bridge_debug_event(BridgeDebugEvent::BridgeToolCall {
+                                    timestamp: Utc::now(),
+                                    session_id: session_id.clone(),
+                                    tool_name: "bridge-execution".to_string(),
+                                    input_params: serde_json::json!({}),
+                                    success: false,
+                                    output_result: None,
+                                    error_message: Some(e.to_string()),
+                                });
+                                Err(format!("Control Bridge Agent execution failed: {}", e))
+                            }
                         }
                     } else {
                         Err("Control Bridge Agent not initialized".to_string())
@@ -948,49 +930,65 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 }
                 debug!("[DEBUG] Success: {}", agent_result.success);
 
-                // Only add message if streaming was not used
-                // (streaming messages are handled by StreamingUpdate::Complete)
-                if !self.streaming_was_used {
-                    if agent_result.response.trim().is_empty() {
-                        warn!("❌ [ERROR] Empty response received!");
-                        warn!("💡 This might be the empty response bug we're debugging");
+                // Add agent response to conversation
+                if agent_result.response.trim().is_empty() {
+                    warn!("❌ [ERROR] Empty response received!");
+                    warn!("Response was: '{}'", agent_result.response);
+                    warn!("Response length: {}", agent_result.response.len());
+                    warn!("Tools used: {}", agent_result.used_tools);
+                    warn!("Tools called: {:?}", agent_result.tools_called);
+                    warn!("Success: {}", agent_result.success);
+                    warn!("Execution cycles: {}", agent_result.execution.cycles);
+                    warn!("Model calls: {}", agent_result.execution.model_calls);
 
-                        // Add error message to the conversation
-                        self.add_message(Message::new_with_agent(
-                            MessageRole::Assistant,
-                            "❌ Error: Received empty response from agent".to_string(),
-                            "ControlBridge".to_string(),
-                        ));
+                    // If tools were called but no response, create a fallback message
+                    let response_text = if agent_result.used_tools && !agent_result.tools_called.is_empty() {
+                        let tools_summary = agent_result.tools_called.join(", ");
+                        format!(
+                            "I've executed the following tools: {}\n\nThe tools completed successfully, but I wasn't able to generate a proper summary. Please check the debug logs for detailed tool outputs.\n\nTip: Try asking your question again with more specific instructions about what information you'd like to see.",
+                            tools_summary
+                        )
                     } else {
-                        // Add the assistant message to the conversation
-                        let mut message = Message::new_with_agent(
-                            MessageRole::Assistant,
-                            agent_result.response,
-                            "ControlBridge".to_string(),
-                        );
-
-                        // Add execution details as debug info if debug mode is on
-                        if self.debug_mode {
-                            let debug_info = format!(
-                                "Execution Details:\nCycles: {}\nModel calls: {}\nTool executions: {}\nDuration: {:?}\nUsed tools: {}\nSuccess: {}",
-                                agent_result.execution.cycles,
-                                agent_result.execution.model_calls,
-                                agent_result.execution.tool_executions,
-                                agent_result.duration,
-                                agent_result.used_tools,
-                                agent_result.success
-                            );
-                            message = message.with_debug(debug_info);
-                        }
-
-                        self.add_message(message);
-                    }
+                        format!(
+                            "❌ Error: Received empty response from agent\n\nDetails:\n- Response length: {} chars\n- Tools used: {}\n- Tools called: {:?}\n- Success status: {}\n- Execution cycles: {}\n- Model calls: {}",
+                            agent_result.response.len(),
+                            agent_result.used_tools,
+                            agent_result.tools_called,
+                            agent_result.success,
+                            agent_result.execution.cycles,
+                            agent_result.execution.model_calls
+                        )
+                    };
+                    
+                    self.add_message(Message::new_with_agent(
+                        MessageRole::Assistant,
+                        response_text,
+                        "ControlBridge".to_string(),
+                    ));
                 } else {
-                    debug!("Skipping Success message addition - streaming was used");
-                }
+                    // Add the assistant message to the conversation
+                    let mut message = Message::new_with_agent(
+                        MessageRole::Assistant,
+                        agent_result.response,
+                        "ControlBridge".to_string(),
+                    );
 
-                // Reset streaming flag for next interaction
-                self.streaming_was_used = false;
+                    // Add execution details as debug info if debug mode is on
+                    if self.debug_mode {
+                        let debug_info = format!(
+                            "Execution Details:\nCycles: {}\nModel calls: {}\nTool executions: {}\nDuration: {:?}\nUsed tools: {}\nSuccess: {}",
+                            agent_result.execution.cycles,
+                            agent_result.execution.model_calls,
+                            agent_result.execution.tool_executions,
+                            agent_result.duration,
+                            agent_result.used_tools,
+                            agent_result.success
+                        );
+                        message = message.with_debug(debug_info);
+                    }
+
+                    self.add_message(message);
+                }
 
                 // Reset processing state
                 self.processing_message = false;
@@ -1071,28 +1069,8 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     self.scroll_to_bottom = true;
                 }
             }
-            AgentResponse::StreamingUpdate(update) => {
-                self.handle_streaming_update(update);
-            }
-            AgentResponse::SubAgentEvent {
-                agent_id,
-                agent_type,
-                event,
-            } => {
-                self.handle_sub_agent_event(agent_id, agent_type, event);
-            }
-            AgentResponse::AgentCreated {
-                agent_id,
-                agent_type,
-            } => {
-                self.handle_agent_created(agent_id, agent_type);
-            }
-            AgentResponse::AgentDestroyed {
-                agent_id,
-                agent_type,
-            } => {
-                self.handle_agent_destroyed(agent_id, agent_type);
-            }
+            // Removed SubAgentEvent - agents handle their own event loops
+            // Removed AgentCreated and AgentDestroyed - not needed without streaming
             AgentResponse::ModelChanged { model_id } => {
                 info!("✅ Model successfully changed to: {}", model_id);
                 self.model_changed = false; // Reset the flag
@@ -1108,10 +1086,34 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 ));
                 self.scroll_to_bottom = true;
             }
+            
+            AgentResponse::ToolCallStart { parent_message } => {
+                debug!("🔧 Received tool call start message: {}", parent_message.content);
+                
+                // Add the parent "Calling tool" message to the conversation
+                self.add_message(parent_message);
+                self.scroll_to_bottom = true;
+            }
+            
+            AgentResponse::ToolCallComplete { parent_message_id, child_message } => {
+                debug!("✅ Received tool call complete message for parent: {}", parent_message_id);
+                
+                // Find the parent message and add the child to its nested messages
+                if let Some(parent_msg) = self.messages.iter_mut().find(|msg| msg.id == parent_message_id) {
+                    parent_msg.add_nested_message(child_message);
+                    self.scroll_to_bottom = true;
+                    debug!("Added child message to parent tool call node");
+                } else {
+                    warn!("Could not find parent message with ID: {}", parent_message_id);
+                    // Fallback: add as standalone message
+                    self.add_message(child_message);
+                }
+            }
         }
     }
 
-    fn handle_sub_agent_event(
+    // Removed handle_sub_agent_event - not needed without streaming
+    /*fn handle_sub_agent_event(
         &mut self,
         agent_id: String,
         agent_type: String,
@@ -1261,7 +1263,10 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         self.scroll_to_bottom = true;
     }
 
-    fn handle_agent_created(&mut self, agent_id: String, agent_type: String) {
+    */
+
+    // Removed handle_agent_created - not needed without streaming
+    /*fn handle_agent_created(&mut self, agent_id: String, agent_type: String) {
         info!("🚀 Specialized task started: {} ({})", agent_type, agent_id);
 
         // Track the agent in our active agents map
@@ -1290,7 +1295,10 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         self.scroll_to_bottom = true;
     }
 
-    fn handle_agent_destroyed(&mut self, agent_id: String, agent_type: String) {
+    */
+
+    // Removed handle_agent_destroyed - not needed without streaming
+    /*fn handle_agent_destroyed(&mut self, agent_id: String, agent_type: String) {
         info!(
             "🏁 Specialized task completed: {} ({})",
             agent_type, agent_id
@@ -1324,7 +1332,7 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         self.active_agent_nodes.remove(&agent_id);
 
         self.scroll_to_bottom = true;
-    }
+    }*/
 
     /// Complete reset when changing models - provides clean slate for new agent
     fn reset_for_model_change(&mut self, new_model_name: &str) {
@@ -1336,11 +1344,8 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         // Clear conversation history for clean slate
         self.messages.clear();
         
-        // Reset input and streaming state
+        // Reset input state
         self.input_text.clear();
-        self.current_streaming_message = None;
-        self.streaming_tool_status.clear();
-        self.streaming_was_used = false;
         
         // Reset processing state
         self.processing_message = false;
@@ -1479,28 +1484,8 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     }
                 }
 
-                // Show streaming message and status if available
-                if let Some(ref streaming_msg) = self.current_streaming_message {
-                    ui.add_space(8.0);
-
-                    // Clone the message to avoid borrow checker issues
-                    let streaming_msg_clone = streaming_msg.clone();
-                    self.render_streaming_message(ui, &streaming_msg_clone);
-
-                    // Show tool status if any tools are running
-                    if !self.streaming_tool_status.is_empty() {
-                        ui.add_space(4.0);
-                        for status in &self.streaming_tool_status {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(
-                                    RichText::new(status).color(Color32::from_rgb(255, 140, 0)),
-                                );
-                            });
-                        }
-                    }
-                } else if self.processing_message {
-                    // Fallback spinner if no streaming message yet
+                // Show simple processing spinner since we don't have streaming
+                if self.processing_message {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -1634,13 +1619,8 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
 
         // Handle delayed auto-scroll after new messages (reduced delay for streaming)
         if let Some(last_msg_time) = self.last_message_time {
-            let delay = if self.current_streaming_message.is_some() {
-                // Shorter delay during streaming for more responsive scrolling
-                std::time::Duration::from_millis(100)
-            } else {
-                // Normal delay for completed messages
-                std::time::Duration::from_millis(500)
-            };
+            // Fixed delay for auto-scroll since we don't have streaming
+            let delay = std::time::Duration::from_millis(500);
 
             if last_msg_time.elapsed() >= delay {
                 if self.auto_scroll && !self.scroll_to_bottom {
@@ -1648,17 +1628,11 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                     // Auto-scroll triggered after delay (removed spam trace log)
                 }
 
-                // Keep the timer active during streaming to ensure continuous scrolling
-                if self.current_streaming_message.is_none() {
-                    self.last_message_time = None; // Clear the timer only when not streaming
-                }
+                // Clear the timer since we don't have streaming
+                self.last_message_time = None;
             } else {
-                // Keep requesting repaints until the delay passes (more frequent during streaming)
-                let repaint_delay = if self.current_streaming_message.is_some() {
-                    std::time::Duration::from_millis(5) // Very frequent repaints during streaming
-                } else {
-                    std::time::Duration::from_millis(10)
-                };
+                // Normal repaint rate since we don't have streaming
+                let repaint_delay = std::time::Duration::from_millis(10);
                 ctx.request_repaint_after(repaint_delay);
             }
         }
@@ -1743,13 +1717,9 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 }
             }
 
-            // Nested messages
+            // Nested messages (tool results) - render without header
             if !message.nested_messages.is_empty() {
                 ui.add_space(8.0); // Zen whitespace instead of separator
-                ui.label(format!(
-                    "Nested Messages ({})",
-                    message.nested_messages.len()
-                ));
                 for (j, nested_msg) in message.nested_messages.iter().enumerate() {
                     ui.indent(format!("nested_{}_{}", message.id, j), |ui| {
                         self.render_message(ui, nested_msg, index * 1000 + j);
@@ -1820,187 +1790,10 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
         }
     }
 
-    fn render_streaming_message(&self, ui: &mut egui::Ui, message: &Message) {
-        let agent_prefix = if let Some(ref agent_source) = message.agent_source {
-            format!("({}) ", agent_source)
-        } else {
-            String::new()
-        };
+    // Removed render_streaming_message - no longer needed after removing streaming
 
-        let local_time = message.timestamp.with_timezone(&Local);
-        let header_text = format!(
-            "📵 {} - {}{}... (streaming)",
-            local_time.format("%H:%M:%S"),
-            agent_prefix,
-            message.summary.as_ref().unwrap_or(&"Response".to_string())
-        );
-
-        let header = CollapsingHeader::new(
-            RichText::new(header_text).color(MessageRole::Assistant.color(self.dark_mode)),
-        )
-        .id_salt(format!("streaming_{}", message.id))
-        .default_open(true); // Always open for streaming messages
-
-        let header_response = header.show(ui, |ui| {
-            // Show streaming content with typing cursor
-            if !message.content.is_empty() {
-                for line in message.content.lines() {
-                    if line.trim().is_empty() {
-                        ui.add_space(6.0);
-                    } else {
-                        ui.monospace(line);
-                    }
-                }
-
-                // Add typing cursor animation
-                ui.horizontal(|ui| {
-                    ui.monospace("█"); // Block cursor
-                    ui.label(RichText::new("streaming...").color(Color32::GRAY).italics());
-                });
-            } else {
-                // Show waiting message if no content yet
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(
-                        RichText::new("Waiting for response...")
-                            .color(Color32::GRAY)
-                            .italics(),
-                    );
-                });
-            }
-        });
-
-        let _ = header_response; // Suppress unused warning
-    }
-
-    fn handle_streaming_update(&mut self, update: StreamingUpdate) {
-        match update {
-            StreamingUpdate::ContentChunk {
-                content,
-                is_complete,
-            } => {
-                debug!(
-                    "📵 Received content chunk: {} chars, complete: {}",
-                    content.len(),
-                    is_complete
-                );
-
-                // Mark that streaming was used
-                self.streaming_was_used = true;
-
-                // Update the current streaming message
-                if let Some(ref mut streaming_msg) = self.current_streaming_message {
-                    streaming_msg.content.push_str(&content);
-
-                    // Update summary with first few words
-                    let words: Vec<&str> =
-                        streaming_msg.content.split_whitespace().take(5).collect();
-                    streaming_msg.summary = Some(format!("{}...", words.join(" ")));
-
-                    // Force auto-scroll for streaming content if auto-scroll is enabled
-                    if self.auto_scroll {
-                        self.scroll_to_bottom = true;
-                        self.last_message_time = Some(std::time::Instant::now());
-                        trace!("Auto-scroll triggered for streaming content");
-                    }
-
-                    trace!(
-                        "Updated streaming message content, length now: {}",
-                        streaming_msg.content.len()
-                    );
-                }
-
-                if is_complete {
-                    debug!("✅ Content streaming completed");
-                }
-            }
-            StreamingUpdate::ToolStarted { name, input: _ } => {
-                info!("🔧 Tool started: {}", name);
-                let status_msg = format!("🔧 Running tool: {}", name);
-                self.streaming_tool_status.push(status_msg);
-                self.scroll_to_bottom = true;
-            }
-            StreamingUpdate::ToolCompleted { name, output: _ } => {
-                info!("✅ Tool completed: {}", name);
-                // Remove the running status and add completion info
-                self.streaming_tool_status.retain(|s| !s.contains(&name));
-
-                // Add tool result to streaming message if available
-                if let Some(ref mut streaming_msg) = self.current_streaming_message {
-                    let tool_info = format!("\n\n🔧 Tool '{}' completed successfully.", name);
-                    streaming_msg.content.push_str(&tool_info);
-                }
-                self.scroll_to_bottom = true;
-            }
-            StreamingUpdate::ToolFailed { name, error } => {
-                error!("❌ Tool failed: {} - {}", name, error);
-                // Remove the running status and add error info
-                self.streaming_tool_status.retain(|s| !s.contains(&name));
-
-                // Add tool error to streaming message
-                if let Some(ref mut streaming_msg) = self.current_streaming_message {
-                    let error_info = format!("\n\n❌ Tool '{}' failed: {}", name, error);
-                    streaming_msg.content.push_str(&error_info);
-                }
-                self.scroll_to_bottom = true;
-            }
-            StreamingUpdate::Complete { result: _ } => {
-                info!("🎉 Streaming completed, finalizing message");
-
-                // Move streaming message to completed messages (but don't call add_message to avoid duplicate)
-                if let Some(mut streaming_msg) = self.current_streaming_message.take() {
-                    // Finalize the message content and add directly to messages list
-                    streaming_msg.summary = Some(Message::generate_summary(&streaming_msg.content));
-                    self.messages.push_back(streaming_msg);
-
-                    // Keep only last 100 messages to prevent memory issues
-                    if self.messages.len() > 100 {
-                        let removed = self.messages.pop_front();
-                        debug!(
-                            "Removed oldest message due to 100 message limit: {:?}",
-                            removed.map(|m| m.role)
-                        );
-                    }
-
-                    info!(
-                        "Streaming message finalized. Total messages: {}",
-                        self.messages.len()
-                    );
-                }
-
-                // Clear streaming state
-                self.streaming_tool_status.clear();
-                self.processing_message = false;
-                self.main_agent_active = false; // Reset main agent tracking
-                self.scroll_to_bottom = true;
-
-                if let Some(start_time) = self.processing_start_time {
-                    self.last_processing_time = Some(start_time.elapsed());
-                }
-
-                debug!(
-                    "Streaming completed, processing_message = false, main_agent_active = false"
-                );
-            }
-            StreamingUpdate::StreamingError { message } => {
-                error!("💥 Streaming error: {}", message);
-
-                // Add error message
-                self.add_message(Message::new_with_agent(
-                    MessageRole::System,
-                    format!("⚠️ Streaming error: {}", message),
-                    "ControlBridge".to_string(),
-                ));
-
-                // Clean up streaming state
-                self.current_streaming_message = None;
-                self.streaming_tool_status.clear();
-                self.processing_message = false;
-                self.main_agent_active = false; // Reset main agent tracking
-                self.scroll_to_bottom = true;
-            }
-        }
-    }
+    // Removed streaming functionality - using blocking execution
+    // Agents now execute completely before returning response
 }
 
 impl FocusableWindow for ControlBridgeWindow {
@@ -2034,6 +1827,8 @@ impl FocusableWindow for ControlBridgeWindow {
 // CALLBACK HANDLERS
 // ============================================================================
 
+// Removed JsonCaptureHandler and StreamingGuiCallback - agents handle their own event loops
+/*
 /// Custom callback handler that captures model interaction JSON data
 #[derive(Debug)]
 struct JsonCaptureHandler {
@@ -2401,6 +2196,356 @@ impl CallbackHandler for StreamingGuiCallback {
                     _ => Ok(()), // Ignore other events
                 }
             }
+        }
+    }
+}
+*/
+
+// Removed BridgeDebugHandler - using direct debug logging instead
+/*
+/// Bridge debug callback handler for detailed logging
+#[derive(Debug)]
+struct BridgeDebugHandler {
+    session_id: String,
+}
+
+impl BridgeDebugHandler {
+    fn new(session_id: String) -> Self {
+        Self { session_id }
+    }
+}
+
+#[async_trait]
+impl CallbackHandler for BridgeDebugHandler {
+    async fn on_content(&self, _content: &str, _is_complete: bool) -> Result<(), CallbackError> {
+        // Bridge debug doesn't need content streaming events
+        Ok(())
+    }
+
+    async fn on_tool(&self, event: ToolEvent) -> Result<(), CallbackError> {
+        match event {
+            ToolEvent::Started { name, input } => {
+                log_bridge_debug_event(BridgeDebugEvent::BridgeToolCall {
+                    timestamp: Utc::now(),
+                    session_id: self.session_id.clone(),
+                    tool_name: name,
+                    input_params: input,
+                    success: false, // Still running
+                    output_result: None,
+                    error_message: None,
+                });
+            },
+            ToolEvent::Completed { name, output, .. } => {
+                log_bridge_debug_event(BridgeDebugEvent::BridgeToolCall {
+                    timestamp: Utc::now(),
+                    session_id: self.session_id.clone(),
+                    tool_name: name,
+                    input_params: serde_json::json!({}), // We don't have input here
+                    success: true,
+                    output_result: output,
+                    error_message: None,
+                });
+            },
+            ToolEvent::Failed { name, error, .. } => {
+                log_bridge_debug_event(BridgeDebugEvent::BridgeToolCall {
+                    timestamp: Utc::now(),
+                    session_id: self.session_id.clone(),
+                    tool_name: name,
+                    input_params: serde_json::json!({}), // We don't have input here
+                    success: false,
+                    output_result: None,
+                    error_message: Some(error),
+                });
+            },
+        }
+        Ok(())
+    }
+
+    async fn on_complete(&self, result: &AgentResult) -> Result<(), CallbackError> {
+        log_bridge_debug_event(BridgeDebugEvent::SessionEnd {
+            timestamp: Utc::now(),
+            session_id: self.session_id.clone(),
+            total_duration_ms: result.duration.as_millis() as u64,
+        });
+        Ok(())
+    }
+
+    async fn on_error(&self, error: &stood::StoodError) -> Result<(), CallbackError> {
+        log_bridge_debug_event(BridgeDebugEvent::BridgeToolCall {
+            timestamp: Utc::now(),
+            session_id: self.session_id.clone(),
+            tool_name: "bridge-execution".to_string(),
+            input_params: serde_json::json!({"error": "execution_error"}),
+            success: false,
+            output_result: None,
+            error_message: Some(error.to_string()),
+        });
+        Ok(())
+    }
+
+    async fn handle_event(&self, event: CallbackEvent) -> Result<(), CallbackError> {
+        use crate::app::bridge::extract_tool_calls_from_response;
+        
+        match event {
+            CallbackEvent::ModelStart { model_id, messages, .. } => {
+                // Extract system prompt and user message
+                let system_prompt = messages
+                    .iter()
+                    .find(|msg| matches!(msg.role, stood::MessageRole::System))
+                    .map(|msg| content_blocks_to_string(&msg.content))
+                    .unwrap_or_else(|| "no system prompt found".to_string());
+
+                let user_message = messages
+                    .iter()
+                    .find(|msg| matches!(msg.role, stood::MessageRole::User))
+                    .map(|msg| content_blocks_to_string(&msg.content))
+                    .unwrap_or_else(|| "no user message found".to_string());
+
+                log_bridge_debug_event(BridgeDebugEvent::BridgePromptSent {
+                    timestamp: Utc::now(),
+                    session_id: self.session_id.clone(),
+                    system_prompt,
+                    user_message,
+                    model_id,
+                });
+            },
+            CallbackEvent::ModelComplete { response, .. } => {
+                let tool_calls_requested = extract_tool_calls_from_response(&response);
+
+                log_bridge_debug_event(BridgeDebugEvent::BridgeResponseReceived {
+                    timestamp: Utc::now(),
+                    session_id: self.session_id.clone(),
+                    full_response: response,
+                    tool_calls_requested,
+                });
+            },
+            _ => {
+                // Delegate other events to the default implementation
+                match event {
+                    CallbackEvent::ToolStart { tool_name, input, .. } => {
+                        return self.on_tool(ToolEvent::Started { name: tool_name, input }).await;
+                    },
+                    CallbackEvent::ToolComplete { tool_name, output, error, duration, .. } => {
+                        if let Some(err) = error {
+                            return self.on_tool(ToolEvent::Failed { name: tool_name, error: err, duration }).await;
+                        } else {
+                            return self.on_tool(ToolEvent::Completed { name: tool_name, output, duration }).await;
+                        }
+                    },
+                    CallbackEvent::EventLoopComplete { result, .. } => {
+                        let agent_result = stood::agent::result::AgentResult::from(result, Duration::ZERO);
+                        return self.on_complete(&agent_result).await;
+                    },
+                    CallbackEvent::Error { error, .. } => {
+                        return self.on_error(&error).await;
+                    },
+                    _ => {}, // Ignore other events
+                }
+            },
+        }
+        Ok(())
+    }
+}
+*/
+
+/// Bridge Tool Callback Handler - Creates tree structure for tool calls
+///
+/// This handler creates "Calling tool" nodes when tools start and adds
+/// child nodes with tool responses when tools complete.
+#[derive(Debug, Clone)]
+pub struct BridgeToolCallbackHandler {
+    sender: mpsc::Sender<AgentResponse>,
+    active_tool_nodes: Arc<Mutex<HashMap<String, String>>>, // tool_use_id -> parent_message_id
+}
+
+impl BridgeToolCallbackHandler {
+    pub fn new(sender: mpsc::Sender<AgentResponse>) -> Self {
+        Self {
+            sender,
+            active_tool_nodes: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl CallbackHandler for BridgeToolCallbackHandler {
+    /// Handle streaming content - not needed for tool callbacks
+    async fn on_content(&self, _content: &str, _is_complete: bool) -> Result<(), CallbackError> {
+        Ok(())
+    }
+
+    /// Handle tool execution events to create tree structure
+    async fn on_tool(&self, event: ToolEvent) -> Result<(), CallbackError> {
+        match event {
+            ToolEvent::Started { name, input } => {
+                // Create "Calling tool" parent node
+                let tool_node_id = format!("tool_{}_{}", name, Utc::now().timestamp_millis());
+                let input_preview = match input {
+                    serde_json::Value::Object(obj) => {
+                        if obj.len() <= 2 {
+                            format!("{:?}", obj)
+                        } else {
+                            format!("{{...{} parameters...}}", obj.len())
+                        }
+                    }
+                    other => format!("{}", other)
+                };
+                
+                let parent_message = Message {
+                    id: tool_node_id.clone(),
+                    role: MessageRole::System,
+                    content: format!("🔧 {}\nInput: {}", name, input_preview),
+                    timestamp: Utc::now(),
+                    summary: Some(format!("Tool: {}", name)),
+                    debug_info: None,
+                    nested_messages: Vec::new(),
+                    agent_source: Some("Bridge-Tool-Callback".to_string()),
+                    json_debug_data: Vec::new(),
+                };
+
+                // Store the parent node ID for when the tool completes
+                // Note: We use tool name + timestamp as a unique ID since tool_use_id may not be available
+                let tool_key = format!("{}_{}", name, parent_message.timestamp.timestamp_millis());
+                self.active_tool_nodes.lock().unwrap().insert(tool_key, tool_node_id.clone());
+
+                // Send parent node to UI via ToolCallStart message
+                let response = AgentResponse::ToolCallStart {
+                    parent_message: parent_message,
+                };
+
+                if let Err(e) = self.sender.send(response) {
+                    error!("Failed to send tool start message to GUI: {}", e);
+                }
+            }
+            
+            ToolEvent::Completed { name, output, duration } => {
+                // Create child response node - show actual tool output values
+                let output_display = match &output {
+                    Some(serde_json::Value::String(s)) => {
+                        // For strings, show the actual string content
+                        s.clone()
+                    }
+                    Some(serde_json::Value::Object(obj)) => {
+                        // For objects, format as pretty JSON
+                        serde_json::to_string_pretty(obj).unwrap_or_else(|_| format!("{:?}", obj))
+                    }
+                    Some(serde_json::Value::Array(arr)) => {
+                        // For arrays, format as pretty JSON
+                        serde_json::to_string_pretty(arr).unwrap_or_else(|_| format!("{:?}", arr))
+                    }
+                    Some(other) => {
+                        // For other types (null, bool, number), show the value directly
+                        other.to_string()
+                    }
+                    None => "No output".to_string(),
+                };
+
+                let child_message = Message {
+                    id: format!("tool_response_{}_{}", name, Utc::now().timestamp_millis()),
+                    role: MessageRole::Assistant,
+                    content: format!("✅ Tool result ({:.2}s):\n{}", duration.as_secs_f64(), output_display),
+                    timestamp: Utc::now(),
+                    summary: Some(format!("Result: {}", name)),
+                    debug_info: None,
+                    nested_messages: Vec::new(),
+                    agent_source: Some("Bridge-Tool-Callback".to_string()),
+                    json_debug_data: Vec::new(),
+                };
+
+                // Find the most recent tool node with this name (simple matching)
+                let parent_node_id = {
+                    let active_nodes = self.active_tool_nodes.lock().unwrap();
+                    active_nodes.iter()
+                        .filter(|(key, _)| key.starts_with(&format!("{}_", name)))
+                        .max_by_key(|(key, _)| {
+                            key.split('_').last().unwrap_or("0").parse::<i64>().unwrap_or(0)
+                        })
+                        .map(|(_, id)| id.clone())
+                };
+
+                if let Some(parent_id) = parent_node_id {
+                    // Send child node to UI
+                    let response = AgentResponse::ToolCallComplete {
+                        parent_message_id: parent_id.clone(),
+                        child_message: child_message,
+                    };
+
+                    if let Err(e) = self.sender.send(response) {
+                        error!("Failed to send tool complete message to GUI: {}", e);
+                    }
+
+                    // Clean up the mapping
+                    self.active_tool_nodes.lock().unwrap().retain(|_, v| *v != parent_id);
+                }
+            }
+            
+            ToolEvent::Failed { name, error, duration } => {
+                // Create child error node
+                let child_message = Message {
+                    id: format!("tool_error_{}_{}", name, Utc::now().timestamp_millis()),
+                    role: MessageRole::Debug,
+                    content: format!("❌ Tool failed ({:.2}s):\n{}", duration.as_secs_f64(), error),
+                    timestamp: Utc::now(),
+                    summary: Some(format!("Error: {}", name)),
+                    debug_info: None,
+                    nested_messages: Vec::new(),
+                    agent_source: Some("Bridge-Tool-Callback".to_string()),
+                    json_debug_data: Vec::new(),
+                };
+
+                // Find the most recent tool node with this name
+                let parent_node_id = {
+                    let active_nodes = self.active_tool_nodes.lock().unwrap();
+                    active_nodes.iter()
+                        .filter(|(key, _)| key.starts_with(&format!("{}_", name)))
+                        .max_by_key(|(key, _)| {
+                            key.split('_').last().unwrap_or("0").parse::<i64>().unwrap_or(0)
+                        })
+                        .map(|(_, id)| id.clone())
+                };
+
+                if let Some(parent_id) = parent_node_id {
+                    let response = AgentResponse::ToolCallComplete {
+                        parent_message_id: parent_id.clone(),
+                        child_message: child_message,
+                    };
+
+                    if let Err(e) = self.sender.send(response) {
+                        error!("Failed to send tool error message to GUI: {}", e);
+                    }
+
+                    // Clean up the mapping
+                    self.active_tool_nodes.lock().unwrap().retain(|_, v| *v != parent_id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle completion events - not needed for tool callbacks
+    async fn on_complete(&self, _result: &stood::agent::result::AgentResult) -> Result<(), CallbackError> {
+        Ok(())
+    }
+
+    /// Handle error events - not needed for tool callbacks  
+    async fn on_error(&self, _error: &stood::StoodError) -> Result<(), CallbackError> {
+        Ok(())
+    }
+
+    /// Handle all callback events
+    async fn handle_event(&self, event: CallbackEvent) -> Result<(), CallbackError> {
+        match event {
+            CallbackEvent::ToolStart { tool_name, input, .. } => {
+                self.on_tool(ToolEvent::Started { name: tool_name, input }).await
+            }
+            CallbackEvent::ToolComplete { tool_name, output, error, duration, .. } => {
+                if let Some(err) = error {
+                    self.on_tool(ToolEvent::Failed { name: tool_name, error: err, duration }).await
+                } else {
+                    self.on_tool(ToolEvent::Completed { name: tool_name, output, duration }).await
+                }
+            }
+            _ => Ok(()), // Ignore other events
         }
     }
 }

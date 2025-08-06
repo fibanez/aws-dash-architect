@@ -16,11 +16,9 @@ use uuid::Uuid;
 // Import bridge communication and task agent
 use super::super::agents::TaskAgent;
 use super::super::cancellation::AgentCancellationManager;
-use super::super::get_global_bridge_sender;
 use super::super::performance::{AgentCreationMetrics, PerformanceTimer};
-use crate::app::dashui::control_bridge_window::{
-    AgentResponse as BridgeAgentResponse, SubAgentEvent,
-};
+use super::super::{BridgeDebugEvent, log_bridge_debug_event};
+// Removed Bridge UI imports - agents handle their own event loops
 use crate::time_phase;
 
 /// Active task tracking information
@@ -355,6 +353,16 @@ impl Tool for CreateTaskTool {
                 "🎯 Creating task agent - Description: '{}', Accounts: {:?}, Regions: {:?}",
                 task_description, account_ids, regions
             );
+            
+            // Log create_task start for debugging
+            log_bridge_debug_event(BridgeDebugEvent::CreateTaskStart {
+                timestamp: Utc::now(),
+                session_id: format!("bridge-session-{}", Utc::now().timestamp_millis()), // TODO: pass actual session_id
+                task_id: task_id.clone(),
+                task_description: task_description.to_string(),
+                account_ids: account_ids.clone(),
+                regions: regions.clone(),
+            });
 
             // Store active task info
             {
@@ -377,25 +385,7 @@ impl Tool for CreateTaskTool {
                 );
             }
 
-            // Notify Bridge UI that task was created
-            if let Some(bridge_sender) = get_global_bridge_sender() {
-                let _ = bridge_sender.send(BridgeAgentResponse::AgentCreated {
-                    agent_id: task_id.clone(),
-                    agent_type: "generic-task-agent".to_string(),
-                });
-
-                // Send ProcessingStarted event to create parent node with task-focused language
-                let full_task_description = format!("⚙️ Processing task: {}", task_description);
-
-                let _ = bridge_sender.send(BridgeAgentResponse::SubAgentEvent {
-                    agent_id: task_id.clone(),
-                    agent_type: "generic-task-agent".to_string(),
-                    event: SubAgentEvent::ProcessingStarted {
-                        timestamp: chrono::Utc::now(),
-                        task_description: full_task_description,
-                    },
-                });
-            }
+            // Task agent will handle its own event loop without UI notifications
 
             task_id
         });
@@ -410,27 +400,7 @@ impl Tool for CreateTaskTool {
         let total_duration = creation_start.elapsed();
         let success = task_result.is_ok();
 
-        // Send appropriate completion or error event
-        if let Some(bridge_sender) = get_global_bridge_sender() {
-            if success {
-                let _ = bridge_sender.send(BridgeAgentResponse::SubAgentEvent {
-                    agent_id: task_id.clone(),
-                    agent_type: "generic-task-agent".to_string(),
-                    event: SubAgentEvent::TaskComplete {
-                        timestamp: chrono::Utc::now(),
-                    },
-                });
-            } else if let Err(ref error) = task_result {
-                let _ = bridge_sender.send(BridgeAgentResponse::SubAgentEvent {
-                    agent_id: task_id.clone(),
-                    agent_type: "generic-task-agent".to_string(),
-                    event: SubAgentEvent::Error {
-                        timestamp: chrono::Utc::now(),
-                        error: error.to_string(),
-                    },
-                });
-            }
-        }
+        // Task completion handled by agent result - no UI notifications needed
 
         // Cleanup and notifications
         time_phase!(perf_timer, "Cleanup & notifications", {
@@ -448,13 +418,7 @@ impl Tool for CreateTaskTool {
             // Cleanup cancellation token (in case of error or completion)
             self.cancellation_manager.remove_token(&task_id);
 
-            // Notify Bridge UI that task was destroyed
-            if let Some(bridge_sender) = get_global_bridge_sender() {
-                let _ = bridge_sender.send(BridgeAgentResponse::AgentDestroyed {
-                    agent_id: task_id.clone(),
-                    agent_type: "generic-task-agent".to_string(),
-                });
-            }
+            // Task cleanup complete - no UI notifications needed
 
             Ok::<(), ToolError>(())
         })?;
@@ -484,6 +448,15 @@ impl Tool for CreateTaskTool {
         match task_result {
             Ok(result) => {
                 info!("✅ Task {} completed successfully", task_id);
+                
+                // Log task completion for debugging
+                log_bridge_debug_event(BridgeDebugEvent::TaskComplete {
+                    timestamp: Utc::now(),
+                    task_id: task_id.clone(),
+                    success: true,
+                    execution_summary: format!("Task completed successfully in {}ms", total_duration.as_millis()),
+                });
+                
                 Ok(ToolResult::success(serde_json::json!({
                     "success": true,
                     "task_id": task_id,
@@ -500,6 +473,15 @@ impl Tool for CreateTaskTool {
             }
             Err(e) => {
                 error!("❌ Task {} failed: {}", task_id, e);
+                
+                // Log task failure for debugging
+                log_bridge_debug_event(BridgeDebugEvent::TaskComplete {
+                    timestamp: Utc::now(),
+                    task_id: task_id.clone(),
+                    success: false,
+                    execution_summary: format!("Task failed after {}ms: {}", total_duration.as_millis(), e),
+                });
+                
                 Err(e)
             }
         }
