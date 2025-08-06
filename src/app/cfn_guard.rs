@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::app::cfn_template::CloudFormationTemplate;
@@ -35,6 +35,38 @@ pub struct GuardValidation {
     pub compliant: bool,
     /// Total number of rules evaluated
     pub total_rules: usize,
+    /// All rules organized by status
+    pub rule_results: GuardRuleResults,
+}
+
+/// Complete set of rule results organized by status
+#[derive(Debug, Clone)]
+pub struct GuardRuleResults {
+    /// Rules that passed validation (compliant)
+    pub compliant_rules: Vec<GuardRule>,
+    /// Rules that failed validation (violations) 
+    pub violation_rules: Vec<GuardRule>,
+    /// Rules that are exempted via metadata
+    pub exempted_rules: Vec<GuardRule>,
+    /// Rules that don't apply to current template resources
+    pub not_applicable_rules: Vec<GuardRule>,
+}
+
+/// Information about a Guard rule
+#[derive(Debug, Clone)]
+pub struct GuardRule {
+    /// Name/identifier of the rule
+    pub name: String,
+    /// Human-readable description of what the rule checks
+    pub description: String,
+    /// Severity level if this rule fails
+    pub severity: ViolationSeverity,
+    /// Resource types this rule applies to
+    pub resource_types: Vec<String>,
+    /// Whether this rule has any violations
+    pub has_violations: bool,
+    /// Number of resources this rule was applied to (0 for not applicable)
+    pub applied_resources: usize,
 }
 
 /// Individual violation found by Guard validation
@@ -74,6 +106,22 @@ pub enum ComplianceProgram {
     SOC,
     FedRAMP,
     Custom(String),
+}
+
+impl ComplianceProgram {
+    /// Get a short display name for the compliance program
+    pub fn short_name(&self) -> &str {
+        match self {
+            ComplianceProgram::NIST80053R4 => "NIST 800-53 R4",
+            ComplianceProgram::NIST80053R5 => "NIST 800-53 R5", 
+            ComplianceProgram::NIST800171 => "NIST 800-171",
+            ComplianceProgram::PCIDSS => "PCI DSS",
+            ComplianceProgram::HIPAA => "HIPAA",
+            ComplianceProgram::SOC => "SOC 2",
+            ComplianceProgram::FedRAMP => "FedRAMP",
+            ComplianceProgram::Custom(name) => name,
+        }
+    }
 }
 
 /// Simple Guard rule pattern
@@ -260,10 +308,15 @@ impl GuardValidator {
         }
 
         let compliant = all_violations.is_empty();
+        
+        // Generate rule results for the violations window
+        let rule_results = self.generate_rule_results(template, &all_violations, evaluated_rules).await;
+        
         let validation_result = GuardValidation {
             violations: all_violations,
             compliant,
             total_rules: evaluated_rules,
+            rule_results,
         };
 
         let duration = start_time.elapsed();
@@ -278,7 +331,161 @@ impl GuardValidator {
 
         Ok(validation_result)
     }
-
+    
+    /// Generate comprehensive rule results organized by status
+    async fn generate_rule_results(
+        &self,
+        template: &crate::app::cfn_template::CloudFormationTemplate,
+        violations: &[GuardViolation],
+        _total_rules: usize,
+    ) -> GuardRuleResults {
+        let mut compliant_rules = Vec::new();
+        let mut violation_rules = Vec::new();
+        let mut exempted_rules = Vec::new();
+        let mut not_applicable_rules = Vec::new();
+        
+        // Get resource types from template
+        let template_resource_types: HashSet<String> = template.resources.keys()
+            .filter_map(|name| template.resources.get(name))
+            .map(|resource| resource.resource_type.clone())
+            .collect();
+        
+        // Generate example rules based on compliance programs
+        let example_rules = self.generate_example_rules();
+        
+        // Process each rule based on actual template content and violations
+        for mut rule in example_rules {
+            // Check if rule applies to any resources in the template
+            let applies_to_template = rule.resource_types.iter()
+                .any(|rt| template_resource_types.contains(rt));
+            
+            if !applies_to_template {
+                // Rule doesn't apply to any resources in this template
+                rule.applied_resources = 0;
+                not_applicable_rules.push(rule);
+                continue;
+            }
+            
+            // Count how many resources this rule applies to
+            rule.applied_resources = template.resources.values()
+                .filter(|resource| rule.resource_types.contains(&resource.resource_type))
+                .count();
+            
+            // Check if this rule has any violations
+            let rule_violations: Vec<_> = violations.iter()
+                .filter(|v| v.rule_name == rule.name)
+                .collect();
+            
+            // Check if all violations for this rule are exempted
+            let has_active_violations = rule_violations.iter().any(|v| !v.exempted);
+            let has_exempted_violations = rule_violations.iter().any(|v| v.exempted);
+            
+            if has_exempted_violations && !has_active_violations {
+                // All violations are exempted
+                exempted_rules.push(rule);
+            } else if has_active_violations {
+                // Has active (non-exempted) violations
+                violation_rules.push(rule);
+            } else {
+                // No violations - rule is compliant
+                compliant_rules.push(rule);
+            }
+        }
+        
+        GuardRuleResults {
+            compliant_rules,
+            violation_rules,
+            exempted_rules,
+            not_applicable_rules,
+        }
+    }
+    
+    /// Generate example rules for demonstration
+    fn generate_example_rules(&self) -> Vec<GuardRule> {
+        vec![
+            GuardRule {
+                name: "S3_BUCKET_ENCRYPTION_ENABLED".to_string(),
+                description: "Ensure S3 buckets have server-side encryption enabled".to_string(),
+                severity: ViolationSeverity::High,
+                resource_types: vec!["AWS::S3::Bucket".to_string()],
+                has_violations: false,
+                applied_resources: 0, // Will be updated based on template
+            },
+            GuardRule {
+                name: "S3_BUCKET_PUBLIC_ACCESS_PROHIBITED".to_string(),
+                description: "S3 buckets should not allow public read/write access".to_string(),
+                severity: ViolationSeverity::Critical,
+                resource_types: vec!["AWS::S3::Bucket".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "EC2_SECURITY_GROUP_INGRESS_RULE".to_string(),
+                description: "Security groups should not allow unrestricted inbound access".to_string(),
+                severity: ViolationSeverity::High,
+                resource_types: vec!["AWS::EC2::SecurityGroup".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "EC2_INSTANCE_METADATA_SERVICE_V2".to_string(),
+                description: "EC2 instances should use IMDSv2 for metadata service".to_string(),
+                severity: ViolationSeverity::Medium,
+                resource_types: vec!["AWS::EC2::Instance".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "RDS_DB_INSTANCE_BACKUP_ENABLED".to_string(),
+                description: "RDS instances should have automated backup enabled".to_string(),
+                severity: ViolationSeverity::Medium,
+                resource_types: vec!["AWS::RDS::DBInstance".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "LAMBDA_FUNCTION_DEAD_LETTER_QUEUE".to_string(),
+                description: "Lambda functions should have dead letter queues configured".to_string(),
+                severity: ViolationSeverity::Low,
+                resource_types: vec!["AWS::Lambda::Function".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "CLOUDTRAIL_LOG_FILE_VALIDATION_ENABLED".to_string(),
+                description: "CloudTrail should have log file validation enabled".to_string(),
+                severity: ViolationSeverity::High,
+                resource_types: vec!["AWS::CloudTrail::Trail".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "IAM_USER_MFA_ENABLED".to_string(),
+                description: "IAM users should have MFA enabled".to_string(),
+                severity: ViolationSeverity::Critical,
+                resource_types: vec!["AWS::IAM::User".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "DYNAMODB_TABLE_ENCRYPTION_ENABLED".to_string(),
+                description: "DynamoDB tables should have encryption at rest enabled".to_string(),
+                severity: ViolationSeverity::High,
+                resource_types: vec!["AWS::DynamoDB::Table".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+            GuardRule {
+                name: "DYNAMODB_TABLE_BACKUP_ENABLED".to_string(),
+                description: "DynamoDB tables should have point-in-time recovery enabled".to_string(),
+                severity: ViolationSeverity::Medium,
+                resource_types: vec!["AWS::DynamoDB::Table".to_string()],
+                has_violations: false,
+                applied_resources: 0,
+            },
+        ]
+    }
+    
     /// Compute a hash of the template for caching purposes
     fn compute_template_hash(&self, template: &CloudFormationTemplate) -> Result<String> {
         use std::collections::hash_map::DefaultHasher;

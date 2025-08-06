@@ -12,6 +12,7 @@ pub enum MenuAction {
     ShakeWindows,
     ShowWindowSelector,
     ShowComplianceDetails,
+    ValidateCompliance,
 }
 
 /// Compliance status for Guard validation
@@ -41,6 +42,7 @@ pub fn build_menu(
     aws_identity_center: Option<&Arc<Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
     window_selector: &mut crate::app::dashui::window_selector::WindowSelector,
     compliance_status: Option<ComplianceStatus>,
+    compliance_programs: Option<&Vec<crate::app::cfn_guard::ComplianceProgram>>,
 ) -> (MenuAction, Option<String>) {
     let mut theme_changed = false;
     let original_theme = *theme;
@@ -92,9 +94,9 @@ pub fn build_menu(
     // AWS login status indicator
     show_aws_login_status(ui, aws_identity_center);
 
-    // Compliance status indicator
-    if let Some(compliance_action) = show_compliance_status(ui, compliance_status) {
-        return (compliance_action, None);
+    // Compliance programs display and validation button
+    if let Some(validation_action) = show_compliance_programs_and_validation(ui, compliance_programs, compliance_status) {
+        return (validation_action, None);
     }
 
     ui.add_space(16.0);
@@ -283,4 +285,112 @@ fn show_compliance_status(
         }
     }
     None
+}
+
+/// Displays compliance programs and validation button
+fn show_compliance_programs_and_validation(
+    ui: &mut egui::Ui,
+    compliance_programs: Option<&Vec<crate::app::cfn_guard::ComplianceProgram>>,
+    compliance_status: Option<ComplianceStatus>,
+) -> Option<MenuAction> {
+    match compliance_programs {
+        Some(programs) if !programs.is_empty() => {
+            let mut action = None;
+            ui.horizontal(|ui| {
+                // Display compliance programs
+                ui.label("Compliance:");
+                let programs_text = programs
+                    .iter()
+                    .map(|p| p.short_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ui.label(
+                    RichText::new(programs_text)
+                        .color(Color32::from_rgb(160, 120, 200))
+                        .size(11.0),
+                );
+
+                ui.separator();
+
+                // Validation button based on current status
+                action = match compliance_status {
+                    Some(ComplianceStatus::Compliant) => {
+                        let response = ui.button(
+                            RichText::new("✅ Compliant")
+                                .color(Color32::from_rgb(50, 200, 80))
+                                .strong()
+                                .size(12.0),
+                        );
+                        if response.clicked() {
+                            log_debug!("Compliance details button clicked");
+                            Some(MenuAction::ShowComplianceDetails)
+                        } else {
+                            response.on_hover_text("CloudFormation Guard validation passed - click for details");
+                            None
+                        }
+                    }
+                    Some(ComplianceStatus::Violations(count)) => {
+                        let response = ui.button(
+                            RichText::new(format!("❌ {} Violations", count))
+                                .color(Color32::from_rgb(200, 50, 50))
+                                .strong()
+                                .size(12.0),
+                        );
+                        if response.clicked() {
+                            log_debug!("Compliance violations button clicked");
+                            Some(MenuAction::ShowComplianceDetails)
+                        } else {
+                            response.on_hover_text("CloudFormation Guard found policy violations - click to view details");
+                            None
+                        }
+                    }
+                    Some(ComplianceStatus::Validating) => {
+                        let response = ui.button(
+                            RichText::new("⚠️ Validating...")
+                                .color(Color32::from_rgb(220, 180, 50))
+                                .strong()
+                                .size(12.0),
+                        );
+                        response.on_hover_text("CloudFormation Guard validation in progress");
+                        None
+                    }
+                    Some(ComplianceStatus::ValidationError(ref error)) => {
+                        let response = ui.button(
+                            RichText::new("🚫 Validation Error")
+                                .color(Color32::from_rgb(200, 100, 50))
+                                .strong()
+                                .size(12.0),
+                        );
+                        if response.clicked() {
+                            log_debug!("Compliance error button clicked");
+                            Some(MenuAction::ShowComplianceDetails)
+                        } else {
+                            response.on_hover_text(format!("CloudFormation Guard validation error: {}", error));
+                            None
+                        }
+                    }
+                    Some(ComplianceStatus::NotValidated) | None => {
+                        let response = ui.button(
+                            RichText::new("🔍 Validate")
+                                .color(Color32::from_rgb(100, 170, 255))
+                                .strong()
+                                .size(12.0),
+                        );
+                        if response.clicked() {
+                            log_debug!("Compliance validation button clicked");
+                            Some(MenuAction::ValidateCompliance)
+                        } else {
+                            response.on_hover_text("Click to validate CloudFormation template against compliance programs");
+                            None
+                        }
+                    }
+                }
+            });
+            action
+        }
+        _ => {
+            // No compliance programs configured - don't show anything
+            None
+        }
+    }
 }

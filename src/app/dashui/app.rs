@@ -3,6 +3,8 @@ use super::aws_login_window::AwsLoginWindow;
 // Type aliases for complex types
 type DeploymentTaskHandle =
     std::thread::JoinHandle<Result<(String, String, String), anyhow::Error>>;
+type ValidationTaskHandle = 
+    std::thread::JoinHandle<Result<crate::app::cfn_guard::GuardValidation, anyhow::Error>>;
 use super::chat_window::ChatWindow;
 use super::cloudformation_command_palette::{
     CloudFormationCommandAction, CloudFormationCommandPalette, CloudFormationPaletteResult,
@@ -12,6 +14,7 @@ use super::command_palette::{CommandAction, CommandPalette};
 use super::control_bridge_window::ControlBridgeWindow;
 use super::credentials_debug_window::CredentialsDebugWindow;
 use super::deployment_info_window::DeploymentInfoWindow;
+use super::guard_violations_window::GuardViolationsWindow;
 use super::download_manager::DownloadManager;
 use super::help_window::HelpWindow;
 use super::log_window::LogWindow;
@@ -104,6 +107,7 @@ pub enum FocusedWindow {
     CredentialsDebug,
     DeploymentInfo,
     Verification,
+    GuardViolations,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -152,6 +156,8 @@ pub struct DashApp {
     #[serde(skip)]
     pub verification_window: VerificationWindow,
     #[serde(skip)]
+    pub guard_violations_window: GuardViolationsWindow,
+    #[serde(skip)]
     pub resource_explorer: ResourceExplorer,
     #[serde(skip)]
     pub cloudformation_manager: Option<std::sync::Arc<CloudFormationManager>>,
@@ -165,6 +171,8 @@ pub struct DashApp {
         crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow,
     #[serde(skip)]
     pub pending_deployment_task: Option<DeploymentTaskHandle>,
+    #[serde(skip)]
+    pub pending_validation_task: Option<ValidationTaskHandle>,
     #[serde(skip)]
     pub notification_manager: NotificationManager,
     #[serde(skip)]
@@ -222,6 +230,12 @@ pub struct DashApp {
     #[serde(skip)]
     /// Flag to ensure enhanced fonts are configured only once
     fonts_configured: bool,
+    #[serde(skip)]
+    /// Current compliance validation status
+    compliance_status: Option<crate::app::dashui::menu::ComplianceStatus>,
+    #[serde(skip)]
+    /// CloudFormation Guard validator instance
+    guard_validator: Option<crate::app::cfn_guard::GuardValidator>,
 }
 
 impl Default for DashApp {
@@ -248,12 +262,14 @@ impl Default for DashApp {
             credentials_debug_window: CredentialsDebugWindow::default(),
             deployment_info_window: DeploymentInfoWindow::default(),
             verification_window: VerificationWindow::default(),
+            guard_violations_window: GuardViolationsWindow::new(),
             resource_explorer: ResourceExplorer::new(),
             cloudformation_manager: None,
             validation_results_window: ValidationResultsWindow::new(),
             parameter_dialog: crate::app::cloudformation_manager::parameter_dialog::ParameterInputDialog::new(),
             deployment_progress_window: crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow::new(),
             pending_deployment_task: None,
+            pending_validation_task: None,
             notification_manager: NotificationManager::new(),
             current_template_hash: None,
             window_selector: WindowSelector::new(),
@@ -281,6 +297,8 @@ impl Default for DashApp {
             widget_manager: NavigableWidgetManager::new(),
             pending_widget_actions: Vec::new(),
             fonts_configured: false,
+            compliance_status: None,
+            guard_validator: None,
         }
     }
 }
@@ -315,6 +333,52 @@ impl DashApp {
     pub fn start_delayed_shake_animation(&mut self) {
         // Set a 100ms delay to allow window to settle
         self.pending_shake_timer = Some(Instant::now());
+    }
+
+    /// Trigger compliance validation for the current project
+    fn trigger_compliance_validation(&mut self) {
+        if let Some(project) = &self.project_command_palette.current_project {
+            if !project.guard_rules_enabled || project.compliance_programs.is_empty() {
+                tracing::warn!("Cannot validate compliance: Guard rules disabled or no compliance programs selected");
+                return;
+            }
+
+            if let Some(ref template) = project.cfn_template {
+                tracing::info!("Starting compliance validation for {} compliance programs", 
+                              project.compliance_programs.len());
+                
+                // Set compliance status to Validating
+                self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::Validating);
+                
+                // Clone the data we need for the thread
+                let compliance_programs = project.compliance_programs.clone();
+                let template_clone = template.clone();
+                
+                // Spawn validation task using std::thread (not tokio::spawn for egui compatibility)
+                let validation_task = std::thread::spawn(move || -> Result<crate::app::cfn_guard::GuardValidation, anyhow::Error> {
+                    // Create a tokio runtime for the async operations within the thread
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(async {
+                        // Initialize GuardValidator with compliance programs
+                        let mut validator = crate::app::cfn_guard::GuardValidator::new(compliance_programs).await?;
+                        
+                        // Run validation
+                        let validation_result = template_clone.validate_with_guard(&mut validator).await?;
+                        Ok(validation_result)
+                    })
+                });
+                
+                // Store the validation task for monitoring
+                self.pending_validation_task = Some(validation_task);
+                
+                // Open the violations window immediately to show progress
+                self.focus_window("guard_violations");
+            } else {
+                tracing::warn!("Cannot validate compliance: No CloudFormation template loaded");
+            }
+        } else {
+            tracing::warn!("Cannot validate compliance: No project loaded");
+        }
     }
 
     /// Update shake offsets for tracked windows that are currently shaking
@@ -474,6 +538,9 @@ impl DashApp {
                 }
                 FocusedWindow::Verification => {
                     self.verification_window.visible = false;
+                }
+                FocusedWindow::GuardViolations => {
+                    self.guard_violations_window.visible = false;
                 }
                 FocusedWindow::DeploymentInfo => {
                     self.deployment_info_window.open = false;
@@ -1525,6 +1592,12 @@ impl DashApp {
                     .as_ref()
                     .map(|project| project.get_resources().len());
 
+                // Get compliance programs from current project
+                let compliance_programs = self.project_command_palette
+                    .current_project
+                    .as_ref()
+                    .map(|project| &project.compliance_programs);
+
                 let (menu_action, selected_window) = menu::build_menu(
                     ui,
                     ctx,
@@ -1535,7 +1608,8 @@ impl DashApp {
                     resource_count,
                     self.aws_identity_center.as_ref(), // Pass AWS identity center for login status
                     &mut self.window_selector,
-                    None, // TODO: Add compliance status when Guard integration is complete
+                    self.compliance_status.clone(),
+                    compliance_programs,
                 );
 
                 // Handle menu actions
@@ -1551,8 +1625,14 @@ impl DashApp {
                         // No longer needed, handled directly in menu
                     }
                     menu::MenuAction::ShowComplianceDetails => {
-                        // TODO: Open the Guard Violations window
-                        tracing::info!("Compliance details requested");
+                        // Open the Guard Violations window
+                        self.focus_window("guard_violations");
+                        tracing::info!("Compliance details window opened");
+                    }
+                    menu::MenuAction::ValidateCompliance => {
+                        // Trigger compliance validation
+                        self.trigger_compliance_validation();
+                        tracing::info!("Compliance validation triggered");
                     }
                     menu::MenuAction::None => {}
                 }
@@ -1834,6 +1914,13 @@ impl DashApp {
 
             // If project state changed (loaded or saved), trigger appropriate actions
             if (has_project && !had_project) || project_saved {
+                // Check if we should trigger validation before borrowing the project
+                let should_trigger_validation = if let Some(project) = &self.project_command_palette.current_project {
+                    project_saved && !project.compliance_programs.is_empty() && project.guard_rules_enabled
+                } else {
+                    false
+                };
+
                 if let Some(project) = &self.project_command_palette.current_project {
                     // Project loaded/saved
                     tracing::info!("🔄 APP_RESPONSE: Project loaded/saved successfully");
@@ -1863,6 +1950,12 @@ impl DashApp {
 
                     // Download resources for the regions in this project
                     self.download_resources_for_project();
+                }
+                
+                // Trigger validation if project was saved with compliance programs
+                if should_trigger_validation {
+                    tracing::info!("Project saved with compliance programs - triggering automatic validation");
+                    self.trigger_compliance_validation();
                 }
             }
         }
@@ -3196,6 +3289,10 @@ impl DashApp {
                 self.verification_window.visible = true;
                 self.set_focused_window(FocusedWindow::Verification);
             }
+            "guard_violations" => {
+                self.guard_violations_window.visible = true;
+                self.set_focused_window(FocusedWindow::GuardViolations);
+            }
             _ => {
                 // Handle resource form windows with dynamic IDs
                 if window_id.starts_with("resource_form_") {
@@ -3632,6 +3729,29 @@ impl DashApp {
     fn handle_validation_results_window(&mut self, ctx: &egui::Context) {
         if self.validation_results_window.open {
             self.validation_results_window.show(ctx);
+        }
+    }
+
+    /// Handle the guard violations window
+    fn handle_guard_violations_window(&mut self, ctx: &egui::Context) {
+        if self.guard_violations_window.is_open() {
+            // Only set focus if this window is not already focused to avoid stealing focus every frame
+            if self.currently_focused_window != Some(FocusedWindow::GuardViolations) {
+                self.set_focused_window(FocusedWindow::GuardViolations);
+            }
+            // Check if this window should be brought to the front
+            let window_id = self.guard_violations_window.window_id();
+            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
+            if bring_to_front {
+                self.window_focus_manager.clear_bring_to_front(window_id);
+            }
+            // Show the window using the trait
+            FocusableWindow::show_with_focus(
+                &mut self.guard_violations_window,
+                ctx,
+                (),
+                bring_to_front,
+            );
         }
     }
 
@@ -4294,6 +4414,50 @@ impl DashApp {
         }
     }
 
+    /// Handle validation task monitoring for async compliance validation operations
+    fn handle_validation_task_monitoring(&mut self) {
+        if let Some(task) = &self.pending_validation_task {
+            if task.is_finished() {
+                let completed_task = self.pending_validation_task.take().unwrap();
+                // Process the validation result
+                match completed_task.join() {
+                    Ok(Ok(validation_result)) => {
+                        let violation_count = validation_result.violations.len();
+                        tracing::info!("Compliance validation completed: {} violations found", violation_count);
+                        
+                        // Update compliance status based on results
+                        self.compliance_status = if violation_count == 0 {
+                            Some(crate::app::dashui::menu::ComplianceStatus::Compliant)
+                        } else {
+                            Some(crate::app::dashui::menu::ComplianceStatus::Violations(violation_count))
+                        };
+                        
+                        // Store violations in guard violations window
+                        let template_name = self.project_command_palette
+                            .current_project
+                            .as_ref()
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| "Unknown Template".to_string());
+                        self.guard_violations_window.show(&template_name, validation_result);
+                        self.focus_window("guard_violations");
+                    }
+                    Ok(Err(validation_error)) => {
+                        tracing::error!("Compliance validation failed: {}", validation_error);
+                        self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::ValidationError(
+                            validation_error.to_string()
+                        ));
+                    }
+                    Err(thread_error) => {
+                        tracing::error!("Validation task thread panicked: {:?}", thread_error);
+                        self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::ValidationError(
+                            "Validation task failed unexpectedly".to_string()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     /// Handle deployment task monitoring for async deployment operations
     fn handle_deployment_task_monitoring(&mut self) {
         if let Some(task) = &self.pending_deployment_task {
@@ -4770,6 +4934,9 @@ impl eframe::App for DashApp {
         // Check for new validation results
         self.handle_validation_results();
 
+        // Check for compliance validation task updates
+        self.handle_validation_task_monitoring();
+
         // Check for deployment task updates
         self.handle_deployment_task_monitoring();
 
@@ -4804,6 +4971,7 @@ impl eframe::App for DashApp {
         self.handle_deployment_info_window(ctx);
         self.handle_template_sections_window(ctx);
         self.handle_verification_window(ctx);
+        self.handle_guard_violations_window(ctx);
         self.handle_validation_results_window(ctx);
         self.handle_parameter_dialog(ctx);
         self.handle_deployment_progress_window(ctx);

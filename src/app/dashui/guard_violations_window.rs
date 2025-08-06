@@ -118,18 +118,23 @@ impl FocusableWindow for GuardViolationsWindow {
             return;
         }
 
+        let available_rect = ctx.available_rect();
         let mut window = egui::Window::new("CloudFormation Guard Violations")
+            .movable(true)
             .resizable(true)
-            .default_width(800.0)
-            .default_height(600.0)
+            .default_size([900.0, 700.0])
+            .min_width(600.0)
+            .min_height(400.0)
+            .max_height(available_rect.height() * 0.95)
             .collapsible(true);
 
         if bring_to_front {
             window = window.order(egui::Order::Foreground);
         }
 
-        window.show(ctx, |ui| {
-            if let Some(validation) = &self.validation_result {
+        let mut is_open = self.visible;
+        let _result = window.open(&mut is_open).show(ctx, |ui| {
+            if let Some(validation) = self.validation_result.clone() {
                 // Header with summary
                 ui.horizontal(|ui| {
                     ui.heading("Validation Results");
@@ -215,119 +220,22 @@ impl FocusableWindow for GuardViolationsWindow {
 
                 ui.separator();
 
-                // Violations list in a scroll area
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if validation.violations.is_empty() {
-                            ui.centered_and_justified(|ui| {
-                                ui.label(
-                                    RichText::new("🎉 No violations found! Your CloudFormation template is compliant.")
-                                        .color(Color32::from_rgb(50, 200, 80))
-                                        .size(16.0)
-                                        .strong(),
-                                );
-                            });
-                        } else {
-                            // Show violations grouped by resource
-                            for (resource_name, violations) in &self.grouped_violations {
-                                let filtered_violations: Vec<_> = violations
-                                    .iter()
-                                    .filter(|v| self.should_show_violation(v))
-                                    .collect();
+                // Rules organized in a tree structure - calculate available space like Bridge window
+                let current_window_height = ui.available_height();
+                let footer_area_height = 80.0; // Reserve space for footer buttons
+                let max_scroll_height = (current_window_height - footer_area_height).min(600.0);
+                
+                let scroll_area = egui::ScrollArea::vertical()
+                    .id_salt("guard_violations_scroll")
+                    .auto_shrink([false, false]) // Don't auto-shrink - let user control window size
+                    .max_height(max_scroll_height); // Prevent expansion beyond available space
 
-                                if filtered_violations.is_empty() {
-                                    continue;
-                                }
-
-                                ui.collapsing(
-                                    RichText::new(format!("Resource: {} ({} violations)", resource_name, filtered_violations.len()))
-                                        .strong()
-                                        .size(14.0),
-                                    |ui| {
-                                        for violation in filtered_violations {
-                                            ui.group(|ui| {
-                                                // Violation header
-                                                ui.horizontal(|ui| {
-                                                    ui.label(self.get_severity_icon(&violation.severity));
-                                                    
-                                                    // Show exemption status
-                                                    if violation.exempted {
-                                                        ui.label("⚠️");
-                                                        ui.label(
-                                                            RichText::new(&violation.rule_name)
-                                                                .color(Color32::from_rgb(150, 150, 150))
-                                                                .strikethrough()
-                                                                .strong(),
-                                                        );
-                                                        ui.label(
-                                                            RichText::new("EXEMPTED")
-                                                                .color(Color32::from_rgb(100, 150, 200))
-                                                                .size(10.0)
-                                                                .strong(),
-                                                        );
-                                                    } else {
-                                                        ui.label(
-                                                            RichText::new(&violation.rule_name)
-                                                                .color(self.get_severity_color(&violation.severity))
-                                                                .strong(),
-                                                        );
-                                                    }
-                                                    
-                                                    ui.separator();
-                                                    ui.label(format!("{:?}", violation.severity));
-                                                });
-
-                                                // Violation message
-                                                ui.label(
-                                                    RichText::new(&violation.message)
-                                                        .size(12.0)
-                                                        .color(if violation.exempted { 
-                                                            Color32::from_rgb(120, 120, 120) 
-                                                        } else { 
-                                                            Color32::LIGHT_GRAY 
-                                                        }),
-                                                );
-                                                
-                                                // Show exemption reason if available
-                                                if violation.exempted {
-                                                    if let Some(reason) = &violation.exemption_reason {
-                                                        ui.horizontal(|ui| {
-                                                            ui.label("📋");
-                                                            ui.label(
-                                                                RichText::new(format!("Exemption reason: {}", reason))
-                                                                    .size(11.0)
-                                                                    .color(Color32::from_rgb(100, 150, 200))
-                                                                    .italics(),
-                                                            );
-                                                        });
-                                                    }
-                                                }
-                                                
-                                                // Action buttons
-                                                ui.horizontal(|ui| {
-                                                    if violation.exempted {
-                                                        if ui.small_button("Remove Exemption").clicked() {
-                                                            // TODO: Remove exemption from template
-                                                            log::info!("Remove exemption requested for rule: {} on resource: {}", 
-                                                                     violation.rule_name, violation.resource_name);
-                                                        }
-                                                    } else {
-                                                        if ui.small_button("Add Exemption").clicked() {
-                                                            // TODO: Add exemption to template
-                                                            log::info!("Add exemption requested for rule: {} on resource: {}", 
-                                                                     violation.rule_name, violation.resource_name);
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                            ui.add_space(4.0);
-                                        }
-                                    },
-                                );
-                            }
-                        }
-                    });
+                let _scroll_response = scroll_area.show(ui, |ui| {
+                    // Set a fixed width to prevent content from expanding the window
+                    let available_width = ui.available_width();
+                    ui.set_max_width(available_width);
+                    self.show_rules_tree(ui, &validation);
+                });
 
                 ui.separator();
 
@@ -355,5 +263,272 @@ impl FocusableWindow for GuardViolationsWindow {
                 });
             }
         });
+        self.visible = is_open;
+    }
+}
+
+impl GuardViolationsWindow {
+    /// Display rules organized in a tree structure by status
+    fn show_rules_tree(&mut self, ui: &mut egui::Ui, validation: &GuardValidation) {
+        let rule_results = &validation.rule_results;
+        
+        // Not Applicable Rules Section
+        if !rule_results.not_applicable_rules.is_empty() {
+            ui.collapsing(
+                RichText::new(format!("🔘 Not Applicable Rules ({})", rule_results.not_applicable_rules.len()))
+                    .color(Color32::from_rgb(120, 120, 120))
+                    .strong()
+                    .size(15.0),
+                |ui| {
+                    ui.label(
+                        RichText::new("These rules are part of the compliance program but don't apply to resources in this template.")
+                            .color(Color32::from_rgb(140, 140, 140))
+                            .size(11.0)
+                            .italics()
+                    );
+                    ui.add_space(5.0);
+                    
+                    for rule in &rule_results.not_applicable_rules {
+                        if self.rule_matches_severity_filter(&rule.severity) {
+                            self.show_rule_item(ui, rule, "🔘", Color32::from_rgb(120, 120, 120), false);
+                        }
+                    }
+                },
+            );
+            ui.add_space(8.0);
+        }
+
+        // Compliant Rules Section
+        if !rule_results.compliant_rules.is_empty() {
+            ui.collapsing(
+                RichText::new(format!("✅ Compliant Rules ({})", rule_results.compliant_rules.len()))
+                    .color(Color32::from_rgb(50, 200, 80))
+                    .strong()
+                    .size(15.0),
+                |ui| {
+                    ui.label(
+                        RichText::new("These rules were evaluated and passed successfully.")
+                            .color(Color32::from_rgb(70, 180, 90))
+                            .size(11.0)
+                            .italics()
+                    );
+                    ui.add_space(5.0);
+                    
+                    for rule in &rule_results.compliant_rules {
+                        if self.rule_matches_severity_filter(&rule.severity) {
+                            self.show_rule_item(ui, rule, "✅", Color32::from_rgb(50, 200, 80), true);
+                        }
+                    }
+                },
+            );
+            ui.add_space(8.0);
+        }
+
+        // Violations Section - Always show if there are violation rules
+        if !rule_results.violation_rules.is_empty() {
+            ui.collapsing(
+                RichText::new(format!("❌ Violations ({})", rule_results.violation_rules.len()))
+                    .color(Color32::from_rgb(200, 50, 50))
+                    .strong()
+                    .size(15.0),
+                |ui| {
+                    ui.label(
+                        RichText::new("These rules failed validation and require attention.")
+                            .color(Color32::from_rgb(180, 70, 70))
+                            .size(11.0)
+                            .italics()
+                    );
+                    ui.add_space(5.0);
+                    
+                    if !self.show_non_exempted {
+                        ui.label(
+                            RichText::new("ℹ️ Active violations are currently hidden by filter settings.")
+                                .color(Color32::from_rgb(150, 150, 150))
+                                .size(11.0)
+                                .italics()
+                        );
+                    } else {
+                        for rule in &rule_results.violation_rules {
+                            if self.rule_matches_severity_filter(&rule.severity) {
+                                self.show_rule_item(ui, rule, "❌", Color32::from_rgb(200, 50, 50), true);
+                                
+                                // Show related violations
+                                let related_violations: Vec<_> = validation.violations.iter()
+                                    .filter(|v| v.rule_name == rule.name && !v.exempted)
+                                    .collect();
+                                
+                                if !related_violations.is_empty() {
+                                    ui.indent("violations", |ui| {
+                                        for violation in related_violations {
+                                            ui.horizontal(|ui| {
+                                                ui.label("  🔸");
+                                                ui.label(format!("Resource: {}", violation.resource_name));
+                                                ui.separator();
+                                                ui.label(
+                                                    RichText::new(&violation.message)
+                                                        .size(11.0)
+                                                        .color(Color32::LIGHT_GRAY)
+                                                );
+                                            });
+                                        }
+                                    });
+                                    ui.add_space(3.0);
+                                }
+                            }
+                        }
+                    }
+                },
+            );
+            ui.add_space(8.0);
+        }
+
+        // Exempted Rules Section - Always show if there are exempted rules
+        if !rule_results.exempted_rules.is_empty() {
+            ui.collapsing(
+                RichText::new(format!("⚠️ Exempted Rules ({})", rule_results.exempted_rules.len()))
+                    .color(Color32::from_rgb(100, 150, 200))
+                    .strong()
+                    .size(15.0),
+                |ui| {
+                    ui.label(
+                        RichText::new("These rules had violations but are exempted via CloudFormation Metadata.")
+                            .color(Color32::from_rgb(120, 140, 180))
+                            .size(11.0)
+                            .italics()
+                    );
+                    ui.add_space(5.0);
+                    
+                    if !self.show_exempted {
+                        ui.label(
+                            RichText::new("ℹ️ Exempted violations are currently hidden by filter settings.")
+                                .color(Color32::from_rgb(150, 150, 150))
+                                .size(11.0)
+                                .italics()
+                        );
+                    } else {
+                        for rule in &rule_results.exempted_rules {
+                            if self.rule_matches_severity_filter(&rule.severity) {
+                                self.show_rule_item(ui, rule, "⚠️", Color32::from_rgb(100, 150, 200), true);
+                                
+                                // Show exempted violations
+                                let exempted_violations: Vec<_> = validation.violations.iter()
+                                    .filter(|v| v.rule_name == rule.name && v.exempted)
+                                    .collect();
+                                
+                                if !exempted_violations.is_empty() {
+                                    ui.indent("exemptions", |ui| {
+                                        for violation in exempted_violations {
+                                            ui.horizontal(|ui| {
+                                                ui.label("  ⚠️");
+                                                ui.label(format!("Resource: {}", violation.resource_name));
+                                                if let Some(reason) = &violation.exemption_reason {
+                                                    ui.separator();
+                                                    ui.label(
+                                                        RichText::new(format!("Reason: {}", reason))
+                                                            .size(11.0)
+                                                            .color(Color32::from_rgb(120, 140, 180))
+                                                            .italics()
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    });
+                                    ui.add_space(3.0);
+                                }
+                            }
+                        }
+                    }
+                },
+            );
+        }
+        
+        // Show message if no rules match current filters
+        if self.is_filtered_empty(rule_results) {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    RichText::new("No rules match the current severity and status filters.")
+                        .color(Color32::from_rgb(150, 150, 150))
+                        .size(14.0)
+                        .italics(),
+                );
+            });
+        }
+    }
+
+    /// Display a single rule item
+    fn show_rule_item(&self, ui: &mut egui::Ui, rule: &crate::app::cfn_guard::GuardRule, icon: &str, color: Color32, show_details: bool) {
+        ui.horizontal(|ui| {
+            ui.label(icon);
+            ui.label(
+                RichText::new(&rule.name)
+                    .color(color)
+                    .strong()
+                    .size(12.0)
+            );
+            
+            if show_details {
+                ui.separator();
+                ui.label(self.get_severity_icon(&rule.severity));
+                ui.label(
+                    RichText::new(format!("{:?}", rule.severity))
+                        .color(self.get_severity_color(&rule.severity))
+                        .size(10.0)
+                );
+                
+                if rule.applied_resources > 0 {
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!("{} resources", rule.applied_resources))
+                            .size(10.0)
+                            .color(Color32::GRAY)
+                    );
+                }
+            }
+        });
+        
+        // Description
+        ui.label(
+            RichText::new(&rule.description)
+                .size(11.0)
+                .color(Color32::LIGHT_GRAY)
+                .italics()
+        );
+        
+        // Resource types
+        if !rule.resource_types.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("Applies to:");
+                for (i, resource_type) in rule.resource_types.iter().enumerate() {
+                    if i > 0 { ui.label(","); }
+                    ui.label(
+                        RichText::new(resource_type)
+                            .size(10.0)
+                            .color(Color32::from_rgb(100, 170, 255))
+                            .monospace()
+                    );
+                }
+            });
+        }
+        
+        ui.add_space(6.0);
+    }
+
+    /// Check if rule matches current severity filter
+    fn rule_matches_severity_filter(&self, severity: &ViolationSeverity) -> bool {
+        *self.show_severity_filter.get(severity).unwrap_or(&true)
+    }
+
+    /// Check if current filters result in empty display
+    fn is_filtered_empty(&self, rule_results: &crate::app::cfn_guard::GuardRuleResults) -> bool {
+        let has_not_applicable = !rule_results.not_applicable_rules.is_empty() && 
+            rule_results.not_applicable_rules.iter().any(|r| self.rule_matches_severity_filter(&r.severity));
+        let has_compliant = !rule_results.compliant_rules.is_empty() && 
+            rule_results.compliant_rules.iter().any(|r| self.rule_matches_severity_filter(&r.severity));
+        let has_violations = !rule_results.violation_rules.is_empty() && self.show_non_exempted &&
+            rule_results.violation_rules.iter().any(|r| self.rule_matches_severity_filter(&r.severity));
+        let has_exempted = !rule_results.exempted_rules.is_empty() && self.show_exempted &&
+            rule_results.exempted_rules.iter().any(|r| self.rule_matches_severity_filter(&r.severity));
+            
+        !(has_not_applicable || has_compliant || has_violations || has_exempted)
     }
 }
