@@ -116,19 +116,16 @@ impl ResourceNormalizer for PollyLexiconNormalizer {
 
         // Lexicons can be used by synthesis tasks and applications
         for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::Polly::SynthesisTask" => {
-                    // Synthesis tasks can use lexicons
-                    if resource.account_id == entry.account_id 
-                        && resource.region == entry.region {
-                        relationships.push(ResourceRelationship {
-                            relationship_type: RelationshipType::Uses,
-                            target_resource_id: resource.resource_id.clone(),
-                            target_resource_type: resource.resource_type.clone(),
-                        });
-                    }
+            if resource.resource_type.as_str() == "AWS::Polly::SynthesisTask" {
+                // Synthesis tasks can use lexicons
+                if resource.account_id == entry.account_id 
+                    && resource.region == entry.region {
+                    relationships.push(ResourceRelationship {
+                        relationship_type: RelationshipType::Uses,
+                        target_resource_id: resource.resource_id.clone(),
+                        target_resource_type: resource.resource_type.clone(),
+                    });
                 }
-                _ => {}
             }
         }
 

@@ -1551,12 +1551,9 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                                     model.model_id.clone(),
                                     &model.display_name,
                                 )
-                                .clicked()
-                            {
-                                if !is_selected {
-                                    model_selection_changed =
-                                        Some((model.display_name.clone(), model.model_id.clone()));
-                                }
+                                .clicked() && !is_selected {
+                                model_selection_changed =
+                                    Some((model.display_name.clone(), model.model_id.clone()));
                             }
                         }
                     });
@@ -1626,14 +1623,12 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                 });
 
                 // Handle Enter to send, Shift+Enter for new line
-                if response.has_focus() {
-                    if ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) {
-                        // Enter without shift: send message
-                        let input = std::mem::take(&mut self.input_text);
-                        self.process_user_input(input, aws_identity);
-                    }
-                    // Shift+Enter is handled automatically by TextEdit::multiline for new lines
+                if response.has_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) {
+                    // Enter without shift: send message
+                    let input = std::mem::take(&mut self.input_text);
+                    self.process_user_input(input, aws_identity);
                 }
+                // Shift+Enter is handled automatically by TextEdit::multiline for new lines
             });
         });
 

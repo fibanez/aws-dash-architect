@@ -98,7 +98,7 @@ impl DetectiveService {
             json.insert("ResourceId".to_string(), serde_json::Value::String(arn.clone()));
             
             // Extract graph name from ARN
-            if let Some(graph_name) = arn.split('/').last() {
+            if let Some(graph_name) = arn.split('/').next_back() {
                 json.insert("GraphName".to_string(), serde_json::Value::String(graph_name.to_string()));
                 json.insert("Name".to_string(), serde_json::Value::String(format!("Detective-{}", graph_name)));
             }

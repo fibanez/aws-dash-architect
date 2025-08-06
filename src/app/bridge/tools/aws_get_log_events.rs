@@ -4,6 +4,7 @@
 //! with filtering capabilities including time ranges and filter patterns.
 
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
+use crate::app::resource_explorer::aws_services::logs::LogEventsParams;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json;
@@ -233,17 +234,17 @@ impl Tool for AwsGetLogEventsTool {
         // Get logs service and retrieve log events
         let logs_service = aws_client.get_logs_service();
 
+        let params = LogEventsParams {
+            log_group_name,
+            log_stream_name,
+            start_time,
+            end_time,
+            filter_pattern,
+            limit: Some(limit),
+        };
+
         match logs_service
-            .get_log_events(
-                account_id,
-                region,
-                log_group_name,
-                log_stream_name,
-                start_time,
-                end_time,
-                filter_pattern,
-                Some(limit),
-            )
+            .get_log_events(account_id, region, params)
             .await
         {
             Ok(log_events) => {

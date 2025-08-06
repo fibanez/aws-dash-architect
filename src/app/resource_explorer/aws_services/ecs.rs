@@ -100,6 +100,52 @@ impl ECSService {
         }
     }
 
+    /// List ECS Fargate Services (Fargate launch type only)
+    pub async fn list_fargate_services(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let all_services = self.list_services(account_id, region).await?;
+        
+        // Filter for Fargate services only
+        let fargate_services: Vec<serde_json::Value> = all_services
+            .into_iter()
+            .filter(|service| {
+                service
+                    .get("LaunchType")
+                    .and_then(|lt| lt.as_str())
+                    .map(|lt| lt == "FARGATE")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        Ok(fargate_services)
+    }
+
+    /// List ECS Fargate Tasks (Fargate launch type only) 
+    pub async fn list_fargate_tasks(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let all_tasks = self.list_tasks(account_id, region).await?;
+        
+        // Filter for Fargate tasks only
+        let fargate_tasks: Vec<serde_json::Value> = all_tasks
+            .into_iter()
+            .filter(|task| {
+                task
+                    .get("LaunchType")
+                    .and_then(|lt| lt.as_str())
+                    .map(|lt| lt == "FARGATE")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        Ok(fargate_tasks)
+    }
+
     async fn describe_clusters_internal(
         &self,
         client: &ecs::Client,

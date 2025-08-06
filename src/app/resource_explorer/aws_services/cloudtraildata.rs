@@ -123,6 +123,7 @@ impl CloudTrailDataService {
 
     /// Create a mock Event Data Store entry for listing purposes
     /// In practice, this would come from the CloudTrail management API
+    #[allow(dead_code)]
     fn create_mock_event_data_store(&self, arn: &str, name: &str) -> serde_json::Value {
         let mut json = serde_json::Map::new();
         

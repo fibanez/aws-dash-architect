@@ -85,6 +85,10 @@ impl AWSResourceClient {
         IAMService::new(Arc::clone(&self.credential_coordinator))
     }
 
+    fn get_autoscaling_service(&self) -> AutoScalingService {
+        AutoScalingService::new(Arc::clone(&self.credential_coordinator))
+    }
+
     fn get_bedrock_service(&self) -> BedrockService {
         BedrockService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -374,6 +378,14 @@ impl AWSResourceClient {
 
     fn get_workspaces_service(&self) -> WorkSpacesService {
         WorkSpacesService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_xray_service(&self) -> XRayService {
+        XRayService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_shield_service(&self) -> ShieldService {
+        ShieldService::new(Arc::clone(&self.credential_coordinator))
     }
 
     fn get_apprunner_service(&self) -> AppRunnerService {
@@ -690,6 +702,41 @@ impl AWSResourceClient {
             "AWS::EC2::InternetGateway" => {
                 self.get_ec2_service()
                     .list_internet_gateways(account, region)
+                    .await?
+            }
+            "AWS::EC2::TransitGateway" => {
+                self.get_ec2_service()
+                    .list_transit_gateways(account, region)
+                    .await?
+            }
+            "AWS::EC2::VPCPeeringConnection" => {
+                self.get_ec2_service()
+                    .list_vpc_peering_connections(account, region)
+                    .await?
+            }
+            "AWS::EC2::FlowLog" => {
+                self.get_ec2_service()
+                    .list_flow_logs(account, region)
+                    .await?
+            }
+            "AWS::EC2::VolumeAttachment" => {
+                self.get_ec2_service()
+                    .list_volume_attachments(account, region)
+                    .await?
+            }
+            "AWS::ECS::FargateService" => {
+                self.get_ecs_service()
+                    .list_fargate_services(account, region)
+                    .await?
+            }
+            "AWS::ECS::FargateTask" => {
+                self.get_ecs_service()
+                    .list_fargate_tasks(account, region)
+                    .await?
+            }
+            "AWS::EKS::FargateProfile" => {
+                self.get_eks_service()
+                    .list_fargate_profiles(account, region)
                     .await?
             }
             "AWS::IAM::Role" => self.get_iam_service().list_roles(account, region).await?,
@@ -1062,6 +1109,16 @@ impl AWSResourceClient {
                     .list_certificate_authorities(account, region)
                     .await?
             }
+            "AWS::AutoScaling::AutoScalingGroup" => {
+                self.get_autoscaling_service()
+                    .list_auto_scaling_groups(account, region)
+                    .await?
+            }
+            "AWS::AutoScaling::ScalingPolicy" => {
+                self.get_autoscaling_service()
+                    .list_scaling_policies(account, region)
+                    .await?
+            }
             // Phase 2 Batch 7: Compute & Data services
             "AWS::Neptune::DBCluster" => {
                 self.get_neptune_service()
@@ -1136,6 +1193,21 @@ impl AWSResourceClient {
             "AWS::WorkSpaces::Directory" => {
                 self.get_workspaces_service()
                     .list_directories(account, region)
+                    .await?
+            }
+            "AWS::XRay::SamplingRule" => {
+                self.get_xray_service()
+                    .list_sampling_rules(account, region)
+                    .await?
+            }
+            "AWS::Shield::Protection" => {
+                self.get_shield_service()
+                    .list_protections(account, region)
+                    .await?
+            }
+            "AWS::Shield::Subscription" => {
+                self.get_shield_service()
+                    .list_subscriptions(account, region)
                     .await?
             }
             "AWS::AppRunner::Service" => {
@@ -2215,6 +2287,15 @@ impl AWSResourceClient {
                     )
                     .await
             }
+            "AWS::AutoScaling::AutoScalingGroup" => {
+                self.get_autoscaling_service()
+                    .describe_auto_scaling_group(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
             // Phase 2 Batch 7: Compute & Data services
             "AWS::Neptune::DBCluster" => {
                 self.get_neptune_service()
@@ -2345,6 +2426,24 @@ impl AWSResourceClient {
             "AWS::WorkSpaces::Directory" => {
                 self.get_workspaces_service()
                     .describe_directory(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::XRay::SamplingRule" => {
+                self.get_xray_service()
+                    .describe_sampling_rule(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Shield::Protection" => {
+                self.get_shield_service()
+                    .describe_protection(
                         &resource.account_id,
                         &resource.region,
                         &resource.resource_id,

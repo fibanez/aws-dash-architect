@@ -81,6 +81,7 @@ impl GuardViolationsWindow {
         }
     }
 
+    #[allow(dead_code)]
     fn should_show_violation(&self, violation: &GuardViolation) -> bool {
         let severity_match = self
             .show_severity_filter
@@ -189,19 +190,19 @@ impl FocusableWindow for GuardViolationsWindow {
                 ui.horizontal(|ui| {
                     ui.label("Show Severity:");
                     ui.checkbox(
-                        &mut self.show_severity_filter.entry(ViolationSeverity::Critical).or_insert(true),
+                        self.show_severity_filter.entry(ViolationSeverity::Critical).or_insert(true),
                         RichText::new("🔴 Critical").color(Color32::from_rgb(200, 50, 50)),
                     );
                     ui.checkbox(
-                        &mut self.show_severity_filter.entry(ViolationSeverity::High).or_insert(true),
+                        self.show_severity_filter.entry(ViolationSeverity::High).or_insert(true),
                         RichText::new("🟠 High").color(Color32::from_rgb(220, 100, 50)),
                     );
                     ui.checkbox(
-                        &mut self.show_severity_filter.entry(ViolationSeverity::Medium).or_insert(true),
+                        self.show_severity_filter.entry(ViolationSeverity::Medium).or_insert(true),
                         RichText::new("🟡 Medium").color(Color32::from_rgb(220, 180, 50)),
                     );
                     ui.checkbox(
-                        &mut self.show_severity_filter.entry(ViolationSeverity::Low).or_insert(true),
+                        self.show_severity_filter.entry(ViolationSeverity::Low).or_insert(true),
                         RichText::new("🔵 Low").color(Color32::from_rgb(100, 150, 220)),
                     );
                 });

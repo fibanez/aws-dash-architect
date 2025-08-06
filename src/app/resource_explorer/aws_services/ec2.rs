@@ -1353,6 +1353,154 @@ impl EC2Service {
         Ok(key_pairs)
     }
 
+    /// List Transit Gateways
+    pub async fn list_transit_gateways(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_transit_gateways()
+            .into_paginator()
+            .send();
+
+        let mut transit_gateways = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(tgw_list) = page.transit_gateways {
+                for tgw in tgw_list {
+                    let tgw_json = self.transit_gateway_to_json(&tgw);
+                    transit_gateways.push(tgw_json);
+                }
+            }
+        }
+
+        Ok(transit_gateways)
+    }
+
+    /// List VPC Peering Connections
+    pub async fn list_vpc_peering_connections(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_vpc_peering_connections()
+            .into_paginator()
+            .send();
+
+        let mut peering_connections = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(pc_list) = page.vpc_peering_connections {
+                for pc in pc_list {
+                    let pc_json = self.vpc_peering_connection_to_json(&pc);
+                    peering_connections.push(pc_json);
+                }
+            }
+        }
+
+        Ok(peering_connections)
+    }
+
+    /// List VPC Flow Logs
+    pub async fn list_flow_logs(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_flow_logs()
+            .into_paginator()
+            .send();
+
+        let mut flow_logs = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(fl_list) = page.flow_logs {
+                for fl in fl_list {
+                    let fl_json = self.flow_log_to_json(&fl);
+                    flow_logs.push(fl_json);
+                }
+            }
+        }
+
+        Ok(flow_logs)
+    }
+
+    /// List EBS Volume Attachments
+    pub async fn list_volume_attachments(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        
+        // Get all volumes to extract attachment information
+        let response = client.describe_volumes().send().await?;
+        
+        let mut attachments = Vec::new();
+        if let Some(volumes) = response.volumes {
+            for volume in volumes {
+                if let Some(volume_attachments) = &volume.attachments {
+                    for attachment in volume_attachments {
+                        let attachment_json = self.volume_attachment_to_json(&volume, attachment);
+                        attachments.push(attachment_json);
+                    }
+                }
+            }
+        }
+
+        Ok(attachments)
+    }
+
     /// Convert EBS volume to JSON format
     fn volume_to_json(&self, volume: &ec2::types::Volume) -> serde_json::Value {
         let mut json = serde_json::Map::new();
@@ -2957,6 +3105,271 @@ impl EC2Service {
                 }
             }
         }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Transit Gateway to JSON format
+    fn transit_gateway_to_json(&self, tgw: &ec2::types::TransitGateway) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(tgw_id) = &tgw.transit_gateway_id {
+            json.insert("TransitGatewayId".to_string(), serde_json::Value::String(tgw_id.clone()));
+            json.insert("ResourceId".to_string(), serde_json::Value::String(tgw_id.clone()));
+        }
+
+        if let Some(state) = &tgw.state {
+            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert("Status".to_string(), serde_json::Value::String(state.as_str().to_string()));
+        }
+
+        if let Some(owner_id) = &tgw.owner_id {
+            json.insert("OwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+        }
+
+        if let Some(creation_time) = tgw.creation_time {
+            json.insert("CreationTime".to_string(), serde_json::Value::String(creation_time.to_string()));
+        }
+
+        if let Some(description) = &tgw.description {
+            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+        }
+
+        // Handle tags and extract Name if available
+        if let Some(tags) = &tgw.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                // Extract Name tag for display
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert VPC Peering Connection to JSON format
+    fn vpc_peering_connection_to_json(&self, pc: &ec2::types::VpcPeeringConnection) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(pc_id) = &pc.vpc_peering_connection_id {
+            json.insert("VpcPeeringConnectionId".to_string(), serde_json::Value::String(pc_id.clone()));
+            json.insert("ResourceId".to_string(), serde_json::Value::String(pc_id.clone()));
+        }
+
+        if let Some(status) = &pc.status {
+            if let Some(code) = &status.code {
+                json.insert("Status".to_string(), serde_json::Value::String(code.as_str().to_string()));
+            }
+            if let Some(message) = &status.message {
+                json.insert("StatusMessage".to_string(), serde_json::Value::String(message.clone()));
+            }
+        }
+
+        // Accepter VPC Info
+        if let Some(accepter_vpc_info) = &pc.accepter_vpc_info {
+            if let Some(vpc_id) = &accepter_vpc_info.vpc_id {
+                json.insert("AccepterVpcId".to_string(), serde_json::Value::String(vpc_id.clone()));
+            }
+            if let Some(owner_id) = &accepter_vpc_info.owner_id {
+                json.insert("AccepterOwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+            }
+        }
+
+        // Requester VPC Info
+        if let Some(requester_vpc_info) = &pc.requester_vpc_info {
+            if let Some(vpc_id) = &requester_vpc_info.vpc_id {
+                json.insert("RequesterVpcId".to_string(), serde_json::Value::String(vpc_id.clone()));
+            }
+            if let Some(owner_id) = &requester_vpc_info.owner_id {
+                json.insert("RequesterOwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+            }
+        }
+
+        // Handle tags
+        if let Some(tags) = &pc.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                // Extract Name tag for display
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert VPC Flow Log to JSON format
+    fn flow_log_to_json(&self, fl: &ec2::types::FlowLog) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(flow_log_id) = &fl.flow_log_id {
+            json.insert("FlowLogId".to_string(), serde_json::Value::String(flow_log_id.clone()));
+            json.insert("ResourceId".to_string(), serde_json::Value::String(flow_log_id.clone()));
+        }
+
+        if let Some(resource_id) = &fl.resource_id {
+            json.insert("AttachedResourceId".to_string(), serde_json::Value::String(resource_id.clone()));
+        }
+
+        // Note: FlowLog resource_type is inferred from resource_id format
+        // VPC flow logs have vpc-xxx format, subnet have subnet-xxx, etc.
+        if let Some(resource_id) = &fl.resource_id {
+            if resource_id.starts_with("vpc-") {
+                json.insert("ResourceType".to_string(), serde_json::Value::String("VPC".to_string()));
+            } else if resource_id.starts_with("subnet-") {
+                json.insert("ResourceType".to_string(), serde_json::Value::String("Subnet".to_string()));
+            } else if resource_id.starts_with("eni-") {
+                json.insert("ResourceType".to_string(), serde_json::Value::String("NetworkInterface".to_string()));
+            } else {
+                json.insert("ResourceType".to_string(), serde_json::Value::String("Unknown".to_string()));
+            }
+        }
+
+        if let Some(flow_log_status) = &fl.flow_log_status {
+            json.insert("Status".to_string(), serde_json::Value::String(flow_log_status.as_str().to_string()));
+        }
+
+        if let Some(traffic_type) = &fl.traffic_type {
+            json.insert("TrafficType".to_string(), serde_json::Value::String(traffic_type.as_str().to_string()));
+        }
+
+        if let Some(log_destination_type) = &fl.log_destination_type {
+            json.insert("LogDestinationType".to_string(), serde_json::Value::String(log_destination_type.as_str().to_string()));
+        }
+
+        if let Some(log_destination) = &fl.log_destination {
+            json.insert("LogDestination".to_string(), serde_json::Value::String(log_destination.clone()));
+        }
+
+        if let Some(creation_time) = fl.creation_time {
+            json.insert("CreationTime".to_string(), serde_json::Value::String(creation_time.to_string()));
+        }
+
+        // Handle tags
+        if let Some(tags) = &fl.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                // Extract Name tag for display
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert EBS Volume Attachment to JSON format
+    fn volume_attachment_to_json(&self, volume: &ec2::types::Volume, attachment: &ec2::types::VolumeAttachment) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        // Create a unique ID for the attachment combining volume and instance IDs
+        let volume_id = volume.volume_id.as_deref().unwrap_or("unknown-volume");
+        let instance_id = attachment.instance_id.as_deref().unwrap_or("unknown-instance");
+        let attachment_id = format!("{}:{}", volume_id, instance_id);
+        
+        json.insert("AttachmentId".to_string(), serde_json::Value::String(attachment_id.clone()));
+        json.insert("ResourceId".to_string(), serde_json::Value::String(attachment_id));
+
+        if let Some(volume_id) = &volume.volume_id {
+            json.insert("VolumeId".to_string(), serde_json::Value::String(volume_id.clone()));
+        }
+
+        if let Some(instance_id) = &attachment.instance_id {
+            json.insert("InstanceId".to_string(), serde_json::Value::String(instance_id.clone()));
+        }
+
+        if let Some(device) = &attachment.device {
+            json.insert("Device".to_string(), serde_json::Value::String(device.clone()));
+        }
+
+        if let Some(state) = &attachment.state {
+            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert("Status".to_string(), serde_json::Value::String(state.as_str().to_string()));
+        }
+
+        if let Some(attach_time) = attachment.attach_time {
+            json.insert("AttachTime".to_string(), serde_json::Value::String(attach_time.to_string()));
+        }
+
+        json.insert("DeleteOnTermination".to_string(), serde_json::Value::Bool(attachment.delete_on_termination.unwrap_or(false)));
+
+        // Include volume information for context
+        if let Some(size) = volume.size {
+            json.insert("VolumeSize".to_string(), serde_json::Value::Number(size.into()));
+        }
+
+        if let Some(volume_type) = &volume.volume_type {
+            json.insert("VolumeType".to_string(), serde_json::Value::String(volume_type.as_str().to_string()));
+        }
+
+        if let Some(availability_zone) = &volume.availability_zone {
+            json.insert("AvailabilityZone".to_string(), serde_json::Value::String(availability_zone.clone()));
+        }
+
+        // Generate a display name
+        let display_name = format!("{} → {}", volume_id, instance_id);
+        json.insert("Name".to_string(), serde_json::Value::String(display_name));
 
         serde_json::Value::Object(json)
     }

@@ -199,6 +199,7 @@ fn show_aws_login_status(
 }
 
 /// Displays the compliance status indicator for CloudFormation Guard validation
+#[allow(dead_code)]
 fn show_compliance_status(
     ui: &mut egui::Ui,
     compliance_status: Option<ComplianceStatus>,

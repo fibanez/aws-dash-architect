@@ -425,7 +425,7 @@ Examples:
 
         let regions = params
             .get("region")
-            .map(|v| Self::parse_string_or_array(v))
+            .map(Self::parse_string_or_array)
             .transpose()
             .map_err(|e| ToolError::InvalidParameters {
                 message: format!("Invalid region parameter: {}", e),
@@ -434,7 +434,7 @@ Examples:
 
         let account_ids = params
             .get("account_id")
-            .map(|v| Self::parse_string_or_array(v))
+            .map(Self::parse_string_or_array)
             .transpose()
             .map_err(|e| ToolError::InvalidParameters {
                 message: format!("Invalid account_id parameter: {}", e),

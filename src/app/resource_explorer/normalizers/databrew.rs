@@ -69,7 +69,7 @@ impl ResourceNormalizer for DataBrewJobNormalizer {
             // Role relationship
             if let Some(role_arn) = job_obj.get("role_arn").and_then(|v| v.as_str()) {
                 // Extract role name from ARN
-                if let Some(role_name) = role_arn.split('/').last() {
+                if let Some(role_name) = role_arn.split('/').next_back() {
                     relationships.push(ResourceRelationship {
                         relationship_type: RelationshipType::Uses,
                         target_resource_id: role_name.to_string(),
@@ -98,7 +98,7 @@ impl ResourceNormalizer for DataBrewJobNormalizer {
             // KMS key relationship
             if let Some(encryption_key_arn) = job_obj.get("encryption_key_arn").and_then(|v| v.as_str()) {
                 // Extract key ID from ARN
-                if let Some(key_id) = encryption_key_arn.split('/').last() {
+                if let Some(key_id) = encryption_key_arn.split('/').next_back() {
                     relationships.push(ResourceRelationship {
                         relationship_type: RelationshipType::Uses,
                         target_resource_id: key_id.to_string(),

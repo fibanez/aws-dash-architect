@@ -11,6 +11,7 @@ pub mod apigatewayv2;
 pub mod apprunner;
 pub mod appsync;
 pub mod athena;
+pub mod autoscaling;
 pub mod backup;
 pub mod batch;
 pub mod bedrock;
@@ -31,6 +32,8 @@ pub mod detective;
 pub mod documentdb;
 pub mod dynamodb;
 pub mod ec2;
+pub mod ec2_extended;
+pub mod ecr;
 pub mod ecs;
 pub mod efs;
 pub mod eks;
@@ -40,6 +43,7 @@ pub mod globalaccelerator;
 pub mod elb;
 pub mod elbv2;
 pub mod eventbridge;
+pub mod fargate;
 pub mod glue;
 pub mod greengrass;
 pub mod guardduty;
@@ -48,6 +52,7 @@ pub mod inspector;
 pub mod iot;
 pub mod kinesis;
 pub mod kinesisfirehose;
+pub mod kms;
 pub mod lakeformation;
 pub mod lambda;
 pub mod lex;
@@ -69,14 +74,18 @@ pub mod s3;
 pub mod sagemaker;
 pub mod sagemaker_model;
 pub mod sagemaker_training_job;
+pub mod secretsmanager;
 pub mod securityhub;
+pub mod shield;
 pub mod sns;
 pub mod sqs;
 pub mod ssm;
+pub mod stepfunctions;
 pub mod timestream;
 pub mod transfer;
 pub mod wafv2;
 pub mod workspaces;
+pub mod xray;
 
 pub use accessanalyzer::*;
 pub use acm::*;
@@ -87,6 +96,7 @@ pub use apigatewayv2::*;
 pub use apprunner::*;
 pub use appsync::*;
 pub use athena::*;
+pub use autoscaling::*;
 pub use backup::*;
 pub use batch::*;
 pub use bedrock::*;
@@ -107,6 +117,8 @@ pub use detective::*;
 pub use documentdb::*;
 pub use dynamodb::*;
 pub use ec2::*;
+pub use ec2_extended::*;
+pub use ecr::*;
 pub use ecs::*;
 pub use efs::*;
 pub use eks::*;
@@ -116,6 +128,7 @@ pub use globalaccelerator::*;
 pub use elb::*;
 pub use elbv2::*;
 pub use eventbridge::*;
+pub use fargate::*;
 pub use glue::*;
 pub use greengrass::*;
 pub use guardduty::*;
@@ -124,6 +137,7 @@ pub use inspector::*;
 pub use iot::*;
 pub use kinesis::*;
 pub use kinesisfirehose::*;
+pub use kms::*;
 pub use lakeformation::*;
 pub use lambda::*;
 pub use lex::*;
@@ -145,15 +159,18 @@ pub use s3::*;
 pub use sagemaker::*;
 pub use sagemaker_model::*;
 pub use sagemaker_training_job::*;
+pub use secretsmanager::*;
 pub use securityhub::*;
+pub use shield::*;
 pub use sns::*;
 pub use sqs::*;
 pub use ssm::*;
+pub use stepfunctions::*;
 pub use timestream::*;
-pub use fsx::*;
 pub use transfer::*;
 pub use wafv2::*;
 pub use workspaces::*;
+pub use xray::*;
 
 /// Trait for normalizing different AWS service responses into consistent ResourceEntry format
 pub trait ResourceNormalizer {
@@ -199,6 +216,13 @@ impl NormalizerFactory {
             "AWS::EC2::NetworkAcl" => Some(Box::new(EC2NetworkAclNormalizer)),
             "AWS::EC2::KeyPair" => Some(Box::new(EC2KeyPairNormalizer)),
             "AWS::EC2::InternetGateway" => Some(Box::new(EC2InternetGatewayNormalizer)),
+            "AWS::EC2::TransitGateway" => Some(Box::new(EC2TransitGatewayNormalizer)),
+            "AWS::EC2::VPCPeeringConnection" => Some(Box::new(EC2VPCPeeringConnectionNormalizer)),
+            "AWS::EC2::FlowLog" => Some(Box::new(EC2FlowLogNormalizer)),
+            "AWS::EC2::VolumeAttachment" => Some(Box::new(EC2VolumeAttachmentNormalizer)),
+            "AWS::ECS::FargateService" => Some(Box::new(ECSFargateServiceNormalizer)),
+            "AWS::ECS::FargateTask" => Some(Box::new(ECSFargateTaskNormalizer)),
+            "AWS::EKS::FargateProfile" => Some(Box::new(EKSFargateProfileNormalizer)),
             "AWS::IAM::Role" => Some(Box::new(IAMRoleNormalizer)),
             "AWS::IAM::User" => Some(Box::new(IAMUserNormalizer)),
             "AWS::IAM::Policy" => Some(Box::new(IAMPolicyNormalizer)),
@@ -270,6 +294,8 @@ impl NormalizerFactory {
             "AWS::Organizations::Policy" => Some(Box::new(OrganizationsPolicyNormalizer)),
             "AWS::CertificateManager::Certificate" => Some(Box::new(AcmCertificateNormalizer)),
             "AWS::ACMPCA::CertificateAuthority" => Some(Box::new(AcmPcaNormalizer)),
+            "AWS::AutoScaling::AutoScalingGroup" => Some(Box::new(AutoScalingGroupNormalizer)),
+            "AWS::AutoScaling::ScalingPolicy" => Some(Box::new(AutoScalingPolicyNormalizer)),
             "AWS::WAFv2::WebACL" => Some(Box::new(WafV2WebAclNormalizer)),
             "AWS::GuardDuty::Detector" => Some(Box::new(GuardDutyDetectorNormalizer)),
             "AWS::SecurityHub::Hub" => Some(Box::new(SecurityHubNormalizer)),
@@ -313,6 +339,13 @@ impl NormalizerFactory {
             "AWS::Polly::Voice" => Some(Box::new(PollyVoiceNormalizer)),
             "AWS::Polly::Lexicon" => Some(Box::new(PollyLexiconNormalizer)),
             "AWS::Polly::SynthesisTask" => Some(Box::new(PollySynthesisTaskNormalizer)),
+            "AWS::ECR::Repository" => Some(Box::new(EcrRepositoryNormalizer)),
+            "AWS::KMS::Key" => Some(Box::new(KmsKeyNormalizer)),
+            "AWS::SecretsManager::Secret" => Some(Box::new(SecretsManagerSecretNormalizer)),
+            "AWS::StepFunctions::StateMachine" => Some(Box::new(StepFunctionsStateMachineNormalizer)),
+            "AWS::XRay::SamplingRule" => Some(Box::new(XRaySamplingRuleNormalizer)),
+            "AWS::Shield::Protection" => Some(Box::new(ShieldProtectionNormalizer)),
+            "AWS::Shield::Subscription" => Some(Box::new(ShieldSubscriptionNormalizer)),
             _ => None,
         }
     }
@@ -333,6 +366,13 @@ impl NormalizerFactory {
             "AWS::EC2::NetworkAcl",
             "AWS::EC2::KeyPair",
             "AWS::EC2::InternetGateway",
+            "AWS::EC2::TransitGateway",
+            "AWS::EC2::VPCPeeringConnection", 
+            "AWS::EC2::FlowLog",
+            "AWS::EC2::VolumeAttachment",
+            "AWS::ECS::FargateService",
+            "AWS::ECS::FargateTask",
+            "AWS::EKS::FargateProfile",
             "AWS::IAM::Role",
             "AWS::IAM::User",
             "AWS::IAM::Policy",
@@ -398,6 +438,8 @@ impl NormalizerFactory {
             "AWS::Organizations::Policy",
             "AWS::CertificateManager::Certificate",
             "AWS::ACMPCA::CertificateAuthority",
+            "AWS::AutoScaling::AutoScalingGroup",
+            "AWS::AutoScaling::ScalingPolicy",
             "AWS::WAFv2::WebACL",
             "AWS::GuardDuty::Detector",
             "AWS::SecurityHub::Hub",
@@ -437,6 +479,13 @@ impl NormalizerFactory {
             "AWS::Polly::Voice",
             "AWS::Polly::Lexicon",
             "AWS::Polly::SynthesisTask",
+            "AWS::ECR::Repository",
+            "AWS::KMS::Key",
+            "AWS::SecretsManager::Secret",
+            "AWS::StepFunctions::StateMachine",
+            "AWS::XRay::SamplingRule",
+            "AWS::Shield::Protection",
+            "AWS::Shield::Subscription",
         ]
     }
 }

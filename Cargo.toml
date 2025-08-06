@@ -12,10 +12,6 @@ rust-version = "1.81"
 name = "awsdash"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "auto_login_example"
-# path = "src/bin/auto_login_example.rs"
-
 [dependencies]
 # AI Agent framework
 stood = { git = "https://github.com/fibanez/stood.git" }
@@ -128,6 +124,9 @@ aws-sdk-codeartifact = "1.67"
 aws-sdk-codedeploy = "1.67"
 aws-sdk-appconfig = "1.67"
 aws-sdk-cloudtraildata = "1.67"
+aws-sdk-autoscaling = "1.67"
+aws-sdk-xray = "1.67"
+aws-sdk-shield = "1.67"
 
 # CloudFormation Guard
 cfn-guard = "3.1.2"

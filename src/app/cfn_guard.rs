@@ -139,6 +139,7 @@ struct PropertyCheck {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum PropertyCondition {
     Exists,
     NotExists,
@@ -663,22 +664,19 @@ impl GuardValidator {
         }
 
         // RDS Instance rules
-        if resource_type == "AWS::RDS::DBInstance" {
-            if rule_content.contains("StorageEncrypted") && rule_content.contains("== true") {
-                if let Some(props) = resource.get("Properties") {
-                    if props.get("StorageEncrypted").and_then(|v| v.as_bool()) != Some(true) {
-                        violations.push(format!(
-                            "RDS instance '{}' does not have storage encryption enabled",
-                            resource_name
-                        ));
-                    }
+        if resource_type == "AWS::RDS::DBInstance" && rule_content.contains("StorageEncrypted") && rule_content.contains("== true") {
+            if let Some(props) = resource.get("Properties") {
+                if props.get("StorageEncrypted").and_then(|v| v.as_bool()) != Some(true) {
+                    violations.push(format!(
+                        "RDS instance '{}' does not have storage encryption enabled",
+                        resource_name
+                    ));
                 }
             }
         }
 
         // EC2 Security Group rules
-        if resource_type == "AWS::EC2::SecurityGroup" {
-            if rule_content.contains("SecurityGroupIngress") {
+        if resource_type == "AWS::EC2::SecurityGroup" && rule_content.contains("SecurityGroupIngress") {
                 if let Some(props) = resource.get("Properties") {
                     if let Some(ingress_rules) =
                         props.get("SecurityGroupIngress").and_then(|v| v.as_array())
@@ -692,7 +690,6 @@ impl GuardValidator {
                         }
                     }
                 }
-            }
         }
 
         violations

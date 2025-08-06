@@ -342,16 +342,12 @@ mod tests {
             local_folder: None,
             git_url: None,
             environments: vec![],
-            compliance_programs: vec![],
-            guard_rules_enabled: false,
-            custom_guard_rules: vec![],
-            environment_compliance: std::collections::HashMap::new(),
-            default_region: Some("us-east-1".to_string()),
-            cfn_template: None,
             compliance_programs: Vec::new(),
             guard_rules_enabled: true,
             custom_guard_rules: Vec::new(),
             environment_compliance: std::collections::HashMap::new(),
+            default_region: Some("us-east-1".to_string()),
+            cfn_template: None,
         }
     }
 

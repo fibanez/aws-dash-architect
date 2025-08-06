@@ -4,6 +4,28 @@ use aws_sdk_cloudwatchlogs as logs;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
+/// Parameters for getting log events
+#[derive(Default)]
+pub struct LogEventsParams<'a> {
+    pub log_group_name: &'a str,
+    pub log_stream_name: Option<&'a str>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub filter_pattern: Option<&'a str>,
+    pub limit: Option<i32>,
+}
+
+/// Parameters for getting log events from a specific stream
+#[derive(Default)]
+pub struct LogStreamEventsParams<'a> {
+    pub log_group_name: &'a str,
+    pub log_stream_name: &'a str,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub filter_pattern: Option<&'a str>,
+    pub limit: Option<i32>,
+}
+
 pub struct LogsService {
     credential_coordinator: Arc<CredentialCoordinator>,
 }
@@ -209,12 +231,7 @@ impl LogsService {
         &self,
         account_id: &str,
         region: &str,
-        log_group_name: &str,
-        log_stream_name: Option<&str>,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
-        filter_pattern: Option<&str>,
-        limit: Option<i32>,
+        params: LogEventsParams<'_>,
     ) -> Result<Vec<serde_json::Value>> {
         let aws_config = self
             .credential_coordinator
@@ -230,32 +247,33 @@ impl LogsService {
         let client = logs::Client::new(&aws_config);
 
         // If no specific log stream is provided, get all log streams and their events
-        let log_streams = if let Some(stream_name) = log_stream_name {
+        let log_streams = if let Some(stream_name) = params.log_stream_name {
             vec![stream_name.to_string()]
         } else {
-            self.get_log_stream_names(&client, log_group_name, limit.map(|l| l / 10))
+            self.get_log_stream_names(&client, params.log_group_name, params.limit.map(|l| l / 10))
                 .await?
         };
 
         let mut all_events = Vec::new();
 
         for stream_name in log_streams {
+            let stream_params = LogStreamEventsParams {
+                log_group_name: params.log_group_name,
+                log_stream_name: &stream_name,
+                start_time: params.start_time,
+                end_time: params.end_time,
+                filter_pattern: params.filter_pattern,
+                limit: params.limit,
+            };
+
             let events = self
-                .get_log_events_from_stream(
-                    &client,
-                    log_group_name,
-                    &stream_name,
-                    start_time,
-                    end_time,
-                    filter_pattern,
-                    limit,
-                )
+                .get_log_events_from_stream(&client, stream_params)
                 .await?;
 
             all_events.extend(events);
 
             // Break if we have enough events
-            if let Some(limit_val) = limit {
+            if let Some(limit_val) = params.limit {
                 if all_events.len() >= limit_val as usize {
                     all_events.truncate(limit_val as usize);
                     break;
@@ -306,27 +324,22 @@ impl LogsService {
     async fn get_log_events_from_stream(
         &self,
         client: &logs::Client,
-        log_group_name: &str,
-        log_stream_name: &str,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
-        filter_pattern: Option<&str>,
-        limit: Option<i32>,
+        params: LogStreamEventsParams<'_>,
     ) -> Result<Vec<serde_json::Value>> {
         let mut request = client
             .get_log_events()
-            .log_group_name(log_group_name)
-            .log_stream_name(log_stream_name);
+            .log_group_name(params.log_group_name)
+            .log_stream_name(params.log_stream_name);
 
-        if let Some(start) = start_time {
+        if let Some(start) = params.start_time {
             request = request.start_time(start.timestamp_millis());
         }
 
-        if let Some(end) = end_time {
+        if let Some(end) = params.end_time {
             request = request.end_time(end.timestamp_millis());
         }
 
-        if let Some(limit_val) = limit {
+        if let Some(limit_val) = params.limit {
             request = request.limit(limit_val);
         }
 
@@ -336,7 +349,7 @@ impl LogsService {
         if let Some(log_events) = response.events {
             for event in log_events {
                 // Apply filter pattern if specified
-                if let Some(pattern) = filter_pattern {
+                if let Some(pattern) = params.filter_pattern {
                     if let Some(message) = &event.message {
                         if !self.matches_filter_pattern(message, pattern) {
                             continue;
@@ -344,7 +357,7 @@ impl LogsService {
                     }
                 }
 
-                let event_json = self.log_event_to_json(&event, log_stream_name);
+                let event_json = self.log_event_to_json(&event, params.log_stream_name);
                 events.push(event_json);
             }
         }

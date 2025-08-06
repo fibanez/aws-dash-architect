@@ -39,8 +39,8 @@ impl TaskAgent {
 
         // Determine model to use (parameter > global > default)
         let selected_model = model_id
-            .or_else(|| get_global_model())
-            .unwrap_or_else(|| ModelConfig::default_model_id());
+            .or_else(get_global_model)
+            .unwrap_or_else(ModelConfig::default_model_id);
 
         info!("🤖 Task agent will use model: {}", selected_model);
 

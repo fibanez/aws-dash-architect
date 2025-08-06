@@ -840,6 +840,42 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "Internet Gateway".to_string(),
             "EC2".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::TransitGateway".to_string(),
+            "Transit Gateway".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::VPCPeeringConnection".to_string(),
+            "VPC Peering Connection".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::FlowLog".to_string(),
+            "VPC Flow Log".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::VolumeAttachment".to_string(),
+            "EBS Volume Attachment".to_string(),
+            "EC2".to_string(),
+        ),
+        // Fargate Resources
+        ResourceTypeSelection::new(
+            "AWS::ECS::FargateService".to_string(),
+            "ECS Fargate Service".to_string(),
+            "ECS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::ECS::FargateTask".to_string(),
+            "ECS Fargate Task".to_string(),
+            "ECS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EKS::FargateProfile".to_string(),
+            "EKS Fargate Profile".to_string(),
+            "EKS".to_string(),
+        ),
         // IAM Resources
         ResourceTypeSelection::new(
             "AWS::IAM::Role".to_string(),
@@ -998,6 +1034,50 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::Inspector::Configuration".to_string(),
             "Inspector Configuration".to_string(),
             "Security".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::KMS::Key".to_string(),
+            "KMS Encryption Key".to_string(),
+            "KMS".to_string(),
+        ),
+        // Auto Scaling Resources
+        ResourceTypeSelection::new(
+            "AWS::AutoScaling::AutoScalingGroup".to_string(),
+            "Auto Scaling Group".to_string(),
+            "Auto Scaling".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::AutoScaling::ScalingPolicy".to_string(),
+            "Auto Scaling Policy".to_string(),
+            "Auto Scaling".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::SecretsManager::Secret".to_string(),
+            "Secrets Manager Secret".to_string(),
+            "Secrets Manager".to_string(),
+        ),
+        // Step Functions Resources
+        ResourceTypeSelection::new(
+            "AWS::StepFunctions::StateMachine".to_string(),
+            "Step Functions State Machine".to_string(),
+            "Step Functions".to_string(),
+        ),
+        // X-Ray Resources
+        ResourceTypeSelection::new(
+            "AWS::XRay::SamplingRule".to_string(),
+            "X-Ray Sampling Rule".to_string(),
+            "X-Ray".to_string(),
+        ),
+        // Shield Resources (DDoS Protection)
+        ResourceTypeSelection::new(
+            "AWS::Shield::Protection".to_string(),
+            "Shield Protection".to_string(),
+            "Shield".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Shield::Subscription".to_string(),
+            "Shield Advanced Subscription".to_string(),
+            "Shield".to_string(),
         ),
         ResourceTypeSelection::new(
             "AWS::Timestream::Database".to_string(),
@@ -1392,6 +1472,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::CodeCommit::Repository".to_string(),
             "CodeCommit Repository".to_string(),
             "CodeCommit".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::ECR::Repository".to_string(),
+            "ECR Container Registry".to_string(),
+            "ECR".to_string(),
         ),
         // IoT and Edge Services Resources
         ResourceTypeSelection::new(

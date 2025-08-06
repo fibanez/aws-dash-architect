@@ -22,6 +22,7 @@ pub struct BulkRuleDownloader {
     /// Storage directory for downloaded rules
     storage_dir: PathBuf,
     /// HTTP client for downloading files
+    #[allow(dead_code)]
     client: reqwest::Client,
     /// Rule storage manager
     storage: RuleStorage,
@@ -39,10 +40,13 @@ pub struct BulkRuleDownloader {
 #[derive(Debug)]
 pub struct RuleDownloadManager {
     /// Active downloads in progress
+    #[allow(dead_code)]
     active_downloads: HashMap<String, Arc<Mutex<DownloadProgress>>>,
     /// Download queue
+    #[allow(dead_code)]
     download_queue: Vec<AvailableComplianceProgram>,
     /// Maximum concurrent downloads
+    #[allow(dead_code)]
     max_concurrent: usize,
 }
 
@@ -86,6 +90,7 @@ pub struct RuleStorage {
 #[derive(Debug)]
 pub struct RuleIndex {
     /// Storage directory for index files
+    #[allow(dead_code)]
     index_dir: PathBuf,
     /// In-memory index cache
     resource_type_index: HashMap<String, Vec<String>>,
@@ -587,7 +592,7 @@ impl RuleStorage {
         }
 
         // Store individual rule files  
-        for (_rule_name, rule_file) in &rule_set.rules {
+        for rule_file in rule_set.rules.values() {
             let rule_path = program_dir.join(&rule_file.file_path);
             fs::write(&rule_path, &rule_file.content)?;
         }
@@ -631,14 +636,14 @@ impl RuleIndex {
             for resource_type in resource_types {
                 self.resource_type_index
                     .entry(resource_type)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(rule_name.clone());
             }
 
             // Index by program
             self.program_index
                 .entry(rule_set.program_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(rule_name.clone());
 
             // Cache rule content

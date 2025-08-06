@@ -95,6 +95,7 @@ impl SubAgentCallbackHandler {
     }
 
     /// Get task description for processing started events
+    #[allow(dead_code)]
     fn get_task_description(&self, _task_description: &str) -> String {
         let task_verb = match self.agent_type.as_str() {
             "aws-log-analyzer" => "🔍 Analyzing CloudWatch logs",
