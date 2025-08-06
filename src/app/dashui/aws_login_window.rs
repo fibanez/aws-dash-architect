@@ -7,9 +7,9 @@ use std::thread;
 /// AWS Login window component
 pub struct AwsLoginWindow {
     pub open: bool,
-    pub identity_center_url: String,
-    pub identity_center_region: String,
-    pub default_role_name: String,
+    identity_center_url: String,
+    identity_center_region: String,
+    default_role_name: String,
     login_in_progress: bool,
     completing_login: bool,
     error_message: Option<String>,
@@ -299,7 +299,7 @@ impl AwsLoginWindow {
     }
 
     /// Start the login process
-    pub fn start_login(&mut self) {
+    fn start_login(&mut self) {
         tracing::info!(
             "Starting login process with URL: {}, Region: {}, Role: {}",
             self.identity_center_url,

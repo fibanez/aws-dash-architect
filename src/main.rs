@@ -1,29 +1,6 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use clap::Parser;
-
-/// AWS Dash Architect - AWS CloudFormation Template Editor
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Automatically trigger login on startup
-    #[arg(long, env = "AWS_DASH_AUTO_LOGIN")]
-    auto_login: bool,
-
-    /// AWS Identity Center URL (e.g., https://mycompany.awsapps.com/start/)
-    #[arg(long, env = "AWS_IDENTITY_CENTER_URL")]
-    identity_url: Option<String>,
-
-    /// AWS Region for Identity Center (e.g., us-east-1)
-    #[arg(long, env = "AWS_IDENTITY_CENTER_REGION")]
-    region: Option<String>,
-
-    /// Default AWS role name to assume
-    #[arg(long, env = "AWS_DEFAULT_ROLE")]
-    role: Option<String>,
-}
-
 fn init_logging() {
     if let Some(proj_dirs) = directories::ProjectDirs::from("com", "", "awsdash") {
         let log_dir = proj_dirs.data_dir().join("logs");
@@ -69,9 +46,6 @@ fn init_logging() {
 fn main() -> eframe::Result {
     init_logging();
 
-    // Parse command-line arguments
-    let args = Args::parse();
-
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([400.0, 300.0])
@@ -86,23 +60,11 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "AWS Dash Architect",
         native_options,
-        Box::new(move |cc| {
+        Box::new(|cc| {
             // Install image loaders to support SVG and other image formats
             egui_extras::install_image_loaders(&cc.egui_ctx);
 
-            // Create app with automation parameters
-            let mut app = awsdash::DashApp::new(cc);
-            
-            // Set up automation parameters if provided
-            if args.auto_login {
-                app.set_auto_login(
-                    args.identity_url,
-                    args.region,
-                    args.role,
-                );
-            }
-
-            Ok(Box::new(app))
+            Ok(Box::new(awsdash::DashApp::new(cc)))
         }),
     )
 }
