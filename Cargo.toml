@@ -12,9 +12,9 @@ rust-version = "1.81"
 name = "awsdash"
 path = "src/main.rs"
 
-[[bin]]
-name = "auto_login_example"
-path = "src/bin/auto_login_example.rs"
+# [[bin]]
+# name = "auto_login_example"
+# path = "src/bin/auto_login_example.rs"
 
 [dependencies]
 # AI Agent framework

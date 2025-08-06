@@ -76,12 +76,12 @@ fn test_graph_verification_reproduces_missing_resources_bug() {
     println!("Expected from UI display: 20 resources");
 
     // After the migration to scene graph, verify the node creation works correctly
-    // Note: Resources are counted from both individual files and CFN template, so we expect double
+    // Note: Template-only storage eliminates double-counting - expect single count
     assert_eq!(
         project.get_resources().len(),
-        broken_resource_count * 2,
-        "Resources correctly preserved in project: {} resources (double-counted from files and template)",
-        broken_resource_count * 2
+        broken_resource_count,
+        "Resources correctly preserved in project: {} resources (template-only storage)",
+        broken_resource_count
     );
     // Scene graph should create nodes for unique resources (not double-counting)
     assert_eq!(

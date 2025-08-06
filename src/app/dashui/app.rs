@@ -2435,47 +2435,17 @@ impl DashApp {
                         project.cfn_template = Some(imported_template);
                     }
 
-                    // First, sync the imported resources to the DAG
-                    tracing::info!("Syncing imported resources to DAG before saving...");
-                    if let Some(cfn_template) = project.cfn_template.clone() {
-                        // DAG is now built dynamically - no initialization needed
-
-                        for (resource_id, cfn_resource) in &cfn_template.resources {
-                            // Convert to CloudFormationResource format
-                            let mut properties = std::collections::HashMap::new();
-                            for (key, value) in &cfn_resource.properties {
-                                properties.insert(key.clone(), value.to_string());
-                            }
-
-                            let resource =
-                                crate::app::projects::CloudFormationResource::from_cfn_resource(
-                                    resource_id.clone(),
-                                    cfn_resource,
-                                );
-
-                            // Get dependencies
-                            let dependencies = cfn_resource
-                                .depends_on
-                                .as_ref()
-                                .map(|d| d.to_vec())
-                                .unwrap_or_default();
-
-                            // Add resource using project's add_resource method
-                            if let Err(e) = project.add_resource(resource, dependencies) {
-                                tracing::error!(
-                                    "Failed to add resource {} to project: {}",
-                                    resource_id,
-                                    e
-                                );
-                            } else {
-                                tracing::info!("Added resource {} to project", resource_id);
-                            }
-                        }
-
+                    // Template is already stored in project.cfn_template
+                    // No need to process individual resources - template-only storage
+                    if let Some(cfn_template) = &project.cfn_template {
                         tracing::info!(
-                            "Project now contains {} resources",
-                            project.get_resources().len()
+                            "Template stored with {} resources",
+                            cfn_template.resources.len()
                         );
+                        
+                        for (resource_id, _) in &cfn_template.resources {
+                            tracing::info!("  - Template resource: {}", resource_id);
+                        }
                     }
 
                     // Save the project to disk
@@ -2516,32 +2486,15 @@ impl DashApp {
                         }
                     }
 
-                    // Load resources from the CloudFormation template into the DAG
-                    // This is specifically needed for imports to sync template resources to DAG
-                    tracing::info!("Loading resources from template into DAG...");
-
-                    // Log project state before loading
-                    let resource_count_before = project.get_resources().len();
-                    tracing::info!(
-                        "Project before loading: {} resources",
-                        resource_count_before
-                    );
-
-                    if let Err(e) = project.load_resources_from_template() {
-                        tracing::error!("Failed to load imported resources into DAG: {}", e);
-                    } else {
-                        tracing::info!("Imported resources successfully loaded into DAG");
-
-                        // Log project state after loading
-                        let resource_count_after = project.get_resources().len();
-                        tracing::info!("Project after loading: {} resources", resource_count_after);
-                        for resource in project.get_resources() {
-                            tracing::info!(
-                                "  - Project resource: {} (Type: {})",
-                                resource.resource_id,
-                                resource.resource_type
-                            );
-                        }
+                    // Template import complete - resources are available via template
+                    let resource_count = project.get_resources().len();
+                    tracing::info!("Template imported with {} resources", resource_count);
+                    for resource in project.get_resources() {
+                        tracing::info!(
+                            "  - Project resource: {} (Type: {})",
+                            resource.resource_id,
+                            resource.resource_type
+                        );
                     }
 
                     // Set the template in the sections window

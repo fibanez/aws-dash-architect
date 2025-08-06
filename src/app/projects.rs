@@ -247,7 +247,6 @@ use crate::app::cfn_dag::ResourceDag;
 use crate::app::cfn_template::CloudFormationTemplate;
 use crate::app::dashui::cloudformation_scene_graph::{POSITION_KEY, SCENE_METADATA_KEY};
 use crate::{log_debug, log_warn};
-use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1181,47 +1180,12 @@ impl Project {
     ) -> anyhow::Result<()> {
         self.updated = Utc::now();
 
-        // Save resource to individual file in Resources directory
-        self.save_resource_to_file(&resource)?;
-
-        // Sync the resource to the CloudFormation template
+        // Add resource directly to the CloudFormation template (template-only storage)
         self.sync_resource_to_template(&resource, depends_on)?;
 
         Ok(())
     }
 
-    /// Save a CloudFormation resource to an individual file in the Resources directory
-    fn save_resource_to_file(&self, resource: &CloudFormationResource) -> anyhow::Result<()> {
-        let resources_dir = if let Some(local_folder) = &self.local_folder {
-            local_folder.join("Resources")
-        } else {
-            return Err(anyhow::anyhow!("Project has no local folder specified"));
-        };
-
-        // Create Resources directory if it doesn't exist
-        if !resources_dir.exists() {
-            std::fs::create_dir_all(&resources_dir).with_context(|| {
-                format!("Failed to create Resources directory: {:?}", resources_dir)
-            })?;
-        }
-
-        // Save resource to individual file
-        let filename = format!("{}.json", resource.resource_id);
-        let file_path = resources_dir.join(&filename);
-
-        let json_content = serde_json::to_string_pretty(resource)
-            .with_context(|| format!("Failed to serialize resource {}", resource.resource_id))?;
-
-        std::fs::write(&file_path, json_content)
-            .with_context(|| format!("Failed to write resource file: {:?}", file_path))?;
-
-        tracing::info!(
-            "Saved resource {} to file: {:?}",
-            resource.resource_id,
-            file_path
-        );
-        Ok(())
-    }
 
     /// Retrieves all CloudFormation resources from the project's dependency graph.
     ///
@@ -1281,43 +1245,16 @@ impl Project {
     /// - [`update_resource`](Self::update_resource) - Update an existing resource
     /// - [`remove_resource`](Self::remove_resource) - Remove a resource from the project
     pub fn get_resources(&self) -> Vec<CloudFormationResource> {
-        // Build resources from filesystem scan
-        self.build_resources_from_filesystem()
+        // Get resources from CloudFormation template
+        self.get_template_resources()
     }
 
-    /// Build a list of CloudFormation resources by scanning the filesystem
-    /// This replaces the old DAG-based resource access
-    fn build_resources_from_filesystem(&self) -> Vec<CloudFormationResource> {
+    /// Get a list of CloudFormation resources from the template
+    /// Modern template-only storage approach
+    fn get_template_resources(&self) -> Vec<CloudFormationResource> {
         let mut resources = Vec::new();
 
-        // Scan the Resources directory for individual resource files
-        let resources_dir = if let Some(local_folder) = &self.local_folder {
-            local_folder.join("Resources")
-        } else {
-            return resources; // No local folder, return empty
-        };
-
-        if !resources_dir.exists() {
-            return resources;
-        }
-
-        // Read each .json file in the Resources directory
-        if let Ok(entries) = std::fs::read_dir(&resources_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(resource) =
-                            serde_json::from_str::<CloudFormationResource>(&content)
-                        {
-                            resources.push(resource);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also check for resources in cloudformation_template.json if it exists
+        // Get resources from CloudFormation template only
         if let Some(ref cfn_template) = self.cfn_template {
             let template_resources = &cfn_template.resources;
             for (resource_id, template_resource) in template_resources {
@@ -1357,7 +1294,7 @@ impl Project {
     /// This creates a fresh DAG on-demand without persisting it
     pub fn build_dag_from_resources(&self) -> ResourceDag {
         let mut dag = ResourceDag::new();
-        let resources = self.build_resources_from_filesystem();
+        let resources = self.get_template_resources();
 
         // Add each resource to the DAG
         for resource in resources {
@@ -1396,8 +1333,8 @@ impl Project {
 
     /// Get a specific CloudFormation resource
     pub fn get_resource(&self, resource_id: &str) -> Option<CloudFormationResource> {
-        // Search through filesystem-based resources
-        self.build_resources_from_filesystem()
+        // Search through template-based resources
+        self.get_template_resources()
             .into_iter()
             .find(|resource| resource.resource_id == resource_id)
     }
@@ -1522,10 +1459,7 @@ impl Project {
         let dag = self.build_dag_from_resources();
         let dependencies = dag.get_dependencies(&resource.resource_id);
 
-        // Save updated resource to file
-        self.save_resource_to_file(&resource)?;
-
-        // Sync the resource to the CloudFormation template
+        // Update resource in the CloudFormation template (template-only storage)
         self.sync_resource_to_template(&resource, dependencies)?;
 
         Ok(())
@@ -1640,23 +1574,9 @@ impl Project {
     pub fn remove_resource(&mut self, resource_id: &str) -> anyhow::Result<()> {
         self.updated = Utc::now();
 
-        // Track if we successfully removed from any structure
-        let mut removed_from_file = false;
+        // Remove from CloudFormation template (template-only storage)
         let mut removed_from_template = false;
-
-        // Try to remove from filesystem
-        if let Some(local_folder) = &self.local_folder {
-            let resources_dir = local_folder.join("Resources");
-            let file_path = resources_dir.join(format!("{}.json", resource_id));
-            if file_path.exists() {
-                std::fs::remove_file(&file_path)
-                    .with_context(|| format!("Failed to remove resource file: {:?}", file_path))?;
-                tracing::info!("Removed resource {} from filesystem", resource_id);
-                removed_from_file = true;
-            }
-        }
-
-        // Always try to remove from CloudFormation template
+        
         if let Some(template) = &mut self.cfn_template {
             if template.resources.remove(resource_id).is_some() {
                 tracing::info!(
@@ -1667,8 +1587,8 @@ impl Project {
             }
         }
 
-        // If we removed from either file or template, save the changes
-        if removed_from_file || removed_from_template {
+        // If we removed from template, save the changes
+        if removed_from_template {
             self.save_all_resources()?;
             tracing::info!(
                 "Successfully removed resource {} and saved changes",
@@ -1799,10 +1719,10 @@ impl Project {
     pub fn save_all_resources(&self) -> anyhow::Result<()> {
         log_debug!("=== START save_all_resources ===");
 
-        // Build resources from filesystem
-        let resources = self.build_resources_from_filesystem();
+        // Get resources from template
+        let resources = self.get_template_resources();
         tracing::info!(
-            "💾 SAVE_START: Found {} resources from filesystem",
+            "💾 SAVE_START: Found {} resources from template",
             resources.len()
         );
 
@@ -1925,21 +1845,17 @@ impl Project {
         Ok(())
     }
 
-    /// Load a CloudFormation template for a resource
+    /// Get a CloudFormation resource as JSON string from the template
     pub fn load_resource_template(&self, resource_id: &str) -> anyhow::Result<String> {
-        if let Some(folder) = &self.local_folder {
-            let template_path = folder
-                .join("Resources")
-                .join(format!("{}.json", resource_id));
-
-            if template_path.exists() {
-                let content = fs::read_to_string(&template_path)?;
-                Ok(content)
+        if let Some(cfn_template) = &self.cfn_template {
+            if let Some(template_resource) = cfn_template.resources.get(resource_id) {
+                let json = serde_json::to_string_pretty(template_resource)?;
+                Ok(json)
             } else {
-                Err(anyhow::anyhow!("Template file does not exist"))
+                Err(anyhow::anyhow!("Resource {} not found in template", resource_id))
             }
         } else {
-            Err(anyhow::anyhow!("Project has no local folder specified"))
+            Err(anyhow::anyhow!("Project has no CloudFormation template loaded"))
         }
     }
 
@@ -2097,15 +2013,7 @@ impl Project {
                     cfn_resource.resource_type
                 );
 
-                // Check if already exists as a file
-                if let Some(local_folder) = &self.local_folder {
-                    let resources_dir = local_folder.join("Resources");
-                    let file_path = resources_dir.join(format!("{}.json", resource_id));
-                    if file_path.exists() {
-                        tracing::info!("Resource {} already exists as file, skipping", resource_id);
-                        continue;
-                    }
-                }
+                // Resource processing (template-only storage)
 
                 // TODO: CRITICAL BUG - PROPERTY TYPE CONVERSION ISSUE
                 //
@@ -2129,8 +2037,8 @@ impl Project {
                     properties.len()
                 );
 
-                // Create CloudFormationResource from template resource
-                let resource =
+                // Create CloudFormationResource from template resource (for compatibility)
+                let _resource =
                     CloudFormationResource::from_cfn_resource(resource_id.clone(), cfn_resource);
 
                 // Get dependencies from the template
@@ -2149,24 +2057,13 @@ impl Project {
                     tracing::debug!("  - Depends on: {}", dep);
                 }
 
-                // Save resource to file instead of DAG
-                tracing::info!("Saving resource {} to file", resource_id);
-                match self.save_resource_to_file(&resource) {
-                    Ok(_) => {
-                        tracing::info!("Successfully saved resource {} to file", resource_id);
-                        count += 1;
-                        // Position metadata is preserved in CloudFormation template
-                        // and will be restored when DAG is built dynamically
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to save resource {} to file: {}", resource_id, e);
-                        return Err(e);
-                    }
-                }
+                // Resource is already available via template - no individual file needed
+                tracing::info!("Resource {} available via template", resource_id);
+                count += 1;
             }
 
             tracing::info!(
-                "Finished processing template resources. Saved {} resources to files",
+                "Finished processing template resources. Found {} resources in template",
                 count
             );
 
@@ -2854,15 +2751,15 @@ impl Project {
                                     CloudFormationResource::new(resource_id.clone(), resource_type);
                                 resource.properties = properties;
 
-                                // Save resource to file instead of DAG
-                                if let Err(e) = self.save_resource_to_file(&resource) {
+                                // Add resource to template (template-only storage)
+                                if let Err(e) = self.add_resource(resource, Vec::new()) {
                                     tracing::warn!(
-                                        "Failed to save resource {} to file: {}",
+                                        "Failed to add resource {} to template: {}",
                                         resource_id,
                                         e
                                     );
                                 } else {
-                                    tracing::info!("Force-saved resource {} to file", resource_id);
+                                    tracing::info!("Added resource {} to template", resource_id);
                                     count += 1;
                                 }
                             } else {
