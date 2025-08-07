@@ -1,5 +1,5 @@
 use crate::app::aws_identity::LoginState;
-use crate::app::dashui::app::ThemeChoice;
+use crate::app::dashui::app::{ThemeChoice, NavigationStatusBarSettings};
 use crate::log_debug;
 use eframe::egui;
 use egui::{Color32, RichText};
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 pub enum MenuAction {
     None,
     ThemeChanged,
+    NavigationStatusBarChanged,
     ShakeWindows,
     ShowWindowSelector,
     ShowComplianceDetails,
@@ -35,6 +36,7 @@ pub fn build_menu(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     theme: &mut ThemeChoice,
+    navigation_status_bar_settings: &mut NavigationStatusBarSettings,
     project_info: Option<(String, String, String)>,
     help_window_open: &mut bool, // Changed from _resource_graph_show
     log_window_open: &mut bool,
@@ -45,7 +47,9 @@ pub fn build_menu(
     compliance_programs: Option<&Vec<crate::app::cfn_guard::ComplianceProgram>>,
 ) -> (MenuAction, Option<String>) {
     let mut theme_changed = false;
+    let mut navigation_status_bar_changed = false;
     let original_theme = *theme;
+    let original_status_bar_setting = *navigation_status_bar_settings;
 
     ui.menu_button(RichText::new("🎨").size(18.0), |ui| {
         if ui.button("Latte").clicked() {
@@ -64,10 +68,25 @@ pub fn build_menu(
             catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
             *theme = ThemeChoice::Mocha;
         }
+        
+        ui.separator();
+        
+        // Navigation Status Bar toggle
+        let checkbox_response = ui.checkbox(
+            &mut navigation_status_bar_settings.show_status_bar,
+            "Show Navigation Status Bar"
+        );
+        if checkbox_response.hovered() {
+            checkbox_response.on_hover_text("Toggle the Vimium-like navigation status bar showing mode, keys, and hints");
+        }
     });
 
     if original_theme != *theme {
         theme_changed = true;
+    }
+    
+    if original_status_bar_setting.show_status_bar != navigation_status_bar_settings.show_status_bar {
+        navigation_status_bar_changed = true;
     }
 
     // Add a log button
@@ -137,6 +156,8 @@ pub fn build_menu(
 
     let menu_action = if theme_changed {
         MenuAction::ThemeChanged
+    } else if navigation_status_bar_changed {
+        MenuAction::NavigationStatusBarChanged
     } else {
         MenuAction::None
     };

@@ -67,6 +67,19 @@ pub enum ThemeChoice {
     Mocha,
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq)]
+pub struct NavigationStatusBarSettings {
+    pub show_status_bar: bool,
+}
+
+impl Default for NavigationStatusBarSettings {
+    fn default() -> Self {
+        Self {
+            show_status_bar: false, // Hidden by default
+        }
+    }
+}
+
 impl std::fmt::Display for ThemeChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -118,6 +131,7 @@ pub enum FocusedWindow {
 #[serde(default)]
 pub struct DashApp {
     pub theme: ThemeChoice,
+    pub navigation_status_bar_settings: NavigationStatusBarSettings,
 
     #[serde(skip)]
     pub command_palette: CommandPalette,
@@ -258,6 +272,7 @@ impl Default for DashApp {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::default(),
+            navigation_status_bar_settings: NavigationStatusBarSettings::default(),
             command_palette: CommandPalette::new(),
             show_command_palette: false,
             download_manager: DownloadManager::new(),
@@ -1625,6 +1640,7 @@ impl DashApp {
                     ui,
                     ctx,
                     &mut self.theme,
+                    &mut self.navigation_status_bar_settings,
                     project_info,
                     &mut self.help_window.open,
                     &mut self.log_window.open,
@@ -1639,6 +1655,10 @@ impl DashApp {
                 match menu_action {
                     menu::MenuAction::ThemeChanged => {
                         tracing::info!("Theme changed");
+                    }
+                    menu::MenuAction::NavigationStatusBarChanged => {
+                        tracing::info!("Navigation status bar setting changed to: {}", 
+                                     self.navigation_status_bar_settings.show_status_bar);
                     }
                     menu::MenuAction::ShakeWindows => {
                         self.start_shake_animation();
@@ -1670,6 +1690,10 @@ impl DashApp {
 
     /// Render the navigation status bar showing current mode and key sequence
     fn render_navigation_status_bar(&mut self, ctx: &egui::Context) {
+        if !self.navigation_status_bar_settings.show_status_bar {
+            return;
+        }
+        
         egui::TopBottomPanel::top("navigation_status_bar")
             .exact_height(24.0)
             .show(ctx, |ui| {
