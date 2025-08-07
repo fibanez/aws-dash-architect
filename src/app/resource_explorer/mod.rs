@@ -8,6 +8,7 @@ pub mod aws_services;
 pub mod colors;
 pub mod credentials;
 pub mod dialogs;
+pub mod global_services;
 pub mod normalizers;
 pub mod state;
 pub mod tree;
@@ -20,6 +21,7 @@ pub use colors::{
 };
 pub use credentials::{AccountCredentials, CredentialCacheStats, CredentialCoordinator};
 pub use dialogs::FuzzySearchDialog;
+pub use global_services::{is_global_service, get_global_query_region, GlobalServiceRegistry};
 pub use normalizers::{NormalizerFactory, ResourceNormalizer};
 pub use state::{
     AccountSelection, GroupingMode, QueryScope, RegionSelection, RelationshipType, ResourceEntry,

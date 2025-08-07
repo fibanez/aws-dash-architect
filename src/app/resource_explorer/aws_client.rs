@@ -1,8 +1,9 @@
-use super::{aws_services::*, credentials::*, normalizers::*, state::*};
+use super::{aws_services::*, credentials::*, global_services::*, normalizers::*, state::*};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
 use tracing::{error, info, warn};
@@ -438,12 +439,175 @@ impl AWSResourceClient {
         ));
 
         // Create futures for all combinations
-        let mut futures = FuturesUnordered::new();
+        let mut futures: FuturesUnordered<BoxFuture<'static, ()>> = FuturesUnordered::new();
         let mut total_queries = 0;
+        
+        // Track which global services have been queried per account to avoid duplicates
+        let mut queried_global_services: HashSet<(String, String)> = HashSet::new();
+        let global_registry = GlobalServiceRegistry::new();
 
         for account in &scope.accounts {
-            for region in &scope.regions {
-                for resource_type in &scope.resource_types {
+            for resource_type in &scope.resource_types {
+                // Check if this is a global service
+                if global_registry.is_global(&resource_type.resource_type) {
+                    // For global services, only query once per account
+                    let global_key = (account.account_id.clone(), resource_type.resource_type.clone());
+                    
+                    if queried_global_services.contains(&global_key) {
+                        // Already queried this global service for this account, skip
+                        continue;
+                    }
+                    
+                    queried_global_services.insert(global_key);
+                    
+                    // Query from the designated global region (us-east-1)
+                    let query_region = global_registry.get_query_region();
+                    let cache_key = format!(
+                        "{}:Global:{}",
+                        account.account_id, resource_type.resource_type
+                    );
+                    
+                    // Check cache first
+                    {
+                        let cache_read = cache.read().await;
+                        if let Some(cached_resources) = cache_read.get(&cache_key) {
+                            info!("Using cached global resources for {}", cache_key);
+
+                            // Send cached result immediately
+                            let cached_result = QueryResult {
+                                account_id: account.account_id.clone(),
+                                region: "Global".to_string(),
+                                resource_type: resource_type.resource_type.clone(),
+                                resources: Ok(cached_resources.clone()),
+                                cache_key: cache_key.clone(),
+                            };
+
+                            if let Err(e) = result_sender.send(cached_result).await {
+                                warn!("Failed to send cached global result: {}", e);
+                            }
+                            continue;
+                        }
+                    }
+                    
+                    // Create query future for global service
+                    let account_id = account.account_id.clone();
+                    let resource_type_str = resource_type.resource_type.clone();
+                    let display_name = resource_type.display_name.clone();
+                    let client = self.clone();
+                    let semaphore_clone = semaphore.clone();
+                    let progress_sender_clone = progress_sender.clone();
+                    let result_sender_clone = result_sender.clone();
+                    let cache_clone = cache.clone();
+                    let cache_key_clone = cache_key.clone();
+                    let query_region = query_region.to_string();
+                    
+                    let future = async move {
+                        // Acquire semaphore permit
+                        let _permit = semaphore_clone.acquire().await.unwrap();
+
+                        // Send start progress for global service
+                        if let Some(sender) = &progress_sender_clone {
+                            let _ = sender
+                                .send(QueryProgress {
+                                    account: account_id.clone(),
+                                    region: "Global".to_string(),
+                                    resource_type: resource_type_str.clone(),
+                                    status: QueryStatus::Started,
+                                    message: format!(
+                                        "Querying global service {}",
+                                        display_name
+                                    ),
+                                    items_processed: Some(0),
+                                    estimated_total: None,
+                                })
+                                .await;
+                        }
+
+                        // Execute the query from the global region
+                        let query_result = client
+                            .query_resource_type(&account_id, &query_region, &resource_type_str)
+                            .await;
+
+                        // Handle the result and transform to Global region
+                        let resources_result = match query_result {
+                            Ok(mut resources) => {
+                                // Mark all resources as Global region
+                                for resource in &mut resources {
+                                    resource.region = "Global".to_string();
+                                }
+                                
+                                let resource_count = resources.len();
+                                info!(
+                                    "Global service query completed: {} resources for {}",
+                                    resource_count, cache_key_clone
+                                );
+
+                                // Cache the results
+                                let mut cache_write = cache_clone.write().await;
+                                cache_write.insert(cache_key_clone.clone(), resources.clone());
+
+                                // Send completion progress
+                                if let Some(sender) = &progress_sender_clone {
+                                    let _ = sender
+                                        .send(QueryProgress {
+                                            account: account_id.clone(),
+                                            region: "Global".to_string(),
+                                            resource_type: resource_type_str.clone(),
+                                            status: QueryStatus::Completed,
+                                            message: format!(
+                                                "Found {} global {}",
+                                                resource_count, display_name
+                                            ),
+                                            items_processed: Some(resource_count),
+                                            estimated_total: Some(resource_count),
+                                        })
+                                        .await;
+                                }
+
+                                Ok(resources)
+                            }
+                            Err(e) => {
+                                error!("Failed to query global service {}: {}", cache_key_clone, e);
+
+                                // Send failure progress
+                                if let Some(sender) = &progress_sender_clone {
+                                    let _ = sender
+                                        .send(QueryProgress {
+                                            account: account_id.clone(),
+                                            region: "Global".to_string(),
+                                            resource_type: resource_type_str.clone(),
+                                            status: QueryStatus::Failed,
+                                            message: format!("Failed: {}", e),
+                                            items_processed: None,
+                                            estimated_total: None,
+                                        })
+                                        .await;
+                                }
+
+                                Err(e)
+                            }
+                        };
+
+                        // Send the result
+                        let result = QueryResult {
+                            account_id,
+                            region: "Global".to_string(),
+                            resource_type: resource_type_str,
+                            resources: resources_result,
+                            cache_key: cache_key_clone,
+                        };
+
+                        if let Err(e) = result_sender_clone.send(result).await {
+                            warn!("Failed to send global query result: {}", e);
+                        }
+                    };
+                    
+                    futures.push(Box::pin(future));
+                    total_queries += 1;
+                    
+                } else {
+                    // Regular regional service - query for each selected region
+                    for region in &scope.regions {
                     let cache_key = format!(
                         "{}:{}:{}",
                         account.account_id, region.region_code, resource_type.resource_type
@@ -601,8 +765,9 @@ impl AWSResourceClient {
                         }
                     };
 
-                    futures.push(future);
+                    futures.push(Box::pin(future));
                     total_queries += 1;
+                    }
                 }
             }
         }

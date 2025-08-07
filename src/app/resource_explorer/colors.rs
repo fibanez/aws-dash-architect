@@ -103,6 +103,11 @@ impl AwsColorGenerator {
 
     /// Generate a region-specific color using seeded random generation
     fn generate_region_color(&self, region_code: &str) -> Color32 {
+        // Special case for Global region - use a distinctive gold color
+        if region_code == "Global" {
+            return Color32::from_rgb(255, 215, 0); // Gold color for global services
+        }
+        
         let mut random_color = RandomColor::new();
 
         // Seed with region code for deterministic results

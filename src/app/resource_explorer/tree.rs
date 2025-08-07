@@ -299,6 +299,7 @@ impl TreeBuilder {
     /// Get human-readable description for AWS region (static version for TreeBuilder)
     fn get_region_description_static(region_code: &str) -> &'static str {
         match region_code {
+            "Global" => "Global",
             "us-east-1" => "US East (N. Virginia)",
             "us-east-2" => "US East (Ohio)",
             "us-west-1" => "US West (N. California)",
