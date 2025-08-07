@@ -25,6 +25,7 @@ Template parsing, dependency management, and resource visualization system provi
 - Project Management System for template organization and environment workflows
 - AWS Service Integration for real-time specification updates and validation
 - File System Integration with auto-save, recovery, and cross-platform path handling
+- CloudFormation Guard System for compliance validation and violation reporting
 
 ## Implementation Details
 
@@ -65,7 +66,7 @@ impl ResourceDag {
 **Configuration Requirements:**
 - AWS CloudFormation specification URLs for multi-region support
 - Local cache directory for resource specification storage (7-day expiration)
-- Memory limits require `-j 4` flag for testing due to large concurrent processing
+- Memory limits require `-j 7` flag for testing due to large concurrent processing
 
 ## Developer Notes
 

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use awsdash::app::compliance_discovery::{
     AvailableComplianceProgram, ComplianceDiscovery, ComplianceProgramCache,
-    ComplianceProgramMetadata, GitHubApiClient,
+    ComplianceProgramMetadata,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;

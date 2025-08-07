@@ -15,6 +15,7 @@ use super::control_bridge_window::ControlBridgeWindow;
 use super::credentials_debug_window::CredentialsDebugWindow;
 use super::deployment_info_window::DeploymentInfoWindow;
 use super::guard_violations_window::GuardViolationsWindow;
+use super::compliance_error_window::ComplianceErrorWindow;
 use super::download_manager::DownloadManager;
 use super::help_window::HelpWindow;
 use super::log_window::LogWindow;
@@ -46,10 +47,13 @@ use crate::app::fonts;
 use crate::app::notifications::NotificationManager;
 use crate::app::projects::CloudFormationResource;
 use crate::app::resource_explorer::ResourceExplorer;
+use crate::app::compliance_discovery::ComplianceDiscovery;
+use crate::app::guard_repository_manager::{GuardRepositoryManager, RepositorySyncStatus};
 use crate::trace_info;
 use eframe::egui;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -236,6 +240,18 @@ pub struct DashApp {
     #[serde(skip)]
     /// CloudFormation Guard validator instance
     guard_validator: Option<crate::app::cfn_guard::GuardValidator>,
+    #[serde(skip)]
+    /// Compliance programs discovery service
+    pub compliance_discovery: ComplianceDiscovery,
+    #[serde(skip)]
+    /// Error window for compliance-related errors
+    pub compliance_error_window: ComplianceErrorWindow,
+    #[serde(skip)]
+    /// Repository sync status receiver for background operations
+    pub repo_sync_receiver: Option<std::sync::mpsc::Receiver<RepositorySyncStatus>>,
+    #[serde(skip)]
+    /// Current repository sync status
+    pub repo_sync_status: Option<RepositorySyncStatus>,
 }
 
 impl Default for DashApp {
@@ -299,13 +315,17 @@ impl Default for DashApp {
             fonts_configured: false,
             compliance_status: None,
             guard_validator: None,
+            compliance_discovery: ComplianceDiscovery::new_with_default_cache(),
+            compliance_error_window: ComplianceErrorWindow::new(),
+            repo_sync_receiver: None,
+            repo_sync_status: None,
         }
     }
 }
 
 impl DashApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let app = if let Some(storage) = cc.storage {
+        let mut app = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Self::default()
@@ -313,6 +333,9 @@ impl DashApp {
 
         // Apply the saved theme
         app.apply_theme(&cc.egui_ctx);
+
+        // Start repository synchronization in background
+        app.start_repository_sync();
 
         app
     }
@@ -1902,6 +1925,10 @@ impl DashApp {
             // Set AWS Identity Center if available
             self.project_command_palette
                 .set_aws_identity_center(self.aws_identity_center.clone());
+
+            // Set ComplianceDiscovery service
+            self.project_command_palette
+                .set_compliance_discovery(Arc::new(Mutex::new(self.compliance_discovery.clone())));
 
             // Track whether there was a project before showing
             let had_project = self.project_command_palette.current_project.is_some();
@@ -3708,6 +3735,92 @@ impl DashApp {
         }
     }
 
+    fn handle_compliance_error_window(&mut self, ctx: &egui::Context) {
+        if self.compliance_error_window.is_open() {
+            // Check if this window should be brought to the front
+            let window_id = self.compliance_error_window.window_id();
+            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
+            if bring_to_front {
+                self.window_focus_manager.clear_bring_to_front(window_id);
+            }
+            
+            // Handle retry button click
+            let retry_clicked = self.compliance_error_window.show(ctx);
+            if retry_clicked {
+                // Trigger compliance discovery retry
+                self.retry_compliance_discovery();
+            }
+        }
+    }
+
+    fn retry_compliance_discovery(&mut self) {
+        // Reset compliance discovery state and attempt to reload programs
+        // This will trigger the discovery process again in the next frame
+        self.compliance_discovery = ComplianceDiscovery::new_with_default_cache();
+        
+        // Close the error window since we're retrying
+        self.compliance_error_window.close();
+        
+        // Start repository sync again in case it failed
+        self.start_repository_sync();
+        
+        // Log retry attempt
+        tracing::info!("Retrying compliance discovery after user request");
+    }
+
+    /// Start repository synchronization in background
+    fn start_repository_sync(&mut self) {
+        // Check if we need to sync the repository
+        if let Ok(manager) = GuardRepositoryManager::new() {
+            if !manager.is_repository_cloned() || manager.needs_update() {
+                tracing::info!("Starting Guard Rules repository synchronization...");
+                
+                // Start async sync and get the receiver
+                let receiver = GuardRepositoryManager::sync_repository_async();
+                self.repo_sync_receiver = Some(receiver);
+                self.repo_sync_status = None;
+            } else {
+                tracing::info!("Guard Rules repository is up to date, skipping sync");
+            }
+        } else {
+            tracing::error!("Failed to initialize GuardRepositoryManager for sync");
+        }
+    }
+
+    /// Update repository sync status from background thread
+    fn update_repository_sync_status(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.repo_sync_receiver {
+            // Check for new status updates
+            match receiver.try_recv() {
+                Ok(status) => {
+                    let is_complete = status.completed || status.error.is_some();
+                    self.repo_sync_status = Some(status);
+                    
+                    if is_complete {
+                        // Sync is done, remove receiver
+                        self.repo_sync_receiver = None;
+                        
+                        // Request repaint to update UI
+                        ctx.request_repaint();
+                        
+                        tracing::info!("Guard Rules repository synchronization completed");
+                    } else {
+                        // Still in progress, request repaint to show progress
+                        ctx.request_repaint();
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // No new status, continue waiting
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread finished, clean up
+                    self.repo_sync_receiver = None;
+                    tracing::warn!("Guard Rules repository sync thread disconnected unexpectedly");
+                }
+            }
+        }
+    }
+
     fn handle_notification_details_window(&mut self, ctx: &egui::Context) {
         use crate::app::notifications::{
             error_window::NotificationDetailsWindow, NotificationType,
@@ -4025,14 +4138,17 @@ impl DashApp {
     // Show command palette
     fn show_startup_popup(&mut self, ctx: &egui::Context) {
         // Check if we should stop showing the popup
+        // Keep showing if repository sync is in progress, otherwise use timer
+        let keep_showing_for_sync = self.repo_sync_receiver.is_some();
+        
         if let Some(start_time) = self.startup_popup_timer {
-            if start_time.elapsed() > Duration::from_secs(3) {
+            if !keep_showing_for_sync && start_time.elapsed() > Duration::from_secs(3) {
                 self.show_startup_popup = false;
                 self.startup_popup_timer = None;
                 return;
             }
-        } else {
-            return; // Timer is None, so we don't show the popup
+        } else if !keep_showing_for_sync {
+            return; // Timer is None and no sync, so we don't show the popup
         }
 
         if !self.show_startup_popup {
@@ -4041,7 +4157,30 @@ impl DashApp {
 
         // Center the popup in the screen
         let screen_rect = ctx.screen_rect();
-        egui::Window::new("Tip")
+        
+        // Determine popup content based on repository sync status
+        let (title, content) = if let Some(ref status) = self.repo_sync_status {
+            let phase_text = match status.phase {
+                crate::app::guard_repository_manager::SyncPhase::CheckingLocal => "Checking local repository...",
+                crate::app::guard_repository_manager::SyncPhase::Cloning => "Downloading Guard Rules...",
+                crate::app::guard_repository_manager::SyncPhase::Pulling => "Updating Guard Rules...",
+                crate::app::guard_repository_manager::SyncPhase::ParsingPrograms => "Parsing compliance programs...",
+                crate::app::guard_repository_manager::SyncPhase::IndexingRules => "Indexing rules...",
+                crate::app::guard_repository_manager::SyncPhase::Complete => "Setup complete!",
+            };
+            
+            if let Some(ref error) = status.error {
+                ("Setup Error", format!("Failed: {}", error))
+            } else {
+                ("AWS Dash Setup", format!("{} ({}%)", phase_text, status.progress))
+            }
+        } else if self.repo_sync_receiver.is_some() {
+            ("AWS Dash Setup", "Initializing Guard Rules...".to_string())
+        } else {
+            ("Tip", "Press the Space Bar\nto open the Command Window".to_string())
+        };
+
+        egui::Window::new(title)
             .fixed_pos(egui::pos2(
                 screen_rect.center().x - 150.0,
                 screen_rect.center().y - 40.0,
@@ -4053,9 +4192,10 @@ impl DashApp {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(10.0);
-                    ui.heading("Press the Space Bar");
-                    ui.add_space(5.0);
-                    ui.label("to open the Command Window");
+                    // Show content (could be multi-line)
+                    for line in content.lines() {
+                        ui.label(line);
+                    }
                     ui.add_space(10.0);
                 });
             });
@@ -4839,6 +4979,9 @@ impl eframe::App for DashApp {
         // Configure fonts with enhanced emoji support
         self.configure_fonts(ctx);
 
+        // Update repository sync status from background thread
+        self.update_repository_sync_status(ctx);
+
         // Update shake animation state
         if self.shake_windows {
             if let Some(start_time) = self.shake_start_time {
@@ -4925,6 +5068,7 @@ impl eframe::App for DashApp {
         self.handle_template_sections_window(ctx);
         self.handle_verification_window(ctx);
         self.handle_guard_violations_window(ctx);
+        self.handle_compliance_error_window(ctx);
         self.handle_validation_results_window(ctx);
         self.handle_parameter_dialog(ctx);
         self.handle_deployment_progress_window(ctx);

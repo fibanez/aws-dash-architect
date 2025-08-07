@@ -83,6 +83,8 @@ fn test_guard_violation_structure() {
         severity: ViolationSeverity::High,
         exempted: false,
         exemption_reason: None,
+        applicable_programs: vec![],
+        control_mappings: std::collections::HashMap::new(),
     };
 
     assert_eq!(violation.rule_name, "S3_BUCKET_SSL_REQUESTS_ONLY");
@@ -91,12 +93,25 @@ fn test_guard_violation_structure() {
     assert!(violation.message.contains("SSL"));
 }
 
-/// Test ComplianceProgram enum variants
+/// Test ComplianceProgram structure and methods
 #[test]
-fn test_compliance_program_variants() {
+fn test_compliance_program_structure() {
+    let program = ComplianceProgram::legacy("NIST80053R5");
+    
+    assert_eq!(program.id(), "nist_800_53_rev_5");
+    assert_eq!(program.short_name(), "NIST 800-53 Revision 5");
+    assert_eq!(program.rule_count, 59);
+    assert!(program.matches_search("nist"));
+    assert!(program.matches_search("cybersecurity"));
+    assert!(!program.matches_search("payment"));
+}
+
+/// Test ComplianceCategory functionality
+#[test]
+fn test_compliance_category() {
     let programs = vec![
-        ComplianceProgram::NIST80053R4,
-        ComplianceProgram::NIST80053R5,
+        ComplianceProgram::legacy("NIST80053R4"),
+        ComplianceProgram::legacy("NIST80053R5"),
         ComplianceProgram::NIST800171,
         ComplianceProgram::PCIDSS,
         ComplianceProgram::HIPAA,
@@ -141,6 +156,8 @@ fn test_guard_validation_aggregation() {
             severity: ViolationSeverity::Critical,
             exempted: false,
             exemption_reason: None,
+            applicable_programs: vec![],
+            control_mappings: std::collections::HashMap::new(),
         },
         GuardViolation {
             rule_name: "RULE2".to_string(),
@@ -149,6 +166,8 @@ fn test_guard_validation_aggregation() {
             severity: ViolationSeverity::Low,
             exempted: false,
             exemption_reason: None,
+            applicable_programs: vec![],
+            control_mappings: std::collections::HashMap::new(),
         },
     ];
 

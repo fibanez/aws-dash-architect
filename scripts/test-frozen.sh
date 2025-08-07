@@ -11,11 +11,11 @@ mkdir -p tests/fixtures tests/snapshots
 
 # Run contract tests first (these are the most important)
 echo -e "\n1. Running API Contract Tests..."
-cargo test test_api_contract -j 4 -- --nocapture
+cargo test test_api_contract -j 1 -- --nocapture
 
 # Run snapshot tests
 echo -e "\n2. Running Snapshot Tests..."
-cargo test test_aws_identity test_projects test_cfn_dag test_cfn_resources test_bedrock_client -j 4 -- --nocapture
+cargo test test_aws_identity test_projects test_cfn_dag test_cfn_resources test_bedrock_client -j 1 -- --nocapture
 
 # Check for snapshot changes
 echo -e "\n3. Checking for Snapshot Changes..."
@@ -29,7 +29,7 @@ fi
 
 # Run golden file tests
 echo -e "\n4. Running Golden File Tests..."
-cargo test golden -j 4 -- --nocapture
+cargo test golden -j 1 -- --nocapture
 
 # Summary
 echo -e "\n=========================================="

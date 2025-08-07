@@ -78,22 +78,22 @@ echo ""
 
 # Build the project first
 echo "🔨 Building project..."
-cargo build --tests
+cargo build --tests -j 1
 
 if [ "$PERFORMANCE_MODE" = true ]; then
     echo "🏃 Running performance tests only..."
-    cargo test --test aws_real_world_templates test_performance_with_large_templates -- --ignored --nocapture
+    cargo test --test aws_real_world_templates test_performance_with_large_templates -j 1 -- --ignored --nocapture
 elif [ "$QUICK_MODE" = true ]; then
     echo "⚡ Running quick integration test (limited templates)..."
     # For quick mode, we could add an environment variable to limit the number of templates
-    QUICK_TEST_MODE=true cargo test --test aws_real_world_templates test_aws_cloudformation_templates_compatibility -- --ignored --nocapture
+    QUICK_TEST_MODE=true cargo test --test aws_real_world_templates test_aws_cloudformation_templates_compatibility -j 1 -- --ignored --nocapture
 else
     echo "🧪 Running full integration test suite..."
     echo "⚠️  This may take 10-30 minutes depending on your system and network speed"
     echo ""
     
     # Run all integration tests
-    cargo test --test aws_real_world_templates -- --ignored --nocapture
+    cargo test --test aws_real_world_templates -j 1 -- --ignored --nocapture
 fi
 
 echo ""

@@ -88,6 +88,8 @@ pub mod cloudformation_file_picker;
 pub mod cloudformation_scene_graph;
 pub mod cloudformation_window_node_widget;
 pub mod command_palette;
+pub mod compliance_error_window;
+pub mod compliance_program_selector;
 pub mod control_bridge_window;
 pub mod credentials_debug_window;
 pub mod deployment_info_window;

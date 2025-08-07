@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-use crate::app::compliance_discovery::{AvailableComplianceProgram, GitHubApiClient};
+use crate::app::compliance_discovery::AvailableComplianceProgram;
 
 /// Main client for bulk downloading compliance program rules
 #[derive(Debug)]
@@ -272,11 +272,15 @@ impl BulkRuleDownloader {
         &self,
         program: &AvailableComplianceProgram,
     ) -> Result<ComplianceRuleSet> {
-        // Create GitHub API client
-        let github_client = GitHubApiClient::new().await?;
+        // NOTE: This method is deprecated - git-based repository access replaces bulk downloading
+        // For now, return an error indicating the new approach should be used
+        return Err(anyhow!("Bulk rule downloader is deprecated. Use GuardRepositoryManager for git-based rule access."));
 
+        #[allow(unreachable_code, unused_variables)]
+        {
+        // Legacy code below - kept for reference but unreachable
         // Get repository structure to find .guard files for this program
-        let repo_structure = github_client.get_repository_structure().await?;
+        let repo_structure: HashMap<String, Vec<String>> = HashMap::new();
 
         // Find the program's directory in the structure
         let program_files = repo_structure
@@ -301,6 +305,15 @@ impl BulkRuleDownloader {
                 let mut file_content = None;
 
                 while attempt < self.max_retries {
+                    // Placeholder GitHub client (unreachable)
+                    struct DummyGitHubClient;
+                    impl DummyGitHubClient {
+                        async fn download_file_content(&self, _path: &str) -> Result<String> {
+                            Err(anyhow!("Dummy client"))
+                        }
+                    }
+                    let github_client = DummyGitHubClient;
+                    
                     match github_client.download_file_content(&file_path).await {
                         Ok(content) => {
                             file_content = Some(content);
@@ -361,6 +374,7 @@ impl BulkRuleDownloader {
             download_date: Utc::now(),
             rules,
         })
+        } // End of unreachable code block
     }
 
     /// Get fallback rule file names for a program when GitHub API fails

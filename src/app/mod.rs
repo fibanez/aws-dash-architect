@@ -47,6 +47,7 @@ pub mod cfn_resources;
 pub mod cfn_template;
 pub mod cloudformation_manager;
 pub mod compliance_discovery;
+pub mod guard_repository_manager;
 pub mod dashui;
 pub mod fonts;
 pub mod guard_rules_registry;

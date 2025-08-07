@@ -167,25 +167,55 @@ run_cargo_test() {
     local test_name="$1"
     local test_type="$2"
     
-    # No job limits - use default CPU count (28) for maximum performance
-    unset CARGO_BUILD_JOBS
-    unset RUSTFLAGS
+    # Use full CPU parallelism for compilation, linker threads controlled by rustflags
+    export CARGO_BUILD_JOBS=28
     
+    # Additional memory protection environment variables
+    export RUST_BACKTRACE=0  # Reduce memory usage from backtraces
+    export CARGO_NET_GIT_FETCH_WITH_CLI=true  # Use less memory for git operations
+    
+    # Set memory limits for the linker (higher limits for systems with ample memory)
+    ulimit -v 16777216 2>/dev/null || true  # 16GB virtual memory limit (soft limit)
+    ulimit -m 8388608 2>/dev/null || true   # 8GB resident memory limit (soft limit)
+    
+    # Memory monitoring with higher thresholds for systems with ample memory
+    (
+        while sleep 10; do
+            memory_usage=$(free | awk '/^Mem:/{printf("%.1f"), $3/$2 * 100}')
+            if (( $(echo "$memory_usage > 90" | bc -l) )); then
+                echo "⚠️  Memory usage at ${memory_usage}% - monitoring closely..."
+                if (( $(echo "$memory_usage > 97" | bc -l) )); then
+                    echo "🚨 EMERGENCY: Memory usage at ${memory_usage}% - killing cargo processes to prevent system crash"
+                    pkill -f "cargo.*test" || true
+                    break
+                fi
+            fi
+        done
+    ) &
+    local monitor_pid=$!
+    
+    local test_result=0
     case "$test_type" in
         "--lib")
-            cargo test --lib
+            cargo test --lib -j 28 || test_result=$?
             ;;
         "--doc")
-            cargo test --workspace --doc
+            cargo test --workspace --doc -j 28 || test_result=$?
             ;;
         "--test")
-            cargo test --test "$test_name"
+            cargo test --test "$test_name" -j 28 || test_result=$?
             ;;
         *)
             echo "Unknown test type: $test_type" >&2
-            return 1
+            test_result=1
             ;;
     esac
+    
+    # Clean up the memory monitor
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
+    
+    return $test_result
 }
 
 # Chunk 1: Fast Core Tests (~60 tests, <30s)
@@ -235,10 +265,10 @@ run_chunk_integration() {
     
     print_test_info "Running aws_real_world_templates (with --ignored flag)"
     if [ "$VERBOSE" = "true" ]; then
-        cargo test --test aws_real_world_templates -- --ignored
+        cargo test --test aws_real_world_templates -j 28 -- --ignored
     else
         local output
-        if output=$(cargo test --test aws_real_world_templates -- --ignored 2>&1); then
+        if output=$(cargo test --test aws_real_world_templates -j 28 -- --ignored 2>&1); then
             echo "✓ aws_real_world_templates: $(echo "$output" | grep -E "test result:" | tail -1)"
         else
             print_error "FAILED: aws_real_world_templates"

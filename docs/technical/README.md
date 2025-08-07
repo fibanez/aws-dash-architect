@@ -12,6 +12,7 @@ This directory contains modular technical documentation for the AWS Dash project
 * [UI Testing Framework](ui-testing-framework.md) - Automated testing with egui_kittest
 * [CloudFormation System](cloudformation-system.md) - Template parsing and visualization
 * [CloudFormation Manager](cloudformation-manager.md) - Comprehensive CloudFormation template management system
+* [CloudFormation Guard System](cloudformation-guard-system.md) - Real-time compliance validation using AWS CloudFormation Guard
 * [Project Management](project-management.md) - Project structure and resource tracking
 
 ## Advanced Features

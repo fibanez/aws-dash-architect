@@ -149,7 +149,7 @@ show_usage() {
     echo ""
     echo "Examples:"
     echo "  $0 --monitor \"./scripts/test-chunks.sh all\" \"Full Test Suite\""
-    echo "  $0 --monitor \"cargo test --test aws_real_world_templates -j 10\" \"Integration Tests\""
+    echo "  $0 --monitor \"cargo test --test aws_real_world_templates -j 1\" \"Integration Tests\""
     echo "  MEMORY_THRESHOLD=90 $0 --monitor \"cargo build\" \"Build Process\""
     echo ""
     echo "Log location: $MEMORY_LOG_DIR/$LOG_FILE"

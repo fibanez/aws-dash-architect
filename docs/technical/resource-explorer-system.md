@@ -48,7 +48,7 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 **Configuration Requirements:**
 - AWS Identity Center must be configured for multi-account access
 - Default role name (typically "awsdash") for credential assumption
-- Memory limits require `-j 4` flag for testing due to large concurrent operations
+- Memory limits require `-j 7` flag for testing due to large concurrent operations
 
 ## Developer Notes
 

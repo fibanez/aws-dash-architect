@@ -111,6 +111,10 @@ fn test_project_structure() {
         }],
         default_region: Some("us-east-1".to_string()),
         cfn_template: Some(CloudFormationTemplate::default()),
+        compliance_programs: Vec::new(),
+        guard_rules_enabled: true,
+        custom_guard_rules: Vec::new(),
+        environment_compliance: HashMap::new(),
     };
 
     // Test that project structure is frozen

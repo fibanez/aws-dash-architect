@@ -777,8 +777,8 @@ impl TestResultAnalyzer {
 * Don't over-test implementation details
 * Use appropriate test granularity
 * Consider test execution time in CI/CD
-* Parallelize independent tests with memory constraints (use `-j 4` with cargo test)
-* ⚠️ Always use `-j 4` flag with cargo test commands to prevent memory exhaustion
+* Parallelize independent tests with memory constraints (use `-j 7` with cargo test)
+* ⚠️ Always use `-j 7` flag with cargo test commands to prevent memory exhaustion
 
 ## Related Documentation
 

@@ -126,20 +126,35 @@ impl GuardRulesRegistry {
     ) -> Result<HashMap<String, String>> {
         let mut rules = HashMap::new();
 
-        // Map compliance programs to their GitHub paths in the AWS Guard Rules Registry
-        let program_path = match program {
-            ComplianceProgram::NIST80053R5 => {
-                "compliance/cis-aws-foundations-benchmark/nist-800-53-rev5"
+        // Use the GitHub path from the compliance program
+        // If no path is specified, try to infer from the program ID
+        let program_path = if !program.github_path.is_empty() {
+            // Extract the path from the mapping file path (remove "mappings/" prefix and ".guard" suffix)
+            if program.github_path.starts_with("mappings/") && program.github_path.ends_with(".guard") {
+                let path_without_prefix = &program.github_path[9..]; // Remove "mappings/"
+                let path_without_suffix = &path_without_prefix[..path_without_prefix.len()-6]; // Remove ".guard"
+                
+                // Convert mapping file name to rules directory path
+                match path_without_suffix {
+                    "rule_set_nist800_53rev5" => "compliance/cis-aws-foundations-benchmark/nist-800-53-rev5",
+                    "rule_set_nist800_53rev4" => "compliance/cis-aws-foundations-benchmark/nist-800-53-rev4", 
+                    "rule_set_pci_dss" => "compliance/pci-dss-3.2.1",
+                    "rule_set_hipaa" => "compliance/hipaa-security-rule-2003",
+                    "rule_set_soc_2" => "compliance/soc-2-type-ii",
+                    "rule_set_fedramp" => "compliance/fedramp-moderate-baseline",
+                    "rule_set_nist_800_171" => "compliance/nist-800-171",
+                    _ => {
+                        log::warn!("Unknown mapping file path: {}, skipping rule download", program.github_path);
+                        return Ok(rules);
+                    }
+                }
+            } else {
+                log::warn!("Invalid GitHub path format: {}, skipping rule download", program.github_path);
+                return Ok(rules);
             }
-            ComplianceProgram::NIST80053R4 => {
-                "compliance/cis-aws-foundations-benchmark/nist-800-53-rev4"
-            }
-            ComplianceProgram::PCIDSS => "compliance/pci-dss-3.2.1",
-            ComplianceProgram::HIPAA => "compliance/hipaa-security-rule-2003",
-            ComplianceProgram::SOC => "compliance/soc-2-type-ii",
-            ComplianceProgram::FedRAMP => "compliance/fedramp-moderate-baseline",
-            ComplianceProgram::NIST800171 => "compliance/nist-800-171",
-            ComplianceProgram::Custom(_) => return Ok(rules), // Skip custom programs
+        } else {
+            log::warn!("No GitHub path specified for program: {}, skipping rule download", program.id);
+            return Ok(rules);
         };
 
         // Construct the URL to download the compliance program's rules
@@ -354,17 +369,8 @@ impl GuardRulesRegistry {
 
     /// Get the cache path for a specific compliance program
     fn get_program_cache_path(&self, program: &ComplianceProgram) -> PathBuf {
-        let program_name = match program {
-            ComplianceProgram::NIST80053R4 => "NIST80053R4",
-            ComplianceProgram::NIST80053R5 => "NIST80053R5",
-            ComplianceProgram::NIST800171 => "NIST800171",
-            ComplianceProgram::PCIDSS => "PCIDSS",
-            ComplianceProgram::HIPAA => "HIPAA",
-            ComplianceProgram::SOC => "SOC",
-            ComplianceProgram::FedRAMP => "FedRAMP",
-            ComplianceProgram::Custom(name) => name,
-        };
-
+        // Use the program ID as the directory name, sanitized for filesystem
+        let program_name = program.id.replace(' ', "_").replace('/', "_");
         self.cache_dir.join(program_name)
     }
 
@@ -411,8 +417,8 @@ impl GuardRulesRegistry {
     ) -> Result<HashMap<String, String>> {
         let mut rules = HashMap::new();
 
-        match program {
-            ComplianceProgram::NIST80053R5 => {
+        match program.id.as_str() {
+            "nist_800_53_rev_5" => {
                 rules.insert(
                     "S3_BUCKET_SSL_REQUESTS_ONLY".to_string(),
                     r#"
@@ -451,7 +457,7 @@ rule s3_bucket_public_read_prohibited {
                     .to_string(),
                 );
             }
-            ComplianceProgram::PCIDSS => {
+            "pci_dss" => {
                 rules.insert(
                     "EC2_SECURITY_GROUP_ATTACHED_TO_ENI".to_string(),
                     r#"
@@ -466,7 +472,7 @@ rule ec2_security_group_attached_to_eni {
                     .to_string(),
                 );
             }
-            ComplianceProgram::HIPAA => {
+            "hipaa" => {
                 rules.insert(
                     "RDS_INSTANCE_ENCRYPTION_ENABLED".to_string(),
                     r#"
@@ -483,7 +489,7 @@ rule rds_instance_encryption_enabled {
                     .to_string(),
                 );
             }
-            ComplianceProgram::Custom(_) => {
+            id if id.starts_with("custom_") => {
                 // Return empty rules for custom programs
                 return Ok(rules);
             }
@@ -511,15 +517,7 @@ rule generic_compliance_rule {{
 
     /// Get placeholder rule count for a compliance program
     fn get_placeholder_rule_count(&self, program: &ComplianceProgram) -> usize {
-        match program {
-            ComplianceProgram::NIST80053R5 => 75,
-            ComplianceProgram::NIST80053R4 => 60,
-            ComplianceProgram::PCIDSS => 45,
-            ComplianceProgram::HIPAA => 30,
-            ComplianceProgram::SOC => 25,
-            ComplianceProgram::FedRAMP => 80,
-            ComplianceProgram::NIST800171 => 35,
-            ComplianceProgram::Custom(_) => 0,
-        }
+        // Use the actual rule count from the program metadata
+        program.rule_count
     }
 }

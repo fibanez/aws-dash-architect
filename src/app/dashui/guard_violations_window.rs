@@ -495,6 +495,23 @@ impl GuardViolationsWindow {
                 .italics()
         );
         
+        // Compliance program tags
+        if !rule.compliance_programs.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Compliance:");
+                for program in &rule.compliance_programs {
+                    let (tag_color, text_color) = self.get_compliance_program_colors(program);
+                    ui.label(
+                        RichText::new(&format!("{}", self.get_compliance_program_display_name(program)))
+                            .size(9.0)
+                            .color(text_color)
+                            .background_color(tag_color)
+                            .monospace()
+                    );
+                }
+            });
+        }
+        
         // Resource types
         if !rule.resource_types.is_empty() {
             ui.horizontal(|ui| {
@@ -531,5 +548,46 @@ impl GuardViolationsWindow {
             rule_results.exempted_rules.iter().any(|r| self.rule_matches_severity_filter(&r.severity));
             
         !(has_not_applicable || has_compliant || has_violations || has_exempted)
+    }
+
+    /// Get colors for compliance program tags (background, text)
+    fn get_compliance_program_colors(&self, program: &crate::app::cfn_guard::ComplianceProgram) -> (Color32, Color32) {
+        match program.id.as_str() {
+            // NIST frameworks - blue family
+            "nist_800_53_rev_4" => (Color32::from_rgb(70, 130, 180), Color32::WHITE),
+            "nist_800_53_rev_5" => (Color32::from_rgb(100, 149, 237), Color32::WHITE),
+            "nist_800_171" => (Color32::from_rgb(65, 105, 225), Color32::WHITE),
+            
+            // Industry standards - green family
+            "pci_dss" => (Color32::from_rgb(34, 139, 34), Color32::WHITE),
+            "hipaa" => (Color32::from_rgb(50, 205, 50), Color32::WHITE),
+            "soc" => (Color32::from_rgb(0, 128, 0), Color32::WHITE),
+            
+            // Government - red/orange family
+            "fedramp" => (Color32::from_rgb(220, 20, 60), Color32::WHITE),
+            
+            // Custom and unknown - purple/gray
+            _ => (Color32::from_rgb(147, 112, 219), Color32::WHITE),
+        }
+    }
+
+    /// Get display name for compliance program
+    fn get_compliance_program_display_name(&self, program: &crate::app::cfn_guard::ComplianceProgram) -> String {
+        // Use the display_name if available, otherwise fall back to transforming the ID
+        if !program.display_name.is_empty() {
+            program.display_name.clone()
+        } else {
+            // Transform ID to readable format
+            match program.id.as_str() {
+                "nist_800_53_rev_4" => "NIST 800-53 R4".to_string(),
+                "nist_800_53_rev_5" => "NIST 800-53 R5".to_string(),
+                "nist_800_171" => "NIST 800-171".to_string(),
+                "pci_dss" => "PCI DSS".to_string(),
+                "hipaa" => "HIPAA".to_string(),
+                "soc" => "SOC".to_string(),
+                "fedramp" => "FedRAMP".to_string(),
+                _ => program.id.clone(),
+            }
+        }
     }
 }

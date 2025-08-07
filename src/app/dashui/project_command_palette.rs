@@ -1,11 +1,14 @@
 use crate::app::cfn_resources::AWS_REGIONS;
 use crate::app::dashui::fuzzy_file_picker::{FuzzyFilePicker, FuzzyFilePickerStatus};
+use crate::app::dashui::compliance_program_selector::ComplianceProgramSelector;
+use crate::app::compliance_discovery::ComplianceDiscovery;
 use crate::app::projects::{AwsAccount, AwsRegion, Environment, Project};
 use egui::{self, Align, Color32, Context, Grid, Layout, RichText, Window};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
@@ -224,6 +227,10 @@ pub struct ProjectCommandPalette {
     aws_identity_center:
         Option<std::sync::Arc<std::sync::Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
     focus_requested: bool,
+    
+    // Compliance program selector
+    compliance_selector: ComplianceProgramSelector,
+    compliance_discovery: Option<Arc<Mutex<ComplianceDiscovery>>>,
 }
 
 impl ProjectCommandPalette {
@@ -236,6 +243,8 @@ impl ProjectCommandPalette {
             fuzzy_file_picker: None,
             aws_identity_center: None,
             focus_requested: false,
+            compliance_selector: ComplianceProgramSelector::new(),
+            compliance_discovery: None,
         }
     }
 
@@ -248,6 +257,10 @@ impl ProjectCommandPalette {
         self.aws_identity_center = aws_identity_center;
     }
 
+    pub fn set_compliance_discovery(&mut self, compliance_discovery: Arc<Mutex<ComplianceDiscovery>>) {
+        self.compliance_discovery = Some(compliance_discovery);
+    }
+
     pub fn set_mode(&mut self, mode: ProjectCommandAction) {
         self.mode = mode;
 
@@ -256,11 +269,16 @@ impl ProjectCommandPalette {
             self.form = ProjectForm::default();
             self.error_message = None;
             self.focus_requested = false; // Reset focus flag
+            self.compliance_selector = ComplianceProgramSelector::new();
         } else if mode == ProjectCommandAction::EditProject {
             if let Some(project) = &self.current_project {
                 self.form = ProjectForm::from_project(project);
                 self.error_message = None;
                 self.focus_requested = false; // Reset focus flag
+                
+                // Initialize compliance selector with current project's programs
+                self.compliance_selector = ComplianceProgramSelector::new();
+                self.compliance_selector.set_selected_programs(project.compliance_programs.clone());
             } else {
                 // Can't edit if no project is loaded
                 self.error_message = Some("No project is currently loaded to edit.".to_string());
@@ -616,56 +634,27 @@ impl ProjectCommandPalette {
                             );
                             ui.end_row();
 
-                            // Compliance programs selection
-                            ui.label("Compliance Programs:");
+                            // Compliance programs selection using new selector
+                            ui.label("");
                             ui.vertical(|ui| {
-                                let all_programs = vec![
-                                    (
-                                        crate::app::cfn_guard::ComplianceProgram::NIST80053R5,
-                                        "NIST 800-53 Rev 5",
-                                    ),
-                                    (
-                                        crate::app::cfn_guard::ComplianceProgram::NIST80053R4,
-                                        "NIST 800-53 Rev 4",
-                                    ),
-                                    (crate::app::cfn_guard::ComplianceProgram::PCIDSS, "PCI DSS"),
-                                    (crate::app::cfn_guard::ComplianceProgram::HIPAA, "HIPAA"),
-                                    (crate::app::cfn_guard::ComplianceProgram::SOC, "SOC 2"),
-                                    (crate::app::cfn_guard::ComplianceProgram::FedRAMP, "FedRAMP"),
-                                    (
-                                        crate::app::cfn_guard::ComplianceProgram::NIST800171,
-                                        "NIST 800-171",
-                                    ),
-                                ];
-
-                                for (program, description) in all_programs {
-                                    let mut selected =
-                                        self.form.compliance_programs.contains(&program);
-                                    if ui.checkbox(&mut selected, description).changed() {
-                                        if selected {
-                                            if !self.form.compliance_programs.contains(&program) {
-                                                self.form.compliance_programs.push(program);
-                                            }
-                                        } else {
-                                            self.form.compliance_programs.retain(|p| p != &program);
-                                        }
+                                // Load available programs if needed
+                                if let Some(ref discovery) = self.compliance_discovery {
+                                    // Set the discovery instance in the selector
+                                    self.compliance_selector.set_compliance_discovery(discovery.clone());
+                                    
+                                    let current_programs = self.compliance_selector.get_selected_programs();
+                                    if current_programs != self.form.compliance_programs {
+                                        self.form.compliance_programs = current_programs;
                                     }
                                 }
-
-                                if self.form.compliance_programs.is_empty() {
-                                    ui.label(
-                                        RichText::new("No compliance programs selected")
-                                            .weak()
-                                            .italics(),
-                                    );
-                                } else {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} programs selected",
-                                            self.form.compliance_programs.len()
-                                        ))
-                                        .weak(),
-                                    );
+                                
+                                // Show the compliance program selector
+                                self.compliance_selector.show(ui);
+                                
+                                // Sync selector state with form
+                                let selected_programs = self.compliance_selector.get_selected_programs();
+                                if selected_programs != self.form.compliance_programs {
+                                    self.form.compliance_programs = selected_programs;
                                 }
                             });
                             ui.end_row();

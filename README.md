@@ -58,25 +58,26 @@ cargo build --release
 Three specialized AI agents will work together to create compliant architectures:
 
 - **🎯 Operations Agent**: Helps interact with AWS environment for operations related tasks
-- **🔨 Compliance Agent**: Updates cloudformation templates with compliance violations
+- **🔨 Compliance Agent**: Reads violations and updates CloudFormation templates with fixes
 - 💰 **Pricing Agent**: Helps generate pricing estimates from CloudFormation templates
 - **🏛️ Architect Agent**: Designs solutions following AWS best practices and compliance standards
 
 > **Development Status**: The specialized AI agent architecture is currently being implemented using the Stood Agent Library framework. This will enable natural language architecture design with intelligent collaboration between specialized agents.
 
-### 🛡️ Proactive Compliance Verification 🚧 *Under Development*
+### 🛡️ CloudFormation Guard Integration 🟡 *Partially Implemented*
 
-Built-in compliance validation against 30+ regulatory frameworks:
+Built-in compliance validation against regulatory frameworks:
 
-- **FedRAMP** (Low and Moderate)
-- **CMMC** (Levels 1-5)
-- **NIST** (800-53, 800-171, 800-172, CSF)
-- **HIPAA**, **PCI DSS**, **SOX**
-- **International standards** (ACSC, APRA, ENS, and more)
+- **NIST 800-53 R5** - Federal security controls framework
+- **PCI-DSS** - Payment card industry data security standards
+- **HIPAA** - Healthcare information protection requirements
+- **SOC 2** - Service organization security controls
+- **FedRAMP** - Federal cloud security authorization
+- **Custom Rules** - Organization-specific compliance policies
 
-Compliance issues will be caught during design—not after deployment.
+Compliance violations are identified during template validation with detailed severity analysis.
 
-> **Development Status**: Compliance verification will be implemented using [AWS CloudFormation Guard](https://github.com/aws-cloudformation/cloudformation-guard), an open-source policy-as-code evaluation tool. This will enable real-time validation of CloudFormation templates against regulatory frameworks and custom organizational policies during the architecture design process.
+> **Implementation Status**: CloudFormation Guard integration uses [AWS CloudFormation Guard](https://github.com/aws-cloudformation/cloudformation-guard) for real-time validation of CloudFormation templates against regulatory frameworks during the architecture design process.
 
 ### 🌐 Cross-Account AWS Explorer ✅ *Complete*
 

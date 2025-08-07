@@ -8,6 +8,7 @@ license = "Apache-2.0"
 include = ["LICENSE-APACHE", "**/*.rs", "Cargo.toml"]
 rust-version = "1.81"
 
+
 [[bin]]
 name = "awsdash"
 path = "src/main.rs"
@@ -50,6 +51,7 @@ once_cell = "1.20"
 directories = "5.0"
 dirs = "5.0"
 zip = "0.6.6"
+git2 = "0.18"
 
 # AWS support
 aws-config = "1.1"
