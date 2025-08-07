@@ -263,6 +263,9 @@ impl FuzzyFilePicker {
 
                     ui.add_space(5.0);
 
+                    // Track if we need to navigate to a folder after the loop
+                    let mut folder_to_navigate: Option<String> = None;
+                    
                     // Display entries in a scrollable list
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         // Show parent directory option
@@ -290,9 +293,33 @@ impl FuzzyFilePicker {
 
                             if ui.selectable_label(is_selected, label_text).clicked() {
                                 self.selected_index = Some(idx);
+                                // If clicking on a directory, mark it for navigation
+                                if *is_dir {
+                                    folder_to_navigate = Some(name.clone());
+                                }
                             }
                         }
                     });
+
+                    // Handle folder navigation after the loop to avoid borrowing issues
+                    if let Some(folder_name) = folder_to_navigate {
+                        let new_dir = self.current_dir.join(&folder_name);
+                        if new_dir.exists() && new_dir.is_dir() {
+                            self.current_dir = new_dir;
+                            self.current_path.push(folder_name);
+                            self.query = String::new();
+                            self.update_entries();
+
+                            // Check for Project.json file
+                            let project_file = self.current_dir.join("Project.json");
+                            if project_file.exists() && project_file.is_file() {
+                                // Found a Project.json file, select this directory
+                                self.status = FuzzyFilePickerStatus::Selected(self.current_dir.clone());
+                            }
+                        } else {
+                            self.error_message = Some(format!("Cannot access directory: {}", folder_name));
+                        }
+                    }
 
                     ui.add_space(10.0);
 
