@@ -135,9 +135,9 @@ pub fn aws_get_log_events_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Bo
     Box::new(AwsGetLogEventsTool::new(aws_client))
 }
 
-/// Creates AWS Get Log Entries tool (high-level tool with standalone agent)
-pub fn aws_get_log_entries_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
-    Box::new(AwsGetLogEntriesTool::new(aws_client))
+/// Creates AWS CloudTrail Lookup Events tool
+pub fn aws_cloudtrail_lookup_events_tool(aws_client: Option<Arc<AWSResourceClient>>) -> Box<dyn Tool> {
+    Box::new(AwsCloudTrailLookupEventsTool::new(aws_client))
 }
 
 /// Creates TodoWrite tool for task management with shared storage

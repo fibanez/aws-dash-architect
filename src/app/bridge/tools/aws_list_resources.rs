@@ -316,8 +316,12 @@ Examples:
 - List VPCs in us-east-1: {"resource_type": "vpcs", "region": "us-east-1"}  
 - List Lambda functions: {"resource_type": "functions"}
 - List RDS databases: {"resource_type": "rds"}
+- List CloudTrail trails: {"resource_type": "trails"} or {"resource_type": "cloudtrail"}
 - List all resources in account: {"account_id": "123456789012"}
-- Force fresh data: {"resource_type": "instances", "force_refresh": true}"#
+- Force fresh data: {"resource_type": "instances", "force_refresh": true}
+
+Note: For CloudTrail trails, this returns trail configurations including S3 bucket locations, 
+home regions, and status. To query CloudTrail events, use aws_cloudtrail_lookup_events tool."#
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

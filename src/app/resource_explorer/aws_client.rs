@@ -198,7 +198,7 @@ impl AWSResourceClient {
         EfsService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    fn get_cloudtrail_service(&self) -> CloudTrailService {
+    pub fn get_cloudtrail_service(&self) -> CloudTrailService {
         CloudTrailService::new(Arc::clone(&self.credential_coordinator))
     }
 

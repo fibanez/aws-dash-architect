@@ -4,8 +4,8 @@
 //! Replaces hardcoded agent types with dynamic task-based agent creation.
 
 use crate::app::bridge::{
-    aws_describe_log_groups_tool, aws_describe_resource_tool, aws_find_account_tool,
-    aws_find_region_tool, aws_get_log_events_tool, aws_list_resources_tool,
+    aws_cloudtrail_lookup_events_tool, aws_describe_log_groups_tool, aws_describe_resource_tool,
+    aws_find_account_tool, aws_find_region_tool, aws_get_log_events_tool, aws_list_resources_tool,
     get_global_aws_credentials, get_global_model, todo_read_tool,
     todo_write_tool, ModelConfig, PerformanceTimer,
     BridgeDebugEvent, log_bridge_debug_event,
@@ -98,6 +98,8 @@ impl TaskAgent {
                     // AWS CloudWatch tools for log analysis
                     aws_describe_log_groups_tool(None),
                     aws_get_log_events_tool(None),
+                    // AWS CloudTrail tools for event auditing
+                    aws_cloudtrail_lookup_events_tool(None),
                     // AWS resource tools for resource operations
                     aws_list_resources_tool(None),
                     aws_describe_resource_tool(None),
@@ -179,6 +181,7 @@ TASK EXECUTION WORKFLOW:
 1. Use TodoWrite to plan your approach: break down the task into specific steps
 2. Use appropriate AWS tools based on what the task requires:
    - CloudWatch logs: aws_describe_log_groups, aws_get_log_events
+   - CloudTrail events: aws_cloudtrail_lookup_events (query 90-day event history)
    - AWS resources: aws_list_resources, aws_describe_resource (supports multiple accounts/regions)
    - Context lookup: aws_find_account, aws_find_region
 3. Execute the steps systematically, marking todos complete as you progress
@@ -201,6 +204,7 @@ AVAILABLE TOOLS:
 - TodoRead: Check current task status
 - aws_describe_log_groups: Find CloudWatch log groups
 - aws_get_log_events: Retrieve log events with filtering
+- aws_cloudtrail_lookup_events: Query CloudTrail 90-day event history (supports multiple accounts/regions)
 - aws_list_resources: List AWS resources by type (supports arrays of accounts/regions)
 - aws_describe_resource: Get detailed resource information
 - aws_find_account: Account lookup (no API calls)
