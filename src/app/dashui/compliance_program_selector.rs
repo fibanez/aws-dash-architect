@@ -134,7 +134,7 @@ impl ComplianceProgramSelector {
     fn filter_programs(&self) -> Vec<&AvailableComplianceProgram> {
         let query_lower = self.search_query.to_lowercase();
         
-        self.available_programs
+        let mut filtered_programs: Vec<&AvailableComplianceProgram> = self.available_programs
             .iter()
             .filter(|program| {
                 // Category filter
@@ -165,7 +165,12 @@ impl ComplianceProgramSelector {
                 
                 true
             })
-            .collect()
+            .collect();
+            
+        // Sort alphabetically by display name
+        filtered_programs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        
+        filtered_programs
     }
 
     /// Try to load programs synchronously if ComplianceDiscovery is available
@@ -432,6 +437,11 @@ impl ComplianceProgramSelector {
         let cleaned_description = description
             .strip_prefix("AWS Guard rule set for ")
             .unwrap_or(description);
+        
+        // Remove "AWS Guard rules set based on" prefix from description if present
+        let cleaned_description = cleaned_description
+            .strip_prefix("AWS Guard rules set based on ")
+            .unwrap_or(cleaned_description);
         
         // Return the cleaned description as the display name
         cleaned_description.to_string()
