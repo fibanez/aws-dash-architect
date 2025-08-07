@@ -4,7 +4,7 @@ This document lists all AWS services currently implemented in the AWS Explorer f
 
 ## Summary
 
-Total implemented services: **159 resource types** across **72 AWS services**
+Total implemented services: **157 resource types** across **72 AWS services**
 
 ## Services by Category
 
@@ -32,8 +32,6 @@ Total implemented services: **159 resource types** across **72 AWS services**
 
 #### Lambda
 - Lambda Function (`AWS::Lambda::Function`)
-- Lambda Layer (`AWS::Lambda::LayerVersion`)
-- Lambda Event Source Mapping (`AWS::Lambda::EventSourceMapping`)
 
 #### ECS (Elastic Container Service)
 - ECS Cluster (`AWS::ECS::Cluster`)
