@@ -426,20 +426,6 @@ impl ComplianceProgramSelector {
     }
     
     // Helper methods for synchronous processing
-    fn sync_normalize_program_id(&self, rule_set_name: &str) -> String {
-        rule_set_name.to_lowercase().replace("-", "_").replace(" ", "_")
-    }
-    
-    fn sync_format_display_name(&self, rule_set_name: &str) -> String {
-        // Remove "AWS Guard rule set for" prefix first
-        let cleaned_name = rule_set_name
-            .strip_prefix("AWS Guard rule set for ")
-            .unwrap_or(rule_set_name);
-        
-        // Return the cleaned name as-is since it should already be the proper full name
-        // like "Center for Cybersecurity Maturity Model Certification (CMMC) Level 1"
-        cleaned_name.to_string()
-    }
     
     fn sync_format_description_for_display(&self, description: &str) -> String {
         // Remove "AWS Guard rule set for" prefix from description if present
@@ -451,22 +437,6 @@ impl ComplianceProgramSelector {
         cleaned_description.to_string()
     }
     
-    fn sync_get_best_display_name(&self, rule_set_name: &str, description: &str) -> String {
-        // First try to use the description if it's meaningful
-        let cleaned_description = description
-            .strip_prefix("AWS Guard rule set for ")
-            .unwrap_or(description);
-        
-        // Check if the description is useful (not empty, not the default fallback)
-        if !cleaned_description.is_empty() 
-            && cleaned_description != "No description available"
-            && cleaned_description.trim().len() > 3 {
-            return cleaned_description.to_string();
-        }
-        
-        // Fall back to using the rule set name (cleaned)
-        self.sync_format_display_name(rule_set_name)
-    }
     
     fn sync_categorize_compliance_program(&self, rule_set_name: &str) -> String {
         let name_lower = rule_set_name.to_lowercase();

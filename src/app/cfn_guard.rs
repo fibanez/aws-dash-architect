@@ -325,8 +325,6 @@ impl ComplianceProgram {
 /// Mapping of a compliance program to its guard rule files
 #[derive(Debug, Clone)]
 struct ComplianceProgramMapping {
-    /// Program name/identifier
-    pub name: String,
     /// Display name for UI
     pub display_name: String,
     /// List of guard rule file paths relative to rules directory
@@ -338,15 +336,11 @@ struct ComplianceProgramMapping {
 struct GuardRuleMapping {
     /// Path to the guard file (e.g., "rules/aws/amazon_s3/s3_bucket_ssl_requests_only.guard")
     pub guard_file_path: String,
-    /// Associated compliance controls (e.g., ["AC-4", "SC-8"])  
-    pub controls: Vec<String>,
 }
 
 /// Memory management for progressive validation
 #[derive(Debug)]
 struct MemoryManager {
-    /// Memory threshold in bytes (e.g., 500MB)
-    memory_threshold: usize,
     /// Current batch size for processing
     current_batch_size: usize,
     /// Maximum batch size allowed
@@ -354,9 +348,8 @@ struct MemoryManager {
 }
 
 impl MemoryManager {
-    fn new(memory_threshold_mb: usize) -> Self {
+    fn new(_memory_threshold_mb: usize) -> Self {
         Self {
-            memory_threshold: memory_threshold_mb * 1024 * 1024,
             current_batch_size: 5, // Start with 5 rules per batch
             max_batch_size: 20,
         }
@@ -1377,17 +1370,9 @@ impl GuardValidator {
             .iter()
             .filter_map(|mapping| {
                 let guard_file_path = mapping.get("guardFilePath")?.as_str()?.to_string();
-                let controls = mapping.get("controls")
-                    .and_then(|c| c.as_array())
-                    .map(|arr| arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect())
-                    .unwrap_or_else(Vec::new);
                     
                 Some(GuardRuleMapping {
                     guard_file_path,
-                    controls,
                 })
             })
             .collect();
@@ -1395,7 +1380,6 @@ impl GuardValidator {
         log::debug!("Loaded mapping for {} with {} rules", display_name, guard_rules.len());
         
         Ok(ComplianceProgramMapping {
-            name: program_name.to_string(),
             display_name,
             guard_rules,
         })
