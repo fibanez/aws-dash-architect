@@ -13,7 +13,7 @@ use crate::app::bridge::{
 };
 use crate::app::dashui::window_focus::{FocusableWindow, IdentityShowParams};
 use crate::create_agent_with_model;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use egui::{CollapsingHeader, Color32, RichText, ScrollArea, TextEdit, Window};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, Mutex};
@@ -244,8 +244,6 @@ impl Drop for ControlBridgeWindow {
 }
 
 impl ControlBridgeWindow {
-    // Removed get_user_friendly_action and get_task_description - no longer needed after removing streaming
-
     pub fn new() -> Self {
         info!("🚢 Initializing Control Bridge (Agent will be created on first message)");
 
@@ -1639,18 +1637,10 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
     }
 
     fn render_message(&mut self, ui: &mut egui::Ui, message: &Message, index: usize) {
-        let agent_prefix = if let Some(ref agent_source) = message.agent_source {
-            format!("({}) ", agent_source)
-        } else {
-            String::new()
-        };
-
-        let local_time = message.timestamp.with_timezone(&Local);
+        // Clean Zen-like header: just icon and summary
         let header_text = format!(
-            "{} {} - {}{}",
+            "{} {}",
             message.role.icon(),
-            local_time.format("%H:%M:%S"),
-            agent_prefix,
             message.summary.as_ref().unwrap_or(&"Message".to_string())
         );
 
@@ -2365,6 +2355,20 @@ impl BridgeToolCallbackHandler {
             active_tool_nodes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+
+    /// Map tool names to user-friendly actions
+    fn get_user_friendly_action(tool_name: &str) -> &'static str {
+        match tool_name {
+            "aws_list_resources" => "List",
+            "aws_describe_resource" => "Describe", 
+            "aws_find_account" => "Find Account",
+            "aws_find_region" => "Find Region",
+            "create_task" => "Task",
+            "search_logs" => "Search Logs",
+            "analyze_logs" => "Analyze",
+            _ => "Tool", // Generic fallback
+        }
+    }
 }
 
 #[async_trait]
@@ -2380,25 +2384,52 @@ impl CallbackHandler for BridgeToolCallbackHandler {
             ToolEvent::Started { name, input } => {
                 // Create "Calling tool" parent node
                 let tool_node_id = format!("tool_{}_{}", name, Utc::now().timestamp_millis());
-                let input_preview = match input {
-                    serde_json::Value::Object(obj) => {
-                        if obj.len() <= 2 {
-                            format!("{:?}", obj)
-                        } else {
-                            format!("{{...{} parameters...}}", obj.len())
-                        }
-                    }
-                    other => format!("{}", other)
+                
+                // Get friendly name for display
+                let friendly_name = Self::get_user_friendly_action(&name);
+                
+                // For create_task, show the task description prominently
+                let (content, summary) = if name == "create_task" {
+                    let task_description = input
+                        .get("task_description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Task execution");
+                    
+                    // Show the task description as the main content
+                    let content = format!("🎯 {}", task_description);
+                    let summary = format!("{}: {}", friendly_name, 
+                        task_description.chars().take(50).collect::<String>() + 
+                        if task_description.len() > 50 { "..." } else { "" });
+                    
+                    (content, summary)
+                } else {
+                    // For other tools, show friendly name
+                    let content = format!("🔧 {}", friendly_name);
+                    let summary = friendly_name.to_string();
+                    (content, summary)
                 };
                 
+                // Create nested message with JSON input parameters
+                let json_input_message = Message {
+                    id: format!("{}_input", tool_node_id),
+                    role: MessageRole::JsonRequest,
+                    content: serde_json::to_string_pretty(&input).unwrap_or_else(|_| format!("{:?}", input)),
+                    timestamp: Utc::now(),
+                    summary: Some("Input Parameters".to_string()),
+                    debug_info: None,
+                    nested_messages: Vec::new(),
+                    agent_source: Some("Bridge-Tool-Callback".to_string()),
+                    json_debug_data: Vec::new(),
+                };
+
                 let parent_message = Message {
                     id: tool_node_id.clone(),
                     role: MessageRole::System,
-                    content: format!("🔧 {}\nInput: {}", name, input_preview),
+                    content,
                     timestamp: Utc::now(),
-                    summary: Some(format!("Tool: {}", name)),
+                    summary: Some(summary),
                     debug_info: None,
-                    nested_messages: Vec::new(),
+                    nested_messages: vec![json_input_message],
                     agent_source: Some("Bridge-Tool-Callback".to_string()),
                     json_debug_data: Vec::new(),
                 };
@@ -2419,35 +2450,33 @@ impl CallbackHandler for BridgeToolCallbackHandler {
             }
             
             ToolEvent::Completed { name, output, duration } => {
-                // Create child response node - show actual tool output values
-                let output_display = match &output {
-                    Some(serde_json::Value::String(s)) => {
-                        // For strings, show the actual string content
-                        s.clone()
-                    }
-                    Some(serde_json::Value::Object(obj)) => {
-                        // For objects, format as pretty JSON
-                        serde_json::to_string_pretty(obj).unwrap_or_else(|_| format!("{:?}", obj))
-                    }
-                    Some(serde_json::Value::Array(arr)) => {
-                        // For arrays, format as pretty JSON
-                        serde_json::to_string_pretty(arr).unwrap_or_else(|_| format!("{:?}", arr))
-                    }
-                    Some(other) => {
-                        // For other types (null, bool, number), show the value directly
-                        other.to_string()
-                    }
-                    None => "No output".to_string(),
+                // Get friendly name
+                let friendly_name = Self::get_user_friendly_action(&name);
+                
+                // Create nested message with JSON output
+                let json_output_message = Message {
+                    id: format!("tool_output_{}_{}", name, Utc::now().timestamp_millis()),
+                    role: MessageRole::JsonResponse,
+                    content: match &output {
+                        Some(value) => serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{:?}", value)),
+                        None => "null".to_string(),
+                    },
+                    timestamp: Utc::now(),
+                    summary: Some("Output Result".to_string()),
+                    debug_info: None,
+                    nested_messages: Vec::new(),
+                    agent_source: Some("Bridge-Tool-Callback".to_string()),
+                    json_debug_data: Vec::new(),
                 };
 
                 let child_message = Message {
                     id: format!("tool_response_{}_{}", name, Utc::now().timestamp_millis()),
                     role: MessageRole::Assistant,
-                    content: format!("✅ Tool result ({:.2}s):\n{}", duration.as_secs_f64(), output_display),
+                    content: format!("✅ {} completed ({:.2}s)", friendly_name, duration.as_secs_f64()),
                     timestamp: Utc::now(),
-                    summary: Some(format!("Result: {}", name)),
+                    summary: Some(format!("{} Result", friendly_name)),
                     debug_info: None,
-                    nested_messages: Vec::new(),
+                    nested_messages: vec![json_output_message],
                     agent_source: Some("Bridge-Tool-Callback".to_string()),
                     json_debug_data: Vec::new(),
                 };
@@ -2480,13 +2509,16 @@ impl CallbackHandler for BridgeToolCallbackHandler {
             }
             
             ToolEvent::Failed { name, error, duration } => {
+                // Get friendly name
+                let friendly_name = Self::get_user_friendly_action(&name);
+                
                 // Create child error node
                 let child_message = Message {
                     id: format!("tool_error_{}_{}", name, Utc::now().timestamp_millis()),
                     role: MessageRole::Debug,
-                    content: format!("❌ Tool failed ({:.2}s):\n{}", duration.as_secs_f64(), error),
+                    content: format!("❌ {} failed ({:.2}s):\n{}", friendly_name, duration.as_secs_f64(), error),
                     timestamp: Utc::now(),
-                    summary: Some(format!("Error: {}", name)),
+                    summary: Some(format!("{} Error", friendly_name)),
                     debug_info: None,
                     nested_messages: Vec::new(),
                     agent_source: Some("Bridge-Tool-Callback".to_string()),
