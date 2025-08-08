@@ -4,6 +4,7 @@
 //! Individual tool implementations are in the tools/ subfolder.
 
 use crate::app::dashui::control_bridge_window::AgentResponse;
+use crate::app::projects::Project;
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,6 +40,9 @@ static GLOBAL_CANCELLATION_MANAGER: RwLock<Option<Arc<AgentCancellationManager>>
 
 /// Global model configuration for agent creation
 static GLOBAL_MODEL_CONFIG: RwLock<Option<String>> = RwLock::new(None);
+
+/// Global current project for bridge tools to access
+static GLOBAL_CURRENT_PROJECT: RwLock<Option<Arc<Mutex<Project>>>> = RwLock::new(None);
 
 /// Set the global AWS client for all tools to use
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
@@ -170,6 +174,11 @@ pub fn create_task_tool() -> Box<dyn Tool> {
     }
 
     Box::new(tool)
+}
+
+/// Creates read_cloudformation_template tool for reading project CloudFormation templates
+pub fn read_cloudformation_template_tool() -> Box<dyn Tool> {
+    Box::new(ReadCloudFormationTemplateTool::new())
 }
 
 /// Set global AWS credentials for standalone agents
@@ -408,6 +417,59 @@ pub fn clear_global_model() {
         }
         Err(e) => {
             error!("❌ Failed to clear global model: {}", e);
+        }
+    }
+}
+
+/// Set the global current project for all tools to use
+pub fn set_global_current_project(project: Option<Arc<Mutex<Project>>>) {
+    match GLOBAL_CURRENT_PROJECT.write() {
+        Ok(mut guard) => {
+            if let Some(proj_arc) = &project {
+                if let Ok(proj) = proj_arc.lock() {
+                    info!("📁 🔥 DEBUG: Setting global project: '{}' (has template: {})", 
+                        proj.name, proj.cfn_template.is_some());
+                } else {
+                    warn!("📁 🔥 DEBUG: Could not lock project to get details during set");
+                }
+                info!("📁 Global current project updated for bridge tools: ✅ Set");
+            } else {
+                info!("📁 🔥 DEBUG: Clearing global current project");
+                info!("📁 Global current project updated for bridge tools: ❌ Cleared");
+            }
+            *guard = project;
+        }
+        Err(e) => {
+            error!("🔥 DEBUG: Failed to update global current project: {}", e);
+        }
+    }
+}
+
+/// Get the global current project for tool execution
+pub fn get_global_current_project() -> Option<Arc<Mutex<Project>>> {
+    match GLOBAL_CURRENT_PROJECT.read() {
+        Ok(guard) => {
+            let project = guard.clone();
+            if project.is_some() {
+                info!("📁 🔥 DEBUG: Global current project access: ✅ Available");
+                // Try to get project details for debugging
+                if let Some(proj_arc) = &project {
+                    if let Ok(proj) = proj_arc.lock() {
+                        info!("📁 🔥 DEBUG: Project name: '{}'", proj.name);
+                        info!("📁 🔥 DEBUG: Project has template: {}", proj.cfn_template.is_some());
+                    } else {
+                        warn!("📁 🔥 DEBUG: Could not lock project for details");
+                    }
+                }
+            } else {
+                error!("📁 🔥 DEBUG: Global current project access: ❌ Not set");
+                error!("📁 🔥 DEBUG: This means set_global_current_project() was never called or called with None");
+            }
+            project
+        }
+        Err(e) => {
+            error!("🔥 DEBUG: Failed to read global current project: {}", e);
+            None
         }
     }
 }

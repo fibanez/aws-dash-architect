@@ -11,6 +11,7 @@ pub mod aws_find_region;
 pub mod aws_get_log_events;
 pub mod aws_list_resources;
 pub mod create_task;
+pub mod read_cloudformation_template;
 pub mod todo_read;
 pub mod todo_write;
 
@@ -23,5 +24,6 @@ pub use aws_find_region::{AwsFindRegionTool, RegionSearchResult};
 pub use aws_get_log_events::AwsGetLogEventsTool;
 pub use aws_list_resources::AwsListResourcesTool;
 pub use create_task::{ActiveTask, CreateTaskTool};
+pub use read_cloudformation_template::ReadCloudFormationTemplateTool;
 pub use todo_read::TodoReadTool;
 pub use todo_write::{TodoItem, TodoPriority, TodoStatus, TodoWriteTool};

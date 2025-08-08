@@ -37,7 +37,7 @@ use super::{
     NavigableWidgetManager, NavigationCommand, NavigationMode, NavigationState,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
-use crate::app::bridge::set_global_aws_identity;
+use crate::app::bridge::{set_global_aws_identity, set_global_current_project};
 use crate::app::cfn_resources::{
     load_attribute_definitions, load_property_definitions, load_property_type_definitions,
     CfnResourcesDownloader,
@@ -1962,6 +1962,29 @@ impl DashApp {
 
             // Check if a project is now loaded (or was saved)
             let has_project = self.project_command_palette.current_project.is_some();
+
+            // Update global project state for bridge tools when project state changes
+            if has_project != had_project || project_saved {
+                info!("🔥 APP DEBUG: Project state changed - updating global bridge state");
+                info!("🔥 APP DEBUG: had_project: {}, has_project: {}, project_saved: {}", 
+                    had_project, has_project, project_saved);
+                    
+                if let Some(project) = &self.project_command_palette.current_project {
+                    // Project is loaded - update global state
+                    info!("🔥 APP DEBUG: Setting global project: '{}'", project.name);
+                    info!("🔥 APP DEBUG: Project has template: {}", project.cfn_template.is_some());
+                    let project_clone = project.clone();
+                    set_global_current_project(Some(Arc::new(Mutex::new(project_clone))));
+                    info!("🔥 APP DEBUG: Global project state updated successfully");
+                } else {
+                    // No project loaded - clear global state
+                    info!("🔥 APP DEBUG: No project loaded - clearing global state");
+                    set_global_current_project(None);
+                    info!("🔥 APP DEBUG: Global project state cleared");
+                }
+            } else {
+                info!("🔥 APP DEBUG: No project state change detected - not updating global state");
+            }
 
             // If project state changed (loaded or saved), trigger appropriate actions
             if (has_project && !had_project) || project_saved {
