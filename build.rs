@@ -2,6 +2,24 @@
 use std::process::Command;
 
 fn main() {
+    // macOS specific configuration for iconv and TLS linking
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=iconv");
+        // Try to find iconv in common locations
+        if std::path::Path::new("/usr/lib/libiconv.dylib").exists() {
+            println!("cargo:rustc-link-search=native=/usr/lib");
+        } else if std::path::Path::new("/opt/homebrew/lib/libiconv.dylib").exists() {
+            println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+        } else if std::path::Path::new("/usr/local/lib/libiconv.dylib").exists() {
+            println!("cargo:rustc-link-search=native=/usr/local/lib");
+        }
+
+        // Link against Security framework for TLS support
+        println!("cargo:rustc-link-lib=framework=Security");
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    }
+
     let git_branch = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()

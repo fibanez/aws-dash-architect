@@ -13,6 +13,10 @@ rust-version = "1.81"
 name = "awsdash"
 path = "src/main.rs"
 
+
+
+
+
 [dependencies]
 # AI Agent framework
 stood = { git = "https://github.com/fibanez/stood.git" }
@@ -51,7 +55,7 @@ once_cell = "1.20"
 directories = "5.0"
 dirs = "5.0"
 zip = "0.6.6"
-git2 = "0.18"
+git2 = { version = "0.18", default-features = false, features = ["vendored-openssl", "https", "vendored-libgit2"] }
 
 # AWS support
 aws-config = "1.1"
@@ -150,6 +154,7 @@ regex = "1.7"
 lazy_static = "1.4.0"
 fuzzy-matcher = "0.3"
 random_color = "0.7"
+tempfile = "3.8"
 aws-smithy-runtime-api = "1.8.0"
 aws-sdk-sts = "1.67.0"
 aws-sdk-macie2 = "1.67"
@@ -196,6 +201,10 @@ overflow-checks = true  # Keep debug safety checks
 inherits = "dev"
 opt-level = 2  # More optimization to reduce stack usage
 debug = true   # Keep debug symbols
+
+# macOS specific configuration to fix iconv linking issues
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 # If you fork https://github.com/emilk/egui you can test with:
 # egui = { path = "../egui/crates/egui" }

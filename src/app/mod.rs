@@ -35,6 +35,9 @@
 
 pub mod aws_identity;
 pub mod bedrock_client;
+pub mod branch_detector;
+#[cfg(test)]
+pub mod branch_detector_integration_test;
 pub mod bridge;
 pub mod bulk_rule_downloader;
 pub mod cf_syntax;
@@ -48,8 +51,14 @@ pub mod cfn_template;
 pub mod cloudformation_manager;
 pub mod compliance_discovery;
 pub mod guard_repository_manager;
+pub mod repository_recovery;
+#[cfg(test)]
+pub mod repository_recovery_integration_test;
 pub mod dashui;
 pub mod fonts;
+pub mod git_error_handling;
+#[cfg(test)]
+pub mod git_error_handling_test;
 pub mod guard_rules_registry;
 pub mod notifications;
 pub mod projects;

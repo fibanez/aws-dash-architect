@@ -19,6 +19,14 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
+use crate::app::git_error_handling::{
+    GitOperation, GitOperationError, GitOperationLogger
+};
+use crate::app::branch_detector::BranchDetector;
+use crate::app::repository_recovery::{
+    RepositoryRecoveryManager, RepositoryValidation
+};
+
 /// GitHub repository URL for AWS CloudFormation Guard Rules
 const GUARD_RULES_REPO_URL: &str = "https://github.com/aws-cloudformation/aws-guard-rules-registry.git";
 
@@ -129,6 +137,11 @@ impl GuardRepositoryManager {
         self.repo_path.join("rules")
     }
 
+    /// Create a branch detector for the guard rules repository
+    pub fn create_branch_detector(&self) -> BranchDetector {
+        BranchDetector::new(GUARD_RULES_REPO_URL.to_string())
+    }
+
     /// Synchronize repository (clone if not exists, pull if exists) - async version
     pub fn sync_repository_async() -> mpsc::Receiver<RepositorySyncStatus> {
         let (tx, rx) = mpsc::channel();
@@ -197,34 +210,117 @@ impl GuardRepositoryManager {
     fn clone_repository(&self, tx: &mpsc::Sender<RepositorySyncStatus>) -> Result<()> {
         let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Cloning, 20));
         
-        info!("Cloning AWS CloudFormation Guard Rules Repository...");
-        
-        // Use git2 to clone the repository
-        let mut cb = git2::RemoteCallbacks::new();
-        cb.update_tips(|_refname, a, b| {
-            if a.is_zero() {
-                info!("Cloning: {}", b);
-            } else {
-                info!("Updating: {} to {}", a, b);
+        // Detect the default branch before starting clone operation
+        let branch_detector = self.create_branch_detector();
+        let default_branch = match branch_detector.detect_default_branch() {
+            Ok(branch) => {
+                info!("Successfully detected default branch: {}", branch);
+                branch
             }
-            true
-        });
+            Err(e) => {
+                warn!("Failed to detect default branch, falling back to 'main': {}", e);
+                "main".to_string()
+            }
+        };
+        
+        // Start logging for the clone operation
+        let logger = GitOperationLogger::start(
+            GitOperation::Clone,
+            self.repo_path.clone(),
+            Some(GUARD_RULES_REPO_URL.to_string()),
+            Some(default_branch.clone()),
+        );
+        
+        // Check if target directory already exists and handle it
+        if self.repo_path.exists() {
+            // Check if it's a git repository
+            if self.repo_path.join(".git").exists() {
+                info!("Removing existing repository for fresh clone");
+                if let Err(e) = std::fs::remove_dir_all(&self.repo_path) {
+                    let error_msg = format!("Failed to remove existing repository: {}", e);
+                    error!("{}", error_msg);
+                    let git_error = logger.log_failure_with_message(error_msg);
+                    return Err(git_error.into_anyhow());
+                }
+            } else {
+                // Directory exists but is not a git repo - check if it's empty
+                match std::fs::read_dir(&self.repo_path) {
+                    Ok(entries) => {
+                        let count = entries.count();
+                        if count > 0 {
+                            let error_msg = format!("Target directory exists and contains {} items - cannot clone", count);
+                            error!("{}", error_msg);
+                            let git_error = logger.log_failure_with_message(error_msg);
+                            return Err(git_error.into_anyhow());
+                        }
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Cannot read target directory: {}", e);
+                        error!("{}", error_msg);
+                        let git_error = logger.log_failure_with_message(error_msg);
+                        return Err(git_error.into_anyhow());
+                    }
+                }
+            }
+        }
+        
+        // Ensure parent directory exists
+        let parent_dir = self.repo_path.parent().unwrap_or(&self.data_dir);
+        if !parent_dir.exists() {
+            if let Err(e) = std::fs::create_dir_all(parent_dir) {
+                let error_msg = format!("Failed to create parent directory {}: {}", parent_dir.display(), e);
+                error!("{}", error_msg);
+                let git_error = logger.log_failure_with_message(error_msg);
+                return Err(git_error.into_anyhow());
+            }
+        }
+        
+        let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Cloning, 30));
+        
+        // Set up git2 clone operation with TLS configuration
+        use crate::app::git_error_handling::tls_config;
+        let mut cb = tls_config::configure_tls_callbacks();
+        
+        // Add minimal progress callbacks
+        cb.update_tips(|_refname, _a, _b| true);
 
         let mut fetch_options = git2::FetchOptions::new();
         fetch_options.remote_callbacks(cb);
 
         let mut builder = git2::build::RepoBuilder::new();
         builder.fetch_options(fetch_options);
+        
+        // Add branch specification using dynamic branch detection
+        builder.branch(&default_branch);
+        
+        info!("Starting git clone operation");
+        let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Cloning, 40));
 
         match builder.clone(GUARD_RULES_REPO_URL, &self.repo_path) {
             Ok(_repo) => {
-                info!("Successfully cloned Guard Rules Repository to {:?}", self.repo_path);
+                info!("Git clone operation completed successfully");
+                let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Cloning, 60));
+                
+                // Basic validation - check that essential directories exist
+                let mappings_dir = self.repo_path.join("mappings");
+                let rules_dir = self.repo_path.join("rules");
+                
+                if !mappings_dir.exists() {
+                    warn!("Mappings directory not found - this may indicate an incomplete clone");
+                }
+                
+                if !rules_dir.exists() {
+                    warn!("Rules directory not found - this may indicate an incomplete clone");
+                }
+                
+                logger.log_success("Repository successfully cloned");
                 let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Cloning, 70));
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to clone repository: {}", e);
-                Err(anyhow!("Git clone failed: {}", e))
+                error!("Git clone operation failed: {}", e.message());
+                let git_error = logger.log_failure(e);
+                Err(git_error.into_anyhow())
             }
         }
     }
@@ -233,74 +329,392 @@ impl GuardRepositoryManager {
     fn pull_repository(&self, tx: &mpsc::Sender<RepositorySyncStatus>) -> Result<()> {
         let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Pulling, 30));
         
-        info!("Pulling latest changes for Guard Rules Repository...");
-
-        let repo = Repository::open_ext(&self.repo_path, RepositoryOpenFlags::empty(), &[] as &[&std::ffi::OsStr])?;
-
-        // Get the remote
-        let mut remote = repo.find_remote("origin")?;
-
-        // Set up callbacks
-        let mut cb = git2::RemoteCallbacks::new();
-        cb.update_tips(|_refname, a, b| {
-            if a.is_zero() {
-                info!("Updating: {}", b);
-            } else {
-                info!("Updating: {} to {}", a, b);
+        // Detect the default branch for pull operation
+        let branch_detector = self.create_branch_detector();
+        let default_branch = match branch_detector.detect_default_branch() {
+            Ok(branch) => {
+                info!("Successfully detected default branch for pull: {}", branch);
+                branch
             }
-            true
-        });
+            Err(e) => {
+                warn!("Failed to detect default branch for pull, falling back to 'main': {}", e);
+                "main".to_string()
+            }
+        };
+        
+        // Start logging for the pull operation
+        let mut logger = GitOperationLogger::start(
+            GitOperation::Pull,
+            self.repo_path.clone(),
+            Some(GUARD_RULES_REPO_URL.to_string()),
+            Some(default_branch.clone()),
+        );
 
-        // Fetch changes
+        // First, try to open the repository
+        let repo = match Repository::open_ext(&self.repo_path, RepositoryOpenFlags::empty(), &[] as &[&std::ffi::OsStr]) {
+            Ok(repo) => {
+                logger.add_context("repository_opened".to_string(), "success".to_string());
+                repo
+            }
+            Err(e) => {
+                let git_error = GitOperationError::from_git2_error(
+                    GitOperation::RepositoryOpen,
+                    e,
+                    self.repo_path.clone(),
+                    Some(GUARD_RULES_REPO_URL.to_string()),
+                    None,
+                );
+                git_error.log_error();
+                return Err(git_error.into_anyhow());
+            }
+        };
+
+        // Get the remote with error handling
+        let mut remote = match repo.find_remote("origin") {
+            Ok(remote) => {
+                logger.add_context("remote_found".to_string(), "origin".to_string());
+                remote
+            }
+            Err(e) => {
+                let git_error = GitOperationError::from_git2_error(
+                    GitOperation::RemoteOperation,
+                    e,
+                    self.repo_path.clone(),
+                    Some(GUARD_RULES_REPO_URL.to_string()),
+                    None,
+                );
+                git_error.log_error();
+                return Err(git_error.into_anyhow());
+            }
+        };
+
+        // Set up callbacks with TLS configuration
+        use crate::app::git_error_handling::tls_config;
+        let mut cb = tls_config::configure_tls_callbacks();
+        
+        // Add minimal progress callbacks
+        cb.update_tips(|_refname, _a, _b| true);
+
+        // Fetch changes with error handling
         let mut fetch_options = git2::FetchOptions::new();
         fetch_options.remote_callbacks(cb);
         
-        remote.fetch(&["refs/heads/main:refs/remotes/origin/main"], Some(&mut fetch_options), None)?;
+        let fetch_refspec = format!("refs/heads/{}:refs/remotes/origin/{}", default_branch, default_branch);
+        if let Err(e) = remote.fetch(&[&fetch_refspec], Some(&mut fetch_options), None) {
+            let git_error = logger.log_failure(e);
+            
+            // Provide specific guidance based on error type
+            if let Some(error_class) = &git_error.git2_error_class {
+                match error_class.as_str() {
+                    "Net" | "Http" | "Ssl" => {
+                        error!("Network error during fetch - check internet connection");
+                    }
+                    "Reference" => {
+                        error!("Branch error during fetch - the '{}' branch may not exist on remote", default_branch);
+                        
+                        // Try to list available branches for debugging
+                        if let Ok(branches) = branch_detector.get_available_branches() {
+                            error!("Available branches: {:?}", 
+                                   branches.iter().map(|b| &b.name).collect::<Vec<_>>());
+                        }
+                    }
+                    _ => {
+                        error!("Fetch failure with error class: {}", error_class);
+                    }
+                }
+            }
+            
+            return Err(git_error.into_anyhow());
+        }
 
         let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Pulling, 50));
 
-        // Get references
-        let fetch_head = repo.find_reference("FETCH_HEAD")?;
-        let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+        // Get references with error handling
+        let fetch_head = match repo.find_reference("FETCH_HEAD") {
+            Ok(reference) => reference,
+            Err(e) => {
+                let git_error = GitOperationError::from_git2_error(
+                    GitOperation::ReferenceCreate,
+                    e,
+                    self.repo_path.clone(),
+                    Some(GUARD_RULES_REPO_URL.to_string()),
+                    Some("FETCH_HEAD".to_string()),
+                );
+                git_error.log_error();
+                return Err(git_error.into_anyhow());
+            }
+        };
 
-        // Do the merge
-        let analysis = repo.merge_analysis(&[&fetch_commit])?;
+        let fetch_commit = match repo.reference_to_annotated_commit(&fetch_head) {
+            Ok(commit) => commit,
+            Err(e) => {
+                let git_error = logger.log_failure(e);
+                return Err(git_error.into_anyhow());
+            }
+        };
+
+        // Do the merge analysis with error handling
+        let analysis = match repo.merge_analysis(&[&fetch_commit]) {
+            Ok(analysis) => analysis,
+            Err(e) => {
+                let git_error = GitOperationError::from_git2_error(
+                    GitOperation::Merge,
+                    e,
+                    self.repo_path.clone(),
+                    Some(GUARD_RULES_REPO_URL.to_string()),
+                    Some(default_branch.clone()),
+                );
+                git_error.log_error();
+                return Err(git_error.into_anyhow());
+            }
+        };
         
         if analysis.0.is_up_to_date() {
-            info!("Repository is already up to date");
+            logger.log_success("Repository is already up to date");
         } else if analysis.0.is_fast_forward() {
             info!("Fast-forwarding repository");
             
-            let refname = format!("refs/heads/{}", "main");
-            let mut reference = repo.find_reference(&refname)?;
-            reference.set_target(fetch_commit.id(), "Fast-Forward")?;
-            repo.set_head(&refname)?;
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+            let refname = format!("refs/heads/{}", default_branch);
             
-            info!("Successfully updated Guard Rules Repository");
+            // Update or create reference with error handling
+            if let Err(e) = (|| -> Result<(), git2::Error> {
+                // Try to find existing reference, create if it doesn't exist
+                match repo.find_reference(&refname) {
+                    Ok(mut reference) => {
+                        // Reference exists, update it
+                        reference.set_target(fetch_commit.id(), "Fast-Forward")?;
+                    }
+                    Err(_) => {
+                        // Reference doesn't exist, create it
+                        repo.reference(&refname, fetch_commit.id(), false, "Create branch")?;
+                    }
+                }
+                repo.set_head(&refname)?;
+                repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+                Ok(())
+            })() {
+                let git_error = GitOperationError::from_git2_error(
+                    GitOperation::Checkout,
+                    e,
+                    self.repo_path.clone(),
+                    Some(GUARD_RULES_REPO_URL.to_string()),
+                    Some(default_branch.clone()),
+                );
+                git_error.log_error();
+                return Err(git_error.into_anyhow());
+            }
+            
+            logger.log_success("Successfully fast-forwarded repository");
         } else {
-            warn!("Cannot fast-forward repository, manual intervention may be needed");
-            return Err(anyhow!("Repository requires manual merge"));
+            let error_msg = "Repository requires manual merge - cannot fast-forward".to_string();
+            warn!("{}", error_msg);
+            let git_error = logger.log_failure_with_message(error_msg);
+            return Err(git_error.into_anyhow());
         }
 
         let _ = tx.send(RepositorySyncStatus::new(SyncPhase::Pulling, 70));
         Ok(())
     }
 
-    /// Verify that the cloned repository has the expected structure
+    /// Create a repository recovery manager for this guard repository
+    pub fn create_recovery_manager(&self) -> RepositoryRecoveryManager {
+        let required_directories = vec![
+            "mappings".to_string(),
+            "rules".to_string(),
+        ];
+        
+        RepositoryRecoveryManager::new(
+            GUARD_RULES_REPO_URL.to_string(),
+            self.repo_path.clone(),
+            required_directories,
+        )
+    }
+
+    /// Perform comprehensive repository validation using recovery manager
+    pub fn validate_repository_comprehensive(&self) -> RepositoryValidation {
+        let recovery_manager = self.create_recovery_manager();
+        recovery_manager.validate_repository_structure()
+    }
+
+    /// Attempt repository recovery if issues are detected
+    pub fn attempt_repository_recovery(&self, tx: &mpsc::Sender<RepositorySyncStatus>) -> Result<()> {
+        info!("Starting repository recovery process");
+        let _ = tx.send(RepositorySyncStatus::new(SyncPhase::CheckingLocal, 5));
+
+        let mut recovery_manager = self.create_recovery_manager();
+        
+        // Detect issues first
+        let issues = recovery_manager.detect_repository_issues()
+            .map_err(|e| anyhow!("Failed to detect repository issues: {}", e))?;
+
+        if issues.is_empty() {
+            info!("No repository issues detected - recovery not needed");
+            return Ok(());
+        }
+
+        info!("Detected {} repository issues, attempting recovery", issues.len());
+        let _ = tx.send(RepositorySyncStatus::new(SyncPhase::CheckingLocal, 10));
+
+        // Create a clone function that integrates with our existing clone logic
+        let data_dir = self.data_dir.clone();
+        let tx_clone = tx.clone();
+        
+        let clone_fn = move |_repo_url: &str, target_path: &Path| -> Result<()> {
+            // Create a temporary manager for the recovery clone
+            let temp_manager = GuardRepositoryManager {
+                data_dir: data_dir.clone(),
+                repo_path: target_path.to_path_buf(),
+            };
+            
+            // Use our existing clone logic
+            temp_manager.clone_repository(&tx_clone)
+        };
+
+        // Attempt recovery
+        recovery_manager.attempt_repository_recovery(clone_fn)
+            .map_err(|e| {
+                error!("Repository recovery failed: {}", e);
+                
+                // Generate user guidance for manual resolution
+                let final_issues = recovery_manager.detect_repository_issues()
+                    .unwrap_or_default();
+                let guidance = recovery_manager.generate_user_guidance(&final_issues);
+                
+                error!("Manual intervention required:");
+                for line in guidance.lines() {
+                    error!("{}", line);
+                }
+                
+                anyhow!("Repository recovery failed: {}", e)
+            })?;
+
+        info!("Repository recovery completed successfully");
+        Ok(())
+    }
+
+    /// Enhanced sync repository that includes recovery mechanisms
+    pub fn sync_repository_with_recovery() -> mpsc::Receiver<RepositorySyncStatus> {
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let manager = match Self::new() {
+                Ok(manager) => manager,
+                Err(e) => {
+                    let _ = tx.send(RepositorySyncStatus::with_error(
+                        SyncPhase::CheckingLocal,
+                        format!("Failed to initialize repository manager: {}", e),
+                    ));
+                    return;
+                }
+            };
+
+            // First, try normal sync
+            let normal_sync_result = manager.sync_repository_with_progress(&tx);
+            
+            match normal_sync_result {
+                Ok(()) => {
+                    // Normal sync succeeded, validate the result
+                    let validation = manager.validate_repository_comprehensive();
+                    if validation.is_valid {
+                        let _ = tx.send(RepositorySyncStatus::completed());
+                        return;
+                    } else {
+                        warn!("Repository sync completed but validation failed: {:?}", validation.validation_errors);
+                        // Continue to recovery attempt
+                    }
+                }
+                Err(e) => {
+                    warn!("Normal repository sync failed: {}", e);
+                    // Continue to recovery attempt
+                }
+            }
+
+            // Normal sync failed or validation failed, attempt recovery
+            info!("Attempting repository recovery due to sync issues");
+            let recovery_result = manager.attempt_repository_recovery(&tx);
+
+            match recovery_result {
+                Ok(()) => {
+                    // Recovery succeeded, validate again
+                    let validation = manager.validate_repository_comprehensive();
+                    if validation.is_valid {
+                        let _ = tx.send(RepositorySyncStatus::completed());
+                    } else {
+                        let _ = tx.send(RepositorySyncStatus::with_error(
+                            SyncPhase::Complete,
+                            format!("Recovery completed but repository is still invalid: {:?}", validation.validation_errors),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(RepositorySyncStatus::with_error(
+                        SyncPhase::Complete,
+                        format!("Repository recovery failed: {}", e),
+                    ));
+                }
+            }
+        });
+
+        rx
+    }
+
+    /// Verify that the cloned repository has the expected structure with enhanced logging
     fn verify_repository_structure(&self) -> Result<()> {
+        info!("Verifying repository structure at {}", self.repo_path.display());
+        
         let mappings_dir = self.get_mappings_path();
         let rules_dir = self.get_rules_path();
 
+        // Check mappings directory
         if !mappings_dir.exists() {
+            error!("Repository missing /mappings directory at {}", mappings_dir.display());
+            error!("Repository structure verification failed - incomplete clone detected");
+            
+            // Log what directories do exist for debugging
+            if let Ok(entries) = std::fs::read_dir(&self.repo_path) {
+                let existing_dirs: Vec<String> = entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+                    .collect();
+                error!("Existing directories in repository: {:?}", existing_dirs);
+            }
+            
             return Err(anyhow!("Repository missing /mappings directory"));
+        } else {
+            info!("Found mappings directory at {}", mappings_dir.display());
         }
 
+        // Check rules directory
         if !rules_dir.exists() {
+            error!("Repository missing /rules directory at {}", rules_dir.display());
+            error!("Repository structure verification failed - incomplete clone detected");
             return Err(anyhow!("Repository missing /rules directory"));
+        } else {
+            info!("Found rules directory at {}", rules_dir.display());
         }
 
-        info!("Repository structure verified successfully");
+        // Count files in each directory for additional verification
+        let mappings_count = std::fs::read_dir(&mappings_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        
+        let rules_count = std::fs::read_dir(&rules_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+
+        info!("Repository structure verified successfully:");
+        info!("  - Mappings directory: {} items", mappings_count);
+        info!("  - Rules directory: {} items", rules_count);
+
+        if mappings_count == 0 {
+            warn!("Mappings directory is empty - this may indicate an incomplete clone");
+        }
+
+        if rules_count == 0 {
+            warn!("Rules directory is empty - this may indicate an incomplete clone");
+        }
+
         Ok(())
     }
 
