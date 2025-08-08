@@ -1599,9 +1599,20 @@ IMPORTANT: Always use the TodoWrite tool to plan and track tasks throughout the 
                         });
                     }
 
-                    // Clear input button
+                    // Clear button - recreates agent as if model changed
                     if ui.button("🗑 Clear").clicked() {
-                        self.input_text.clear();
+                        let current_model = self
+                            .model_settings
+                            .get_selected_model(&self.available_models);
+                        let current_display_name = current_model
+                            .map(|m| m.display_name.clone())
+                            .unwrap_or_else(|| "Unknown Model".to_string());
+                        
+                        // Trigger the same reset logic as model change
+                        self.reset_for_model_change(&current_display_name);
+                        
+                        // Set model_changed flag to force agent recreation on next use
+                        self.model_changed = true;
                     }
                 });
 
