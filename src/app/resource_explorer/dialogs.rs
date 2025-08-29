@@ -1335,6 +1335,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "CloudTrail Trail".to_string(),
             "CloudTrail".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::CloudTrail::Event".to_string(),
+            "CloudTrail Event".to_string(),
+            "CloudTrail".to_string(),
+        ),
         // Config Resources
         ResourceTypeSelection::new(
             "AWS::Config::ConfigurationRecorder".to_string(),

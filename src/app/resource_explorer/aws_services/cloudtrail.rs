@@ -1,7 +1,7 @@
 use super::super::credentials::CredentialCoordinator;
 use anyhow::{Context, Result};
 use aws_sdk_cloudtrail as cloudtrail;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use std::sync::Arc;
 use tracing::info;
 
@@ -12,7 +12,7 @@ pub struct LookupEventsParams {
     pub end_time: Option<DateTime<Utc>>,
     pub lookup_attribute: Option<LookupAttribute>,
     pub max_results: usize,
-    pub event_category: Option<String>, // "insight" for Insights events
+    pub event_category: Option<String>, // "insight" for Insights events (Data events not supported by LookupEvents API)
 }
 
 /// Lookup attribute for filtering CloudTrail events
@@ -28,7 +28,7 @@ impl Default for LookupEventsParams {
             start_time: None,
             end_time: None,
             lookup_attribute: None,
-            max_results: 50,
+            max_results: 100,
             event_category: None,
         }
     }
@@ -330,10 +330,13 @@ impl CloudTrailService {
                 ));
             }
 
-            // Add event category if specified (e.g., "insight")
+            // Add event category if specified (only "insight" is supported)
             if let Some(ref category) = params.event_category {
                 if category == "insight" {
                     request = request.event_category(cloudtrail::types::EventCategory::Insight);
+                } else if category != "management" {
+                    // Log unsupported category
+                    info!("⚠️  Event category '{}' not supported by LookupEvents API - using default (management)", category);
                 }
             }
 
@@ -375,6 +378,286 @@ impl CloudTrailService {
         );
 
         Ok(all_events)
+    }
+
+    // ===== DEDICATED LOOKUP METHODS ===== //
+    
+    /// Lookup CloudTrail events for a specific resource ID
+    pub async fn lookup_events_by_resource_id(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_id: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let params = LookupEventsParams {
+            lookup_attribute: Some(LookupAttribute {
+                attribute_key: "ResourceName".to_string(),
+                attribute_value: resource_id.to_string(),
+            }),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events for resource {} in account {} region {}",
+            resource_id, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    /// Lookup CloudTrail events for a specific resource type
+    pub async fn lookup_events_by_resource_type(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_type: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let params = LookupEventsParams {
+            lookup_attribute: Some(LookupAttribute {
+                attribute_key: "ResourceType".to_string(),
+                attribute_value: resource_type.to_string(),
+            }),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events for resource type {} in account {} region {}",
+            resource_type, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    /// Lookup CloudTrail events for a specific AWS service
+    pub async fn lookup_events_by_service(
+        &self,
+        account_id: &str,
+        region: &str,
+        service_name: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        // Map common service names to their EventSource values
+        let service_name_lower = service_name.to_lowercase();
+        let event_source = match service_name_lower.as_str() {
+            // Core compute & storage services
+            "s3" => "s3.amazonaws.com",
+            "ec2" => "ec2.amazonaws.com", 
+            "lambda" => "lambda.amazonaws.com",
+            "efs" => "elasticfilesystem.amazonaws.com",
+            "ecs" => "ecs.amazonaws.com",
+            "eks" => "eks.amazonaws.com",
+            "batch" => "batch.amazonaws.com",
+            
+            // Database services
+            "rds" => "rds.amazonaws.com",
+            "dynamodb" => "dynamodb.amazonaws.com",
+            "elasticache" => "elasticache.amazonaws.com",
+            "neptune" => "neptune.amazonaws.com",
+            "redshift" => "redshift.amazonaws.com",
+            
+            // Security & Identity services
+            "iam" => "iam.amazonaws.com",
+            "sts" => "sts.amazonaws.com",
+            "kms" => "kms.amazonaws.com",
+            "secretsmanager" | "secrets" => "secretsmanager.amazonaws.com",
+            "ssm" => "ssm.amazonaws.com",
+            "guardduty" => "guardduty.amazonaws.com",
+            "securityhub" => "securityhub.amazonaws.com",
+            "acm" => "acm.amazonaws.com",
+            "organizations" => "organizations.amazonaws.com",
+            
+            // Networking services
+            "elb" | "elasticloadbalancing" => "elasticloadbalancing.amazonaws.com",
+            "elbv2" | "elasticloadbalancingv2" => "elasticloadbalancingv2.amazonaws.com",
+            "route53" => "route53.amazonaws.com",
+            "apigateway" => "apigateway.amazonaws.com",
+            "apigatewayv2" => "apigatewayv2.amazonaws.com",
+            "cloudfront" => "cloudfront.amazonaws.com",
+            "waf" | "wafv2" => "wafv2.amazonaws.com",
+            
+            // Messaging & Events
+            "sns" => "sns.amazonaws.com",
+            "sqs" => "sqs.amazonaws.com",
+            "eventbridge" | "events" => "events.amazonaws.com",
+            "kinesis" => "kinesis.amazonaws.com",
+            "firehose" | "kinesisfirehose" => "firehose.amazonaws.com",
+            
+            // Developer Tools
+            "codecommit" => "codecommit.amazonaws.com",
+            "codebuild" => "codebuild.amazonaws.com",
+            "codedeploy" => "codedeploy.amazonaws.com",
+            "codepipeline" => "codepipeline.amazonaws.com",
+            
+            // Analytics & ML
+            "athena" => "athena.amazonaws.com",
+            "glue" => "glue.amazonaws.com",
+            "emr" => "elasticmapreduce.amazonaws.com",
+            "sagemaker" => "sagemaker.amazonaws.com",
+            "opensearch" | "elasticsearch" => "opensearch.amazonaws.com",
+            "quicksight" => "quicksight.amazonaws.com",
+            
+            // Application Integration
+            "stepfunctions" | "states" => "states.amazonaws.com",
+            "appsync" => "appsync.amazonaws.com",
+            "cognito" => "cognito-idp.amazonaws.com",
+            
+            // Management & Governance
+            "cloudformation" | "cfn" => "cloudformation.amazonaws.com",
+            "cloudtrail" => "cloudtrail.amazonaws.com",
+            "logs" | "cloudwatch-logs" => "logs.amazonaws.com",
+            "cloudwatch" => "monitoring.amazonaws.com",
+            "config" | "configservice" => "config.amazonaws.com",
+            "backup" => "backup.amazonaws.com",
+            "transfer" => "transfer.amazonaws.com",
+            
+            // If it already looks like an event source, use as-is
+            name if name.contains(".amazonaws.com") => name,
+            // Otherwise assume it's already in the correct format
+            _ => service_name,
+        };
+
+        let params = LookupEventsParams {
+            lookup_attribute: Some(LookupAttribute {
+                attribute_key: "EventSource".to_string(),
+                attribute_value: event_source.to_string(),
+            }),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events for service {} (EventSource: {}) in account {} region {}",
+            service_name, event_source, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    /// Lookup CloudTrail events for a specific event name
+    pub async fn lookup_events_by_event_name(
+        &self,
+        account_id: &str,
+        region: &str,
+        event_name: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let params = LookupEventsParams {
+            lookup_attribute: Some(LookupAttribute {
+                attribute_key: "EventName".to_string(),
+                attribute_value: event_name.to_string(),
+            }),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events for event name {} in account {} region {}",
+            event_name, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    /// Lookup CloudTrail events for a specific username
+    pub async fn lookup_events_by_username(
+        &self,
+        account_id: &str,
+        region: &str,
+        username: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let params = LookupEventsParams {
+            lookup_attribute: Some(LookupAttribute {
+                attribute_key: "Username".to_string(),
+                attribute_value: username.to_string(),
+            }),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events for username {} in account {} region {}",
+            username, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    // ===== TIME-BASED CONVENIENCE METHODS ===== //
+    
+    /// Lookup recent CloudTrail events (last N hours)
+    pub async fn lookup_recent_events(
+        &self,
+        account_id: &str,
+        region: &str,
+        hours_back: i64,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let now = Utc::now();
+        let start_time = now - Duration::hours(hours_back);
+        
+        let params = LookupEventsParams {
+            start_time: Some(start_time),
+            end_time: Some(now),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events from last {} hours in account {} region {}",
+            hours_back, account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
+    }
+
+    /// Lookup CloudTrail events from the last hour
+    pub async fn lookup_events_last_hour(
+        &self,
+        account_id: &str,
+        region: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.lookup_recent_events(account_id, region, 1, max_results).await
+    }
+
+    /// Lookup CloudTrail events from the last 24 hours
+    pub async fn lookup_events_last_24_hours(
+        &self,
+        account_id: &str,
+        region: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.lookup_recent_events(account_id, region, 24, max_results).await
+    }
+
+    /// Lookup CloudTrail events from the last week
+    pub async fn lookup_events_last_week(
+        &self,
+        account_id: &str,
+        region: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let now = Utc::now();
+        let start_time = now - Duration::weeks(1);
+        
+        let params = LookupEventsParams {
+            start_time: Some(start_time),
+            end_time: Some(now),
+            max_results: max_results.unwrap_or(100),
+            ..Default::default()
+        };
+        
+        info!(
+            "🔍 Looking up CloudTrail events from last week in account {} region {}",
+            account_id, region
+        );
+        
+        self.lookup_events(account_id, region, params).await
     }
 
     /// Convert CloudTrail event to JSON

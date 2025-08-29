@@ -49,7 +49,7 @@ pub enum AgentResponse {
     },
 }
 
-/// Real-time streaming updates from agent execution
+// Real-time streaming updates from agent execution
 // Removed StreamingUpdate - using blocking execution
 
 /// JSON debug data captured from model interactions
@@ -2452,7 +2452,7 @@ impl CallbackHandler for BridgeToolCallbackHandler {
 
                 // Send parent node to UI via ToolCallStart message
                 let response = AgentResponse::ToolCallStart {
-                    parent_message: parent_message,
+                    parent_message,
                 };
 
                 if let Err(e) = self.sender.send(response) {
@@ -2507,7 +2507,7 @@ impl CallbackHandler for BridgeToolCallbackHandler {
                     // Send child node to UI
                     let response = AgentResponse::ToolCallComplete {
                         parent_message_id: parent_id.clone(),
-                        child_message: child_message,
+                        child_message,
                     };
 
                     if let Err(e) = self.sender.send(response) {
@@ -2550,7 +2550,7 @@ impl CallbackHandler for BridgeToolCallbackHandler {
                 if let Some(parent_id) = parent_node_id {
                     let response = AgentResponse::ToolCallComplete {
                         parent_message_id: parent_id.clone(),
-                        child_message: child_message,
+                        child_message,
                     };
 
                     if let Err(e) = self.sender.send(response) {

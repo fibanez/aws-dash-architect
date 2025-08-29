@@ -1041,6 +1041,22 @@ impl AWSResourceClient {
                     .list_trails(account, region)
                     .await?
             }
+            "AWS::CloudTrail::Event" => {
+                // Query recent CloudTrail management events from the 90-day event history
+                use super::aws_services::cloudtrail::LookupEventsParams;
+                
+                let params = LookupEventsParams {
+                    start_time: Some(chrono::Utc::now() - chrono::Duration::days(7)), // Last 7 days
+                    end_time: Some(chrono::Utc::now()),
+                    lookup_attribute: None, // No filtering
+                    max_results: 50, // Reasonable default
+                    event_category: None, // Management events (default)
+                };
+                
+                self.get_cloudtrail_service()
+                    .lookup_events(account, region, params)
+                    .await?
+            }
             "AWS::Config::ConfigurationRecorder" => {
                 self.get_config_service()
                     .list_configuration_recorders(account, region)
@@ -2022,6 +2038,11 @@ impl AWSResourceClient {
                         &resource.resource_id,
                     )
                     .await
+            }
+            "AWS::CloudTrail::Event" => {
+                // For CloudTrail Events, we already have all the details in raw_properties
+                // Return the event details as-is since lookup_events provides comprehensive data
+                Ok(resource.raw_properties.clone())
             }
             "AWS::Config::ConfigurationRecorder" => {
                 self.get_config_service()

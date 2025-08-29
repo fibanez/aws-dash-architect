@@ -117,7 +117,10 @@ impl Tool for AwsCloudTrailLookupEventsTool {
          This queries the CloudTrail event history directly without requiring a trail to be configured. \
          Time formats: ISO 8601 (2024-01-01T00:00:00Z), YYYY-MM-DD HH:MM:SS, YYYY-MM-DD, \
          or relative times like '7 days ago', '1 hour ago'. \
-         Returns up to 50 events per account/region by default."
+         Returns up to 100 events per account/region by default. \
+         \n\nIMPORTANT: The LookupEvents API only supports Management and Insight events. \
+         Data events (S3 object operations, Lambda invocations, etc.) are NOT available \
+         through this API and require CloudTrail Lake or trail log analysis."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -175,13 +178,42 @@ impl Tool for AwsCloudTrailLookupEventsTool {
                 "event_category": {
                     "type": "string",
                     "enum": ["management", "insight"],
-                    "description": "Type of events to retrieve (default: management)"
+                    "description": "Type of events to retrieve: 'management' (control plane operations, default) or 'insight' (unusual activity detection). Note: Data events are NOT supported by the LookupEvents API."
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of events to return per account/region (default: 50, max: 1000)",
+                    "description": "Maximum number of events to return per account/region (default: 100, max: 1000)",
                     "minimum": 1,
                     "maximum": 1000
+                },
+                "resource_id": {
+                    "type": "string",
+                    "description": "Filter events by specific resource ID/name (e.g., i-1234567890abcdef0, my-bucket-name)",
+                    "examples": ["i-1234567890abcdef0", "my-s3-bucket", "arn:aws:lambda:us-east-1:123456789012:function:MyFunction"]
+                },
+                "resource_type": {
+                    "type": "string", 
+                    "description": "Filter events by AWS resource type (e.g., AWS::EC2::Instance, AWS::S3::Bucket)",
+                    "examples": ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::Lambda::Function"]
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "Filter events by AWS service name. Supports both short names (s3, ec2, lambda) and full event sources (s3.amazonaws.com). Maps 40+ major AWS services.",
+                    "examples": ["s3", "ec2", "lambda", "iam", "rds", "dynamodb", "eks", "apigateway", "cloudformation", "sns", "sqs", "athena", "glue", "codecommit", "backup"]
+                },
+                "hours_back": {
+                    "type": "integer",
+                    "description": "Look back this many hours from now (alternative to start_time/end_time)",
+                    "minimum": 1,
+                    "maximum": 2160,
+                    "examples": [1, 24, 168]
+                },
+                "days_back": {
+                    "type": "integer", 
+                    "description": "Look back this many days from now (alternative to start_time/end_time)",
+                    "minimum": 1,
+                    "maximum": 90,
+                    "examples": [1, 7, 30]
                 }
             },
             "required": ["account_ids", "regions"]
@@ -234,36 +266,50 @@ impl Tool for AwsCloudTrailLookupEventsTool {
                 message: "regions parameter is required".to_string(),
             })?;
 
-        // Parse time parameters
-        let start_time_param = if let Some(start_str) = params.get("start_time").and_then(|v| v.as_str()) {
-            match self.parse_time_string(start_str) {
-                Ok(dt) => Some(dt),
-                Err(e) => {
-                    return Err(ToolError::InvalidParameters {
-                        message: format!("Invalid start_time: {}", e),
-                    });
-                }
-            }
+        // Parse time parameters - check for convenience parameters first
+        let (start_time_param, end_time_param) = if let Some(hours_back) = params.get("hours_back").and_then(|v| v.as_i64()) {
+            let now = Utc::now();
+            let start = now - Duration::hours(hours_back);
+            (Some(start), Some(now))
+        } else if let Some(days_back) = params.get("days_back").and_then(|v| v.as_i64()) {
+            let now = Utc::now();
+            let start = now - Duration::days(days_back);
+            (Some(start), Some(now))
         } else {
-            // Default to 90 days ago (CloudTrail's maximum retention)
-            Some(Utc::now() - Duration::days(90))
+            // Parse explicit start_time and end_time
+            let start_time_param = if let Some(start_str) = params.get("start_time").and_then(|v| v.as_str()) {
+                match self.parse_time_string(start_str) {
+                    Ok(dt) => Some(dt),
+                    Err(e) => {
+                        return Err(ToolError::InvalidParameters {
+                            message: format!("Invalid start_time: {}", e),
+                        });
+                    }
+                }
+            } else {
+                // Default to 90 days ago (CloudTrail's maximum retention)
+                Some(Utc::now() - Duration::days(90))
+            };
+
+            let end_time_param = if let Some(end_str) = params.get("end_time").and_then(|v| v.as_str()) {
+                match self.parse_time_string(end_str) {
+                    Ok(dt) => Some(dt),
+                    Err(e) => {
+                        return Err(ToolError::InvalidParameters {
+                            message: format!("Invalid end_time: {}", e),
+                        });
+                    }
+                }
+            } else {
+                // Default to now
+                Some(Utc::now())
+            };
+            
+            (start_time_param, end_time_param)
         };
 
-        let end_time_param = if let Some(end_str) = params.get("end_time").and_then(|v| v.as_str()) {
-            match self.parse_time_string(end_str) {
-                Ok(dt) => Some(dt),
-                Err(e) => {
-                    return Err(ToolError::InvalidParameters {
-                        message: format!("Invalid end_time: {}", e),
-                    });
-                }
-            }
-        } else {
-            // Default to now
-            Some(Utc::now())
-        };
-
-        // Parse lookup attribute if provided
+        // Parse lookup attribute - check for direct attribute_key/attribute_value first,
+        // then check for the new convenience parameters
         let lookup_attribute = if let (Some(key), Some(value)) = (
             params.get("attribute_key").and_then(|v| v.as_str()),
             params.get("attribute_value").and_then(|v| v.as_str()),
@@ -271,6 +317,100 @@ impl Tool for AwsCloudTrailLookupEventsTool {
             Some(LookupAttribute {
                 attribute_key: key.to_string(),
                 attribute_value: value.to_string(),
+            })
+        } else if let Some(resource_id) = params.get("resource_id").and_then(|v| v.as_str()) {
+            Some(LookupAttribute {
+                attribute_key: "ResourceName".to_string(),
+                attribute_value: resource_id.to_string(),
+            })
+        } else if let Some(resource_type) = params.get("resource_type").and_then(|v| v.as_str()) {
+            Some(LookupAttribute {
+                attribute_key: "ResourceType".to_string(),
+                attribute_value: resource_type.to_string(),
+            })
+        } else if let Some(service_name) = params.get("service_name").and_then(|v| v.as_str()) {
+            // Map service names to EventSource values (same logic as in CloudTrailService)
+            let service_name_lower = service_name.to_lowercase();
+            let event_source = match service_name_lower.as_str() {
+                // Core compute & storage services
+                "s3" => "s3.amazonaws.com",
+                "ec2" => "ec2.amazonaws.com", 
+                "lambda" => "lambda.amazonaws.com",
+                "efs" => "elasticfilesystem.amazonaws.com",
+                "ecs" => "ecs.amazonaws.com",
+                "eks" => "eks.amazonaws.com",
+                "batch" => "batch.amazonaws.com",
+                
+                // Database services
+                "rds" => "rds.amazonaws.com",
+                "dynamodb" => "dynamodb.amazonaws.com",
+                "elasticache" => "elasticache.amazonaws.com",
+                "neptune" => "neptune.amazonaws.com",
+                "redshift" => "redshift.amazonaws.com",
+                
+                // Security & Identity services
+                "iam" => "iam.amazonaws.com",
+                "sts" => "sts.amazonaws.com",
+                "kms" => "kms.amazonaws.com",
+                "secretsmanager" | "secrets" => "secretsmanager.amazonaws.com",
+                "ssm" => "ssm.amazonaws.com",
+                "guardduty" => "guardduty.amazonaws.com",
+                "securityhub" => "securityhub.amazonaws.com",
+                "acm" => "acm.amazonaws.com",
+                "organizations" => "organizations.amazonaws.com",
+                
+                // Networking services
+                "elb" | "elasticloadbalancing" => "elasticloadbalancing.amazonaws.com",
+                "elbv2" | "elasticloadbalancingv2" => "elasticloadbalancingv2.amazonaws.com",
+                "route53" => "route53.amazonaws.com",
+                "apigateway" => "apigateway.amazonaws.com",
+                "apigatewayv2" => "apigatewayv2.amazonaws.com",
+                "cloudfront" => "cloudfront.amazonaws.com",
+                "waf" | "wafv2" => "wafv2.amazonaws.com",
+                
+                // Messaging & Events
+                "sns" => "sns.amazonaws.com",
+                "sqs" => "sqs.amazonaws.com",
+                "eventbridge" | "events" => "events.amazonaws.com",
+                "kinesis" => "kinesis.amazonaws.com",
+                "firehose" | "kinesisfirehose" => "firehose.amazonaws.com",
+                
+                // Developer Tools
+                "codecommit" => "codecommit.amazonaws.com",
+                "codebuild" => "codebuild.amazonaws.com",
+                "codedeploy" => "codedeploy.amazonaws.com",
+                "codepipeline" => "codepipeline.amazonaws.com",
+                
+                // Analytics & ML
+                "athena" => "athena.amazonaws.com",
+                "glue" => "glue.amazonaws.com",
+                "emr" => "elasticmapreduce.amazonaws.com",
+                "sagemaker" => "sagemaker.amazonaws.com",
+                "opensearch" | "elasticsearch" => "opensearch.amazonaws.com",
+                "quicksight" => "quicksight.amazonaws.com",
+                
+                // Application Integration
+                "stepfunctions" | "states" => "states.amazonaws.com",
+                "appsync" => "appsync.amazonaws.com",
+                "cognito" => "cognito-idp.amazonaws.com",
+                
+                // Management & Governance
+                "cloudformation" | "cfn" => "cloudformation.amazonaws.com",
+                "cloudtrail" => "cloudtrail.amazonaws.com",
+                "logs" | "cloudwatch-logs" => "logs.amazonaws.com",
+                "cloudwatch" => "monitoring.amazonaws.com",
+                "config" | "configservice" => "config.amazonaws.com",
+                "backup" => "backup.amazonaws.com",
+                "transfer" => "transfer.amazonaws.com",
+                
+                // If it already looks like an event source, use as-is
+                name if name.contains(".amazonaws.com") => name,
+                // Otherwise assume it's already in the correct format
+                _ => service_name,
+            };
+            Some(LookupAttribute {
+                attribute_key: "EventSource".to_string(),
+                attribute_value: event_source.to_string(),
             })
         } else {
             None
@@ -287,7 +427,7 @@ impl Tool for AwsCloudTrailLookupEventsTool {
             .get("max_results")
             .and_then(|v| v.as_i64())
             .map(|n| n as usize)
-            .unwrap_or(50)
+            .unwrap_or(100)
             .min(1000);
 
         info!(
