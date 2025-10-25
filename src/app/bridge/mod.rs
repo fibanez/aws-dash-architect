@@ -4,6 +4,7 @@
 //! with AWS resource operations through the Explorer system.
 
 pub mod agents;
+pub mod callback_handlers;
 pub mod cancellation;
 pub mod debug_logger;
 pub mod model_config;

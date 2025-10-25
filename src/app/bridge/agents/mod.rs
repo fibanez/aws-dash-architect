@@ -1,9 +1,12 @@
 //! AWS Bridge Task Agents
 //!
-//! This module contains the task-based agent implementation for the agent-on-demand
-//! architecture. The TaskAgent handles any AWS task based on natural language descriptions.
+//! This module contains agent implementations for the Bridge system:
+//! - BridgeAgent: Main orchestration agent for AWS infrastructure management
+//! - TaskAgent: Specialized task agents for specific AWS operations
 
+pub mod bridge_agent;
 pub mod task_agent;
 
-// Re-export agent for easy access
+// Re-export agents for easy access
+pub use bridge_agent::BridgeAgent;
 pub use task_agent::TaskAgent;
