@@ -3,7 +3,7 @@
 //! This tool allows AI agents to search for AWS regions using fuzzy matching
 //! on region codes and display names without making API calls.
 
-use crate::app::{cfn_resources::AWS_REGIONS, resource_explorer::dialogs::get_default_regions};
+use crate::app::{aws_regions::AWS_REGIONS, resource_explorer::dialogs::get_default_regions};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json;

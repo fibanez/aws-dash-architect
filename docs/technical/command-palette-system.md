@@ -1,50 +1,48 @@
 # Command Palette System
 
-Multi-context command palette system providing keyboard-driven access to application functionality through hierarchical command organization with fuzzy search and context-aware command routing.
+Keyboard-driven command palette providing quick access to core application functionality with context-aware command routing and authentication status awareness.
 
 ## Core Functionality
 
-**Multi-Context Architecture:**
-- **Main Command Palette**: System-level commands (Search, Login, AWS Explorer, Graph View, Quit)
-- **Project Command Palette**: Project management operations (New, Open, Edit project)
-- **CloudFormation Command Palette**: CloudFormation-specific operations (Deploy, Import, Validate, Add Resource, Edit Sections)
+**Command Architecture:**
+- **Main Command Palette**: System-level commands (Login, AWS Explorer, Control Bridge, Quit)
+- Simple, focused interface with 4 primary commands
+- Direct access to core features without hierarchical navigation
 
 **Key Features:**
 - Space bar global access with absolute priority over all navigation modes
-- Fuzzy search integration for file and resource selection
 - Context-aware authentication status (grayed-out commands when not logged in)
-- Hierarchical command flow from main palette to specialized sub-palettes
 - Single-key activation for all commands with visual key indicators
 - Click-outside-to-close and escape key cancellation
+- Clean, minimal interface focused on essential operations
 
 **Main Components:**
-- **CommandPalette**: Main system command interface with 7 core commands
-- **ProjectCommandPalette**: Project lifecycle management (New/Open/Edit)
-- **CloudFormationCommandPalette**: CloudFormation workflow commands (Deploy/Import/Validate)
-- **FuzzyFilePicker**: File selection with fuzzy matching and directory navigation
+- **CommandPalette**: Main system command interface with 4 core commands (L, E, B, Q)
 - **CommandRouter**: Action dispatch system with pattern matching
+- **Visual Design**: Two-column layout with colored key indicators
 
 **Integration Points:**
 - Keyboard Navigation System (Space bar bypass for all modes)
 - Window Focus System (FocusedWindow enum integration)
 - AWS Identity Center (login status awareness)
-- Project Management System (project operations)
-- CloudFormation Manager (template and deployment operations)
+- Resource Explorer (resource discovery and management)
+- Control Bridge (AI-powered AWS operations)
 
 ## Implementation Details
 
 **Key Files:**
 - `src/app/dashui/command_palette.rs` - Main command palette with system-level commands
-- `src/app/dashui/project_command_palette.rs` - Project management command interface
-- `src/app/dashui/cloudformation_command_palette.rs` - CloudFormation operations palette
 - `src/app/dashui/app.rs` - Command routing and palette integration
 
 **Command Action Pattern:**
 ```rust
-// Each palette defines its own action enum
-pub enum CommandAction { Search, Login, Project, CloudFormation, GraphView, AWSExplorer, Quit }
-pub enum ProjectCommandAction { NewProject, OpenProject, EditProject }
-pub enum CloudFormationCommandAction { AddResource, Deploy, Import, Validate, EditSections }
+// Command palette defines 4 core actions
+pub enum CommandAction {
+    Login,      // L key - Login to AWS Identity Center
+    AWSExplorer, // E key - Open AWS Resource Explorer
+    ControlBridge, // B key - Open Control Bridge
+    Quit        // Q key - Quit application
+}
 ```
 
 **Space Bar Priority System:**
@@ -56,52 +54,38 @@ pub enum CloudFormationCommandAction { AddResource, Deploy, Import, Validate, Ed
 **Visual Design Pattern:**
 - Two-column layout with calculated positioning (90% screen width, 25% height)
 - Colored circular key indicators with single-letter shortcuts
-- Color-coded commands by category (Green=Create, Blue=Import, Orange=Auth)
+- Color-coded commands by category
 - Bottom-positioned overlay with consistent margin and styling
-- Responsive sizing with scroll support for longer command lists
+- Clean, minimal interface with 4 essential commands
 
 **Authentication Integration:**
 - Dynamic command availability based on AWS login status
-- Grayed-out CloudFormation commands when not authenticated
 - Login status checks integrated into command execution
+- Visual feedback for authentication state
 
 ## Developer Notes
 
 **Extension Points for Adding New Commands:**
 
-1. **Add to Existing Palette**:
+1. **Add to Command Palette**:
    ```rust
    // In CommandAction enum
    pub enum CommandAction {
-       Search, Login, Project, CloudFormation, GraphView, AWSExplorer, Quit,
+       Login, AWSExplorer, ControlBridge, Quit,
        NewCommand, // Add new action here
    }
-   
+
    // In commands array
-   commands.push(CommandEntry {
-       key: "N",
-       label: "New Command",
-       color: Color32::from_rgb(70, 130, 180),
-       description: "Description of new command",
-       action: CommandAction::NewCommand,
-   });
+   let commands = [
+       CommandEntry { key: egui::Key::L, label: "Login AWS", ... },
+       CommandEntry { key: egui::Key::E, label: "AWS Explorer", ... },
+       CommandEntry { key: egui::Key::B, label: "Control Bridge", ... },
+       CommandEntry { key: egui::Key::N, label: "New Command", ... },
+       CommandEntry { key: egui::Key::Q, label: "Quit", ... },
+   ];
    ```
 
-2. **Create New Sub-Palette**:
-   ```rust
-   // Define new palette state enum
-   pub enum NewPaletteState { Closed, CommandPalette }
-   
-   // Implement palette display method
-   pub fn show_new_palette(ui: &mut Ui, state: &mut NewPaletteState) {
-       // Follow existing palette pattern
-   }
-   
-   // Add to main app integration
-   // Add FocusedWindow enum variant
-   ```
-
-3. **Add Command Routing**:
+2. **Add Command Routing**:
    ```rust
    // In ui_command_palette method
    match action {
@@ -112,44 +96,32 @@ pub enum CloudFormationCommandAction { AddResource, Deploy, Import, Validate, Ed
    }
    ```
 
-**File Selection Integration Pattern:**
-- Use `FuzzyFilePicker` for file-based operations
-- Support directory navigation with Ctrl+Y and Left Arrow keys
-- Implement file type filtering (JSON/YAML for CloudFormation)
-- Provide visual feedback for directory vs. file selection
-
 **Authentication-Aware Commands:**
 ```rust
 // Check login status for command availability
 let logged_in = self.aws_identity_center.is_some();
-let command_color = if logged_in {
-    Color32::from_rgb(70, 130, 180)
-} else {
-    Color32::GRAY // Grayed out when not authenticated
-};
+let command_enabled = logged_in; // Control command availability
 ```
 
-**Hierarchical Command Flow:**
-1. Space Bar → Main Command Palette
-2. Main Palette Action → Context-specific sub-palette
-3. Sub-palette Action → Specialized dialogs/operations
-4. Operation completion → Return to previous context
+**Command Flow:**
+1. Space Bar → Command Palette
+2. Select Command → Execute action
+3. Operation completion → Return to main UI
 
 **Architectural Decisions:**
 - **Space Bar Priority**: Ensures command palette is always accessible regardless of UI state
-- **Context Separation**: Each palette handles its domain-specific commands
-- **Visual Consistency**: Unified styling across all palette types
+- **Minimal Interface**: Focus on 4 essential commands for clarity
+- **Visual Consistency**: Unified styling with color-coded keys
 - **Authentication Integration**: Commands respect login state to prevent errors
-- **Fuzzy Search**: Provides efficient file selection without native dialogs
+- **Direct Access**: No hierarchical navigation - immediate action execution
 
 **Performance Considerations:**
-- Palettes only render when active (state-based display)
+- Palette only renders when active (state-based display)
 - Command routing uses efficient pattern matching
-- File picker uses incremental filtering for large directories
+- Minimal UI overhead with only 4 commands
 - Visual updates throttled to avoid excessive redraws
 
 **References:**
 - [Keyboard Navigation System](keyboard-navigation-system.md) - Space bar priority integration
 - [Window Focus System](window-focus-system.md) - FocusedWindow integration
-- [Project Management](project-management.md) - Project command operations
-- [CloudFormation Manager](cloudformation-manager.md) - CloudFormation command integration
+- [Resource Explorer System](resource-explorer-system.md) - Explorer command integration

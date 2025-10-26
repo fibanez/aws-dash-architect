@@ -6,7 +6,7 @@
 use crate::app::bridge::{
     aws_cloudtrail_lookup_events_tool, aws_describe_log_groups_tool, aws_describe_resource_tool,
     aws_find_account_tool, aws_find_region_tool, aws_get_log_events_tool, aws_list_resources_tool,
-    get_global_aws_credentials, get_global_model, read_cloudformation_template_tool, todo_read_tool,
+    get_global_aws_credentials, get_global_model, todo_read_tool,
     todo_write_tool, ModelConfig, PerformanceTimer,
     BridgeDebugEvent, log_bridge_debug_event,
 };
@@ -95,8 +95,6 @@ impl TaskAgent {
                     // Task management tools for progress tracking
                     todo_write_tool(),
                     todo_read_tool(),
-                    // CloudFormation template access for project-based tasks
-                    read_cloudformation_template_tool(),
                     // AWS CloudWatch tools for log analysis
                     aws_describe_log_groups_tool(None),
                     aws_get_log_events_tool(None),
@@ -182,7 +180,6 @@ IMPORTANT: You MUST use the TodoWrite tool to track your progress through this t
 TASK EXECUTION WORKFLOW:
 1. Use TodoWrite to plan your approach: break down the task into specific steps
 2. Use appropriate AWS tools based on what the task requires:
-   - CloudFormation template: read_cloudformation_template (access current project template)
    - CloudWatch logs: aws_describe_log_groups, aws_get_log_events
    - CloudTrail events: aws_cloudtrail_lookup_events (query 90-day event history)
    - AWS resources: aws_list_resources, aws_describe_resource (supports multiple accounts/regions)
@@ -205,7 +202,6 @@ SECURITY GUIDELINES:
 AVAILABLE TOOLS:
 - TodoWrite: Track your task progress (USE THIS FIRST)
 - TodoRead: Check current task status
-- read_cloudformation_template: Access CloudFormation template from current project (no parameters)
 - aws_describe_log_groups: Find CloudWatch log groups
 - aws_get_log_events: Retrieve log events with filtering
 - aws_cloudtrail_lookup_events: Query CloudTrail 90-day event history (supports multiple accounts/regions)

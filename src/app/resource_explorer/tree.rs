@@ -854,9 +854,16 @@ impl TreeRenderer {
                             if resource.detailed_properties.is_some() {
                                 // Show detailed properties if available
                                 let json_data = resource.get_display_properties();
-                                JsonTree::new(format!("resource_json_detailed_{}", resource_id), json_data)
-                                    .default_expand(egui_json_tree::DefaultExpand::ToLevel(3))
-                                    .show(ui);
+                                // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                                ui.scope(|ui| {
+                                    ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
+                                        .unwrap()
+                                        .size = 10.3;
+
+                                    JsonTree::new(format!("resource_json_detailed_{}", resource_id), json_data)
+                                        .default_expand(egui_json_tree::DefaultExpand::ToLevel(3))
+                                        .show(ui);
+                                });
                             } else {
                                 // Show loading state, failed state
                                 let resource_key = format!("{}:{}:{}", resource.account_id, resource.region, resource.resource_id);
@@ -867,9 +874,16 @@ impl TreeRenderer {
                                     });
                                     // Show basic list data
                                     let json_data = resource.get_display_properties();
-                                    JsonTree::new(format!("resource_json_basic_{}", resource_id), json_data)
-                                        .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
-                                        .show(ui);
+                                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                                    ui.scope(|ui| {
+                                        ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
+                                            .unwrap()
+                                            .size = 10.3;
+
+                                        JsonTree::new(format!("resource_json_basic_{}", resource_id), json_data)
+                                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                                            .show(ui);
+                                    });
                                 } else if self.pending_detail_requests.contains(&resource_key) {
                                     ui.horizontal(|ui| {
                                         ui.spinner();
@@ -878,9 +892,16 @@ impl TreeRenderer {
                                 } else {
                                     // Show basic list data in the meantime
                                     let json_data = resource.get_display_properties();
-                                    JsonTree::new(format!("resource_json_fallback_{}", resource_id), json_data)
-                                        .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
-                                        .show(ui);
+                                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                                    ui.scope(|ui| {
+                                        ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
+                                            .unwrap()
+                                            .size = 10.3;
+
+                                        JsonTree::new(format!("resource_json_fallback_{}", resource_id), json_data)
+                                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                                            .show(ui);
+                                    });
                                 }
                             }
                         });

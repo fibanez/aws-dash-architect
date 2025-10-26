@@ -2,6 +2,26 @@
 
 ## [Unreleased] - 0.1.0
 
+### October 2025
+- **Major Architecture Refactoring**: Removed CloudFormation designer to focus on Bridge + Explorer
+  - Deleted 66 files (43 source + 23 tests), removing 41,756+ lines of code
+  - Removed CloudFormation template system, DAG analysis, and deployment manager
+  - Removed Project Management system (multi-environment support)
+  - Removed Git Repository Management and integration
+  - Removed Bedrock Client and standalone Chat Window
+  - Removed Compliance/Guard validation system
+  - Removed all CloudFormation UI windows (scene graph, resource editors, property forms)
+  - Created minimal `aws_regions` module for Bridge tools
+  - Updated module documentation to reflect Bridge + Explorer architecture
+  - Clean compilation with zero warnings
+
+- **UI Simplification**: Streamlined user interface for resource exploration
+  - Removed "No Project Loaded" screen, replaced with welcome message
+  - Updated command palette: removed Project, CloudFormation, Graph View, Show Resources commands
+  - Command palette now shows: Login (L), AWS Explorer (E), Control Bridge (B), Quit (Q)
+  - Updated help window with current keyboard shortcuts
+  - Removed F1 reference and outdated CloudFormation getting started steps
+
 ### August 2025
 - **DAG System Removal**: Complete architectural simplification by removing DAG persistence system
 - **Documentation Migration**: Migrated all technical documentation from VimWiki to Markdown format  

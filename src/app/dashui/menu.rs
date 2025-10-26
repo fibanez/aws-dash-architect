@@ -44,7 +44,7 @@ pub fn build_menu(
     aws_identity_center: Option<&Arc<Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
     window_selector: &mut crate::app::dashui::window_selector::WindowSelector,
     compliance_status: Option<ComplianceStatus>,
-    compliance_programs: Option<&Vec<crate::app::cfn_guard::ComplianceProgram>>,
+    compliance_programs: Option<&Vec<String>>,
 ) -> (MenuAction, Option<String>) {
     let mut theme_changed = false;
     let mut navigation_status_bar_changed = false;
@@ -312,7 +312,7 @@ fn show_compliance_status(
 /// Displays compliance programs and validation button
 fn show_compliance_programs_and_validation(
     ui: &mut egui::Ui,
-    compliance_programs: Option<&Vec<crate::app::cfn_guard::ComplianceProgram>>,
+    compliance_programs: Option<&Vec<String>>,
     compliance_status: Option<ComplianceStatus>,
 ) -> Option<MenuAction> {
     match compliance_programs {
@@ -323,7 +323,7 @@ fn show_compliance_programs_and_validation(
                 ui.label("Compliance:");
                 let programs_text = programs
                     .iter()
-                    .map(|p| p.short_name())
+                    .map(|p| p.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
                 ui.label(

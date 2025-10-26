@@ -3,33 +3,29 @@ use super::aws_login_window::AwsLoginWindow;
 // Type aliases for complex types
 type DeploymentTaskHandle =
     std::thread::JoinHandle<Result<(String, String, String), anyhow::Error>>;
-type ValidationTaskHandle = 
-    std::thread::JoinHandle<Result<crate::app::cfn_guard::GuardValidation, anyhow::Error>>;
-use super::chat_window::ChatWindow;
-use super::cloudformation_command_palette::{
-    CloudFormationCommandAction, CloudFormationCommandPalette, CloudFormationPaletteResult,
-};
-use super::cloudformation_scene_graph::CloudFormationSceneGraph;
+// Validation task removed in Phase 2.2
+// type ValidationTaskHandle =
+//     std::thread::JoinHandle<Result<crate::app::cfn_guard::GuardValidation, anyhow::Error>>;
 use super::command_palette::{CommandAction, CommandPalette};
 use super::control_bridge_window::ControlBridgeWindow;
 use super::credentials_debug_window::CredentialsDebugWindow;
-use super::deployment_info_window::DeploymentInfoWindow;
-use super::guard_violations_window::GuardViolationsWindow;
-use super::compliance_error_window::ComplianceErrorWindow;
-use super::download_manager::DownloadManager;
+// Resource/template editor windows removed
+// use super::deployment_info_window::DeploymentInfoWindow;
 use super::help_window::HelpWindow;
 use super::log_window::LogWindow;
 use super::menu;
-use super::project_command_palette::{ProjectCommandAction, ProjectCommandPalette};
-use super::property_type_window::PropertyTypeWindowManager;
-use super::resource_details_window::ResourceDetailsWindow;
-use super::resource_form_window::ResourceFormWindow;
-use super::resource_json_editor_window::ResourceJsonEditorWindow;
-use super::resource_types_window::ResourceTypesWindow;
-use super::template_sections_window::TemplateSectionsWindow;
+// Project management removed
+// use super::project_command_palette::{ProjectCommandAction, ProjectCommandPalette};
+// Resource/template editor windows removed
+// use super::property_type_window::PropertyTypeWindowManager;
+// use super::resource_details_window::ResourceDetailsWindow;
+// use super::resource_form_window::ResourceFormWindow;
+// use super::resource_json_editor_window::ResourceJsonEditorWindow;
+// use super::resource_types_window::ResourceTypesWindow;
+// use super::template_sections_window::TemplateSectionsWindow;
 use super::verification_window::VerificationWindow;
 use super::window_focus::{
-    FocusableWindow, IdentityShowParams, SimpleShowParams, ThemeShowParams, WindowFocusManager,
+    FocusableWindow, IdentityShowParams, SimpleShowParams, WindowFocusManager,
 };
 use super::window_selector::{WindowSelector, WindowType};
 use super::{
@@ -37,26 +33,24 @@ use super::{
     NavigableWidgetManager, NavigationCommand, NavigationMode, NavigationState,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
-use crate::app::bridge::{set_global_aws_identity, set_global_current_project};
-use crate::app::cfn_resources::{
-    load_attribute_definitions, load_property_definitions, load_property_type_definitions,
-    CfnResourcesDownloader,
-};
-use crate::app::cloudformation_manager::{CloudFormationManager, ValidationResultsWindow};
+use crate::app::bridge::set_global_aws_identity;
+// CloudFormation resources removed
+// use crate::app::cfn_resources::{
+//     load_attribute_definitions, load_property_definitions, load_property_type_definitions,
+//     CfnResourcesDownloader,
+// };
+// CloudFormation manager removed
+// use crate::app::cloudformation_manager::{CloudFormationManager, ValidationResultsWindow};
 use crate::app::fonts;
 use crate::app::notifications::NotificationManager;
-use crate::app::projects::CloudFormationResource;
+// Project management removed
+// use crate::app::projects::CloudFormationResource;
 use crate::app::resource_explorer::ResourceExplorer;
-use crate::app::compliance_discovery::ComplianceDiscovery;
-use crate::app::guard_repository_manager::{GuardRepositoryManager, RepositorySyncStatus};
 use crate::trace_info;
 use eframe::egui;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::info;
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Default)]
 pub enum ThemeChoice {
@@ -103,26 +97,25 @@ pub enum PendingWidgetAction {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedWindow {
     CommandPalette,
-    ResourceTypes,
-    ResourceDetails,
-    ResourceForm,
-    ResourceJsonEditor,
-    PropertyType(usize), // Index into property_type_manager.windows
-    TemplateSections,
+    // Resource/template editor windows removed
+    // ResourceTypes,
+    // ResourceDetails,
+    // ResourceForm,
+    // ResourceJsonEditor,
+    // PropertyType(usize), // Index into property_type_manager.windows
+    // TemplateSections,
     AwsLogin,
     AwsAccounts,
     StartupPopup,
-    ProjectCommandPalette,
-    ProjectForm,
-    CloudFormationCommandPalette,
-    CloudFormationForm,
-    CloudFormationGraph,
+    // Project management removed
+    // ProjectCommandPalette,
+    // ProjectForm,
     Help,
     Log,
     Chat,
     ControlBridge,
     CredentialsDebug,
-    DeploymentInfo,
+    // DeploymentInfo,
     Verification,
     GuardViolations,
 }
@@ -137,26 +130,22 @@ pub struct DashApp {
     pub command_palette: CommandPalette,
     #[serde(skip)]
     pub show_command_palette: bool,
-    #[serde(skip)]
-    pub download_manager: DownloadManager,
-    #[serde(skip)]
-    pub resource_types_window: ResourceTypesWindow,
-    #[serde(skip)]
-    pub resource_details_window: ResourceDetailsWindow,
-    #[serde(skip)]
-    pub resource_form_window: ResourceFormWindow,
-    #[serde(skip)]
-    pub resource_json_editor_window: ResourceJsonEditorWindow,
-    #[serde(skip)]
-    pub property_type_manager: PropertyTypeWindowManager,
-    #[serde(skip)]
-    pub template_sections_window: TemplateSectionsWindow,
-    #[serde(skip)]
-    pub project_command_palette: ProjectCommandPalette,
-    #[serde(skip)]
-    pub cloudformation_command_palette: CloudFormationCommandPalette,
-    #[serde(skip)]
-    pub cloudformation_scene_graph: CloudFormationSceneGraph,
+    // Resource/template editor windows removed
+    // #[serde(skip)]
+    // pub resource_types_window: ResourceTypesWindow,
+    // #[serde(skip)]
+    // pub resource_details_window: ResourceDetailsWindow,
+    // #[serde(skip)]
+    // pub resource_form_window: ResourceFormWindow,
+    // #[serde(skip)]
+    // pub resource_json_editor_window: ResourceJsonEditorWindow,
+    // #[serde(skip)]
+    // pub property_type_manager: PropertyTypeWindowManager,
+    // #[serde(skip)]
+    // pub template_sections_window: TemplateSectionsWindow,
+    // Project management removed
+    // #[serde(skip)]
+    // pub project_command_palette: ProjectCommandPalette,
     #[serde(skip)]
     pub aws_login_window: AwsLoginWindow,
     #[serde(skip)]
@@ -164,33 +153,30 @@ pub struct DashApp {
     #[serde(skip)]
     pub log_window: LogWindow,
     #[serde(skip)]
-    pub chat_window: ChatWindow,
-    #[serde(skip)]
     pub control_bridge_window: ControlBridgeWindow,
     #[serde(skip)]
     pub credentials_debug_window: CredentialsDebugWindow,
-    #[serde(skip)]
-    pub deployment_info_window: DeploymentInfoWindow,
+    // Resource/template editor windows removed
+    // #[serde(skip)]
+    // pub deployment_info_window: DeploymentInfoWindow,
     #[serde(skip)]
     pub verification_window: VerificationWindow,
     #[serde(skip)]
-    pub guard_violations_window: GuardViolationsWindow,
-    #[serde(skip)]
     pub resource_explorer: ResourceExplorer,
-    #[serde(skip)]
-    pub cloudformation_manager: Option<std::sync::Arc<CloudFormationManager>>,
-    #[serde(skip)]
-    pub validation_results_window: ValidationResultsWindow,
-    #[serde(skip)]
-    pub parameter_dialog:
-        crate::app::cloudformation_manager::parameter_dialog::ParameterInputDialog,
-    #[serde(skip)]
-    pub deployment_progress_window:
-        crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow,
+    // CloudFormation manager removed
+    // #[serde(skip)]
+    // pub cloudformation_manager: Option<std::sync::Arc<CloudFormationManager>>,
+    // CloudFormation manager windows removed
+    // #[serde(skip)]
+    // pub validation_results_window: ValidationResultsWindow,
+    // #[serde(skip)]
+    // pub parameter_dialog:
+    //     crate::app::cloudformation_manager::parameter_dialog::ParameterInputDialog,
+    // #[serde(skip)]
+    // pub deployment_progress_window:
+    //     crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow,
     #[serde(skip)]
     pub pending_deployment_task: Option<DeploymentTaskHandle>,
-    #[serde(skip)]
-    pub pending_validation_task: Option<ValidationTaskHandle>,
     #[serde(skip)]
     pub notification_manager: NotificationManager,
     #[serde(skip)]
@@ -251,21 +237,6 @@ pub struct DashApp {
     #[serde(skip)]
     /// Current compliance validation status
     compliance_status: Option<crate::app::dashui::menu::ComplianceStatus>,
-    #[serde(skip)]
-    /// CloudFormation Guard validator instance
-    guard_validator: Option<crate::app::cfn_guard::GuardValidator>,
-    #[serde(skip)]
-    /// Compliance programs discovery service
-    pub compliance_discovery: ComplianceDiscovery,
-    #[serde(skip)]
-    /// Error window for compliance-related errors
-    pub compliance_error_window: ComplianceErrorWindow,
-    #[serde(skip)]
-    /// Repository sync status receiver for background operations
-    pub repo_sync_receiver: Option<std::sync::mpsc::Receiver<RepositorySyncStatus>>,
-    #[serde(skip)]
-    /// Current repository sync status
-    pub repo_sync_status: Option<RepositorySyncStatus>,
 }
 
 impl Default for DashApp {
@@ -275,32 +246,31 @@ impl Default for DashApp {
             navigation_status_bar_settings: NavigationStatusBarSettings::default(),
             command_palette: CommandPalette::new(),
             show_command_palette: false,
-            download_manager: DownloadManager::new(),
-            resource_types_window: ResourceTypesWindow::new(),
-            resource_details_window: ResourceDetailsWindow::new(),
-            resource_form_window: ResourceFormWindow::new(),
-            resource_json_editor_window: ResourceJsonEditorWindow::new(),
-            property_type_manager: PropertyTypeWindowManager::new(),
-            template_sections_window: TemplateSectionsWindow::new(),
-            project_command_palette: ProjectCommandPalette::new(),
-            cloudformation_command_palette: CloudFormationCommandPalette::new(),
-            cloudformation_scene_graph: CloudFormationSceneGraph::new(),
+            // Resource/template editor windows removed
+            // resource_types_window: ResourceTypesWindow::new(),
+            // resource_details_window: ResourceDetailsWindow::new(),
+            // resource_form_window: ResourceFormWindow::new(),
+            // resource_json_editor_window: ResourceJsonEditorWindow::new(),
+            // property_type_manager: PropertyTypeWindowManager::new(),
+            // template_sections_window: TemplateSectionsWindow::new(),
+            // Project management removed
+            // project_command_palette: ProjectCommandPalette::new(),
             aws_login_window: AwsLoginWindow::default(),
             help_window: HelpWindow::new(),
             log_window: LogWindow::new(),
-            chat_window: ChatWindow::new(),
             control_bridge_window: ControlBridgeWindow::new(),
             credentials_debug_window: CredentialsDebugWindow::default(),
-            deployment_info_window: DeploymentInfoWindow::default(),
+            // Resource/template editor windows removed
+            // deployment_info_window: DeploymentInfoWindow::default(),
             verification_window: VerificationWindow::default(),
-            guard_violations_window: GuardViolationsWindow::new(),
             resource_explorer: ResourceExplorer::new(),
-            cloudformation_manager: None,
-            validation_results_window: ValidationResultsWindow::new(),
-            parameter_dialog: crate::app::cloudformation_manager::parameter_dialog::ParameterInputDialog::new(),
-            deployment_progress_window: crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow::new(),
+            // CloudFormation manager removed
+            // cloudformation_manager: None,
+            // CloudFormation manager windows removed
+            // validation_results_window: ValidationResultsWindow::new(),
+            // parameter_dialog: crate::app::cloudformation_manager::parameter_dialog::ParameterInputDialog::new(),
+            // deployment_progress_window: crate::app::cloudformation_manager::deployment_progress_window::DeploymentProgressWindow::new(),
             pending_deployment_task: None,
-            pending_validation_task: None,
             notification_manager: NotificationManager::new(),
             current_template_hash: None,
             window_selector: WindowSelector::new(),
@@ -329,11 +299,6 @@ impl Default for DashApp {
             pending_widget_actions: Vec::new(),
             fonts_configured: false,
             compliance_status: None,
-            guard_validator: None,
-            compliance_discovery: ComplianceDiscovery::new_with_default_cache(),
-            compliance_error_window: ComplianceErrorWindow::new(),
-            repo_sync_receiver: None,
-            repo_sync_status: None,
         }
     }
 }
@@ -373,50 +338,9 @@ impl DashApp {
         self.pending_shake_timer = Some(Instant::now());
     }
 
-    /// Trigger compliance validation for the current project
+    /// Trigger compliance validation for the current project (removed in Phase 2.1)
     fn trigger_compliance_validation(&mut self) {
-        if let Some(project) = &self.project_command_palette.current_project {
-            if !project.guard_rules_enabled || project.compliance_programs.is_empty() {
-                tracing::warn!("Cannot validate compliance: Guard rules disabled or no compliance programs selected");
-                return;
-            }
-
-            if let Some(ref template) = project.cfn_template {
-                tracing::info!("Starting compliance validation for {} compliance programs", 
-                              project.compliance_programs.len());
-                
-                // Set compliance status to Validating
-                self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::Validating);
-                
-                // Clone the data we need for the thread
-                let compliance_programs = project.compliance_programs.clone();
-                let template_clone = template.clone();
-                
-                // Spawn validation task using std::thread (not tokio::spawn for egui compatibility)
-                let validation_task = std::thread::spawn(move || -> Result<crate::app::cfn_guard::GuardValidation, anyhow::Error> {
-                    // Create a tokio runtime for the async operations within the thread
-                    let rt = tokio::runtime::Runtime::new()?;
-                    rt.block_on(async {
-                        // Initialize GuardValidator with compliance programs
-                        let mut validator = crate::app::cfn_guard::GuardValidator::new(compliance_programs).await?;
-                        
-                        // Run validation
-                        let validation_result = template_clone.validate_with_guard(&mut validator).await?;
-                        Ok(validation_result)
-                    })
-                });
-                
-                // Store the validation task for monitoring
-                self.pending_validation_task = Some(validation_task);
-                
-                // Open the violations window immediately to show progress
-                self.focus_window("guard_violations");
-            } else {
-                tracing::warn!("Cannot validate compliance: No CloudFormation template loaded");
-            }
-        } else {
-            tracing::warn!("Cannot validate compliance: No project loaded");
-        }
+        // Compliance/Guard system removed
     }
 
     /// Update shake offsets for tracked windows that are currently shaking
@@ -506,26 +430,25 @@ impl DashApp {
                     self.show_command_palette = false;
                     self.command_palette.show = false;
                 }
-                FocusedWindow::ResourceTypes => {
-                    self.resource_types_window.show = false;
-                }
-                FocusedWindow::ResourceDetails => {
-                    self.resource_details_window.show = false;
-                }
-                FocusedWindow::ResourceForm => {
-                    self.resource_form_window.show = false;
-                }
-                FocusedWindow::CloudFormationGraph => {
-                    self.cloudformation_scene_graph.set_show(false);
-                }
-                FocusedWindow::ResourceJsonEditor => {
-                    self.resource_json_editor_window.show = false;
-                }
-                FocusedWindow::PropertyType(idx) => {
-                    if idx < self.property_type_manager.windows.len() {
-                        self.property_type_manager.windows[idx].show = false;
-                    }
-                }
+                // Resource/template editor windows removed
+                // FocusedWindow::ResourceTypes => {
+                //     self.resource_types_window.show = false;
+                // }
+                // FocusedWindow::ResourceDetails => {
+                //     self.resource_details_window.show = false;
+                // }
+                // FocusedWindow::ResourceForm => {
+                //     self.resource_form_window.show = false;
+                // }
+                // CloudFormation scene graph removed
+                // FocusedWindow::ResourceJsonEditor => {
+                //     self.resource_json_editor_window.show = false;
+                // }
+                // FocusedWindow::PropertyType(idx) => {
+                //     if idx < self.property_type_manager.windows.len() {
+                //         self.property_type_manager.windows[idx].show = false;
+                //     }
+                // }
                 FocusedWindow::AwsLogin => {
                     self.aws_login_window.open = false;
                 }
@@ -536,26 +459,18 @@ impl DashApp {
                     self.show_startup_popup = false;
                     self.startup_popup_timer = None;
                 }
-                FocusedWindow::ProjectCommandPalette => {
-                    self.project_command_palette.mode = ProjectCommandAction::Closed;
-                }
-                FocusedWindow::ProjectForm => {
-                    // Return to project command palette instead of closing completely
-                    self.project_command_palette.mode = ProjectCommandAction::CommandPalette;
-                    self.currently_focused_window = Some(FocusedWindow::ProjectCommandPalette);
-                    return;
-                }
-                FocusedWindow::CloudFormationCommandPalette => {
-                    self.cloudformation_command_palette.mode = CloudFormationCommandAction::Closed;
-                }
-                FocusedWindow::CloudFormationForm => {
-                    // Return to cloudformation command palette instead of closing completely
-                    self.cloudformation_command_palette.mode =
-                        CloudFormationCommandAction::CommandPalette;
-                    self.currently_focused_window =
-                        Some(FocusedWindow::CloudFormationCommandPalette);
-                    return;
-                }
+                // Project management removed
+                // FocusedWindow::ProjectCommandPalette => {
+                //     self.project_command_palette.mode = ProjectCommandAction::Closed;
+                // }
+                // FocusedWindow::ProjectForm => {
+                //     // Return to project command palette instead of closing completely
+                //     self.project_command_palette.mode = ProjectCommandAction::CommandPalette;
+                //     self.currently_focused_window = Some(FocusedWindow::ProjectCommandPalette);
+                //     return;
+                // }
+                // CloudFormation command palette removed
+                // CloudFormation form removed
                 FocusedWindow::Help => {
                     self.help_window.open = false;
                 }
@@ -563,7 +478,7 @@ impl DashApp {
                     self.log_window.open = false;
                 }
                 FocusedWindow::Chat => {
-                    self.chat_window.open = false;
+                    // Chat window removed
                 }
                 FocusedWindow::ControlBridge => {
                     self.control_bridge_window.open = false;
@@ -571,18 +486,20 @@ impl DashApp {
                 FocusedWindow::CredentialsDebug => {
                     self.credentials_debug_window.open = false;
                 }
-                FocusedWindow::TemplateSections => {
-                    self.template_sections_window.show = false;
-                }
+                // Resource/template editor windows removed
+                // FocusedWindow::TemplateSections => {
+                //     self.template_sections_window.show = false;
+                // }
                 FocusedWindow::Verification => {
                     self.verification_window.visible = false;
                 }
                 FocusedWindow::GuardViolations => {
-                    self.guard_violations_window.visible = false;
+                    // Guard violations window removed in Phase 2.1
                 }
-                FocusedWindow::DeploymentInfo => {
-                    self.deployment_info_window.open = false;
-                }
+                // Resource/template editor windows removed
+                // FocusedWindow::DeploymentInfo => {
+                //     self.deployment_info_window.open = false;
+                // }
             }
 
             // Remove the closed window from focus order
@@ -810,9 +727,10 @@ impl DashApp {
             // Handle real widget integration - queue action for execution (TemplateSections and others)
             info!("Queueing action {:?} for element: {}", action, element_id);
 
-            // Queue the action to be executed on the next frame when the widget is rendered
-            self.template_sections_window
-                .queue_widget_action(element_id.to_string(), action);
+            // Resource/template editor windows removed
+            // // Queue the action to be executed on the next frame when the widget is rendered
+            // self.template_sections_window
+            //     .queue_widget_action(element_id.to_string(), action);
 
             // Also handle immediate actions that don't require widget interaction
             match action {
@@ -880,7 +798,8 @@ impl DashApp {
             match resolved_action {
                 ElementAction::Click | ElementAction::Activate => {
                     info!("ResourceForm: Cancel button activated");
-                    self.resource_form_window.show = false; // Close the form
+                    // Resource/template editor windows removed
+                    // self.resource_form_window.show = false; // Close the form
                 }
                 _ => {
                     info!(
@@ -896,10 +815,11 @@ impl DashApp {
                     // In a full implementation, this would focus the text input
                 }
                 ElementAction::Copy => {
-                    info!(
-                        "ResourceForm: Copying Resource ID: {}",
-                        self.resource_form_window.resource_id
-                    );
+                    // Resource/template editor windows removed
+                    // info!(
+                    //     "ResourceForm: Copying Resource ID: {}",
+                    //     self.resource_form_window.resource_id
+                    // );
                     // In a full implementation, this would copy to clipboard
                 }
                 _ => {
@@ -1066,10 +986,11 @@ impl DashApp {
                         ));
                 }
                 ElementAction::Copy => {
-                    info!(
-                        "TemplateSections: Copying resource filter text: {}",
-                        self.template_sections_window.filter_text
-                    );
+                    // Resource/template editor windows removed
+                    // info!(
+                    //     "TemplateSections: Copying resource filter text: {}",
+                    //     self.template_sections_window.filter_text
+                    // );
                     // In a full implementation, this would copy to clipboard
                 }
                 _ => {
@@ -1088,15 +1009,9 @@ impl DashApp {
     }
 
     /// Helper to detect if an element belongs to ResourceFormWindow
-    fn is_resource_form_element(&self, element_id: &str) -> bool {
-        self.resource_form_window.is_open()
-            && (element_id == "resource_id_input"
-                || element_id == "cancel_button"
-                || element_id == "save_button"
-                || element_id == "documentation_button"
-                || element_id.starts_with("clear_property_")
-                || element_id.starts_with("ref_property_")
-                || element_id.starts_with("edit_property_"))
+    fn is_resource_form_element(&self, _element_id: &str) -> bool {
+        // Resource/template editor windows removed
+        false
     }
 
     /// Helper to detect if an element belongs to PropertyTypeFormWindow
@@ -1110,31 +1025,26 @@ impl DashApp {
     }
 
     /// Queue action on ResourceFormWindow
-    fn queue_resource_form_action(&mut self, element_id: &str, action: ElementAction) {
-        info!(
-            "Queueing action {:?} for ResourceForm element: {}",
-            action, element_id
-        );
-        self.resource_form_window
-            .queue_widget_action(element_id.to_string(), action);
+fn queue_resource_form_action(&mut self, _element_id: &str, _action: ElementAction) {
+        // Resource/template editor windows removed
     }
 
     /// Queue action on PropertyTypeFormWindow (via ResourceFormWindow)
-    fn queue_property_type_form_action(&mut self, element_id: &str, action: ElementAction) {
-        info!(
-            "Queueing action {:?} for PropertyTypeFormWindow element: {}",
-            action, element_id
-        );
-
+    fn queue_property_type_form_action(&mut self, _element_id: &str, _action: ElementAction) {
+        // Resource/template editor windows removed
+        // info!(
+        //     "Queueing action {:?} for PropertyTypeFormWindow element: {}",
+        //     action, element_id
+        // );
         // Since PropertyTypeFormWindow instances are managed within ResourceFormWindow,
         // we need to find and queue the action on the appropriate PropertyTypeFormWindow
         // For now, we'll queue it on all open PropertyTypeFormWindow instances
         // The widget manager will only activate it on the window that has that element
-        for form in &mut self.resource_form_window.property_type_forms {
-            if form.is_open() {
-                form.queue_widget_action(element_id.to_string(), action);
-            }
-        }
+        // for form in &mut self.resource_form_window.property_type_forms {
+        //     if form.is_open() {
+        //         form.queue_widget_action(element_id.to_string(), action);
+        //     }
+        // }
     }
 
     /// Process pending widget actions queued from hint activation
@@ -1264,43 +1174,46 @@ impl DashApp {
                 );
 
                 // Collect elements from all open windows
-                let mut elements = collected_elements;
+                let elements = collected_elements;
 
-                // Add elements from ResourceFormWindow if it's open
-                if self.resource_form_window.is_open() {
-                    let form_elements = self.resource_form_window.collect_navigable_elements();
-                    tracing::info!(
-                        "EnterHintMode: ResourceFormWindow is open, added {} elements",
-                        form_elements.len()
-                    );
-                    elements.extend(form_elements);
-                } else {
-                    tracing::info!("EnterHintMode: ResourceFormWindow is not open");
-                }
+                // Resource/template editor windows removed
+                // // Add elements from ResourceFormWindow if it's open
+                // if self.resource_form_window.is_open() {
+                //     let form_elements = self.resource_form_window.collect_navigable_elements();
+                //     tracing::info!(
+                //         "EnterHintMode: ResourceFormWindow is open, added {} elements",
+                //         form_elements.len()
+                //     );
+                //     elements.extend(form_elements);
+                // } else {
+                //     tracing::info!("EnterHintMode: ResourceFormWindow is not open");
+                // }
 
-                // Add elements from ResourceTypesWindow if it's open
-                if self.resource_types_window.is_open() {
-                    let types_elements = self.resource_types_window.collect_navigable_elements();
-                    tracing::info!(
-                        "EnterHintMode: ResourceTypesWindow is open, added {} elements",
-                        types_elements.len()
-                    );
-                    elements.extend(types_elements);
-                } else {
-                    tracing::info!("EnterHintMode: ResourceTypesWindow is not open");
-                }
+                // Resource/template editor windows removed
+                // // Add elements from ResourceTypesWindow if it's open
+                // if self.resource_types_window.is_open() {
+                //     let types_elements = self.resource_types_window.collect_navigable_elements();
+                //     tracing::info!(
+                //         "EnterHintMode: ResourceTypesWindow is open, added {} elements",
+                //         types_elements.len()
+                //     );
+                //     elements.extend(types_elements);
+                // } else {
+                //     tracing::info!("EnterHintMode: ResourceTypesWindow is not open");
+                // }
 
-                // Add elements from TemplateSectionsWindow if it's open
-                if self.template_sections_window.is_open() {
-                    let template_elements =
-                        self.template_sections_window.collect_navigable_elements();
-                    // R3.2 testing logs - only show if debug logging would be enabled (simplified check)
-                    #[cfg(debug_assertions)]
-                    {
-                        tracing::debug!("🎯 R3.2 HINT TESTING - EnterHintMode: TemplateSectionsWindow is open, collected {} real elements", template_elements.len());
-                    }
-                    elements.extend(template_elements);
-                }
+                // Resource/template editor windows removed
+                // // Add elements from TemplateSectionsWindow if it's open
+                // if self.template_sections_window.is_open() {
+                //     let template_elements =
+                //         self.template_sections_window.collect_navigable_elements();
+                //     // R3.2 testing logs - only show if debug logging would be enabled (simplified check)
+                //     #[cfg(debug_assertions)]
+                //     {
+                //         tracing::debug!("🎯 R3.2 HINT TESTING - EnterHintMode: TemplateSectionsWindow is open, collected {} real elements", template_elements.len());
+                //     }
+                //     elements.extend(template_elements);
+                // }
 
                 // Add elements from other windows
                 if self.help_window.is_open() {
@@ -1381,19 +1294,18 @@ impl DashApp {
     fn apply_scroll_to_focused_window(&mut self, scroll_amount: f32) {
         // Based on the currently focused window, apply scrolling
         match self.currently_focused_window {
-            Some(FocusedWindow::ResourceTypes) => {
-                // For now, just log that we would scroll the resource types window
-                info!("Scrolling ResourceTypes window by {} pixels", scroll_amount);
-                // TODO: Add scroll state to ResourceTypesWindow
-            }
-            Some(FocusedWindow::ResourceForm) => {
-                info!("Scrolling ResourceForm window by {} pixels", scroll_amount);
-                // TODO: Add scroll state to ResourceFormWindow
-            }
-            Some(FocusedWindow::CloudFormationGraph) => {
-                info!("Scrolling CloudFormation graph by {} pixels", scroll_amount);
-                // TODO: Add scroll state to CloudFormationSceneGraph
-            }
+            // Resource/template editor windows removed
+            // Some(FocusedWindow::ResourceTypes) => {
+            //     // For now, just log that we would scroll the resource types window
+            //     info!("Scrolling ResourceTypes window by {} pixels", scroll_amount);
+            //     // TODO: Add scroll state to ResourceTypesWindow
+            // }
+            // Resource/template editor windows removed
+            // Some(FocusedWindow::ResourceForm) => {
+            //     info!("Scrolling ResourceForm window by {} pixels", scroll_amount);
+            //     // TODO: Add scroll state to ResourceFormWindow
+            // }
+            // CloudFormation graph removed
             Some(FocusedWindow::Help) => {
                 info!("Scrolling Help window by {} pixels", scroll_amount);
                 // TODO: Add scroll state to HelpWindow
@@ -1430,72 +1342,60 @@ impl DashApp {
     /// Focus the next window in the window order
     fn focus_next_window(&mut self) {
         // Implement window cycling logic
+        // Resource/template editor windows removed
         if let Some(current) = self.currently_focused_window {
             // For now, just cycle through a few common windows
             match current {
-                FocusedWindow::ResourceTypes => {
-                    self.resource_form_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceForm);
-                }
-                FocusedWindow::ResourceForm => {
-                    if self.project_command_palette.current_project.is_some() {
-                        self.cloudformation_scene_graph.set_show(true);
-                        if let Some(project) = &self.project_command_palette.current_project {
-                            self.cloudformation_scene_graph.create_from_project(project);
-                        }
-                        self.set_focused_window(FocusedWindow::CloudFormationGraph);
-                    } else {
-                        self.help_window.open = true;
-                        self.set_focused_window(FocusedWindow::Help);
-                    }
-                }
-                FocusedWindow::CloudFormationGraph => {
-                    self.help_window.open = true;
-                    self.set_focused_window(FocusedWindow::Help);
-                }
+                // Resource/template editor windows removed
+                // FocusedWindow::ResourceTypes => {
+                //     self.resource_form_window.show = true;
+                //     self.set_focused_window(FocusedWindow::ResourceForm);
+                // }
+                // Resource/template editor windows removed
+                // FocusedWindow::ResourceForm => {
+                //     self.help_window.open = true;
+                //     self.set_focused_window(FocusedWindow::Help);
+                // }
+                // CloudFormation graph removed
                 FocusedWindow::Help => {
-                    self.resource_types_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceTypes);
+                    // Resource/template editor windows removed
+                    // self.resource_types_window.show = true;
+                    // self.set_focused_window(FocusedWindow::ResourceTypes);
                 }
                 _ => {
-                    self.resource_types_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceTypes);
+                    // Resource/template editor windows removed
+                    // self.resource_types_window.show = true;
+                    // self.set_focused_window(FocusedWindow::ResourceTypes);
                 }
             }
         } else {
-            self.resource_types_window.show = true;
-            self.set_focused_window(FocusedWindow::ResourceTypes);
+            // Resource/template editor windows removed
+            // self.resource_types_window.show = true;
+            // self.set_focused_window(FocusedWindow::ResourceTypes);
         }
     }
 
     /// Focus the previous window in the window order
     fn focus_previous_window(&mut self) {
         // Implement reverse window cycling logic
+        // Resource/template editor windows removed
         if let Some(current) = self.currently_focused_window {
             match current {
-                FocusedWindow::ResourceTypes => {
-                    self.help_window.open = true;
-                    self.set_focused_window(FocusedWindow::Help);
-                }
-                FocusedWindow::ResourceForm => {
-                    self.resource_types_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceTypes);
-                }
-                FocusedWindow::CloudFormationGraph => {
-                    self.resource_form_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceForm);
-                }
+                // Resource/template editor windows removed
+                // FocusedWindow::ResourceTypes => {
+                //     self.help_window.open = true;
+                //     self.set_focused_window(FocusedWindow::Help);
+                // }
+                // Resource/template editor windows removed
+                // FocusedWindow::ResourceForm => {
+                //     self.resource_types_window.show = true;
+                //     self.set_focused_window(FocusedWindow::ResourceTypes);
+                // }
+                // CloudFormation graph removed
                 FocusedWindow::Help => {
-                    if self.project_command_palette.current_project.is_some() {
-                        self.cloudformation_scene_graph.set_show(true);
-                        if let Some(project) = &self.project_command_palette.current_project {
-                            self.cloudformation_scene_graph.create_from_project(project);
-                        }
-                        self.set_focused_window(FocusedWindow::CloudFormationGraph);
-                    } else {
-                        self.resource_form_window.show = true;
-                        self.set_focused_window(FocusedWindow::ResourceForm);
-                    }
+                    // Resource/template editor windows removed
+                    // self.resource_form_window.show = true;
+                    // self.set_focused_window(FocusedWindow::ResourceForm);
                 }
                 _ => {
                     self.help_window.open = true;
@@ -1511,32 +1411,28 @@ impl DashApp {
     /// Focus a window by its index (1-9)
     fn focus_window_by_index(&mut self, index: u8) {
         let window = match index {
-            1 => {
-                self.resource_types_window.show = true;
-                FocusedWindow::ResourceTypes
-            }
-            2 => {
-                self.resource_form_window.show = true;
-                FocusedWindow::ResourceForm
-            }
-            3 => {
-                self.resource_json_editor_window.show = true;
-                FocusedWindow::ResourceJsonEditor
-            }
-            4 => {
-                // Only show CloudFormation graph if we have a project
-                if self.project_command_palette.current_project.is_some() {
-                    self.cloudformation_scene_graph.set_show(true);
-                    if let Some(project) = &self.project_command_palette.current_project {
-                        self.cloudformation_scene_graph.create_from_project(project);
-                    }
-                }
-                FocusedWindow::CloudFormationGraph
-            }
-            5 => {
-                self.template_sections_window.show = true;
-                FocusedWindow::TemplateSections
-            }
+            // Resource/template editor windows removed
+            // 1 => {
+            //     self.resource_types_window.show = true;
+            //     FocusedWindow::ResourceTypes
+            // }
+            // 2 => {
+            //     self.resource_form_window.show = true;
+            //     FocusedWindow::ResourceForm
+            // }
+            // 3 => {
+            //     self.resource_json_editor_window.show = true;
+            //     FocusedWindow::ResourceJsonEditor
+            // }
+            // 4 => {
+            //     // CloudFormation scene graph removed - skip to next window
+            //     self.template_sections_window.show = true;
+            //     FocusedWindow::TemplateSections
+            // }
+            // 5 => {
+            //     self.template_sections_window.show = true;
+            //     FocusedWindow::TemplateSections
+            // }
             6 => {
                 self.help_window.open = true;
                 FocusedWindow::Help
@@ -1546,7 +1442,7 @@ impl DashApp {
                 FocusedWindow::Log
             }
             8 => {
-                self.chat_window.open = true;
+                // Chat window removed
                 FocusedWindow::Chat
             }
             9 => {
@@ -1581,39 +1477,35 @@ impl DashApp {
             }
         }
 
-        // F1 to open chat window
-        if ctx.input(|i| i.key_pressed(egui::Key::F1)) && !ctx.wants_keyboard_input() {
-            self.chat_window.toggle();
-            if self.chat_window.open {
-                self.set_focused_window(FocusedWindow::Chat);
-            }
-        }
+        // F1 to open chat window - REMOVED (chat window deleted)
 
         // Ctrl+G to open CloudFormation graph window
-        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::G))
-            && !ctx.wants_keyboard_input()
-        {
-            info!("Ctrl+G pressed - opening CloudFormation scene graph");
-            if let Some(project) = &self.project_command_palette.current_project {
-                info!(
-                    "Current project: {} has {} CloudFormation resources",
-                    project.name,
-                    project.get_resources().len()
-                );
-
-                self.cloudformation_scene_graph.set_show(true);
-                self.cloudformation_scene_graph.create_from_project(project);
-                self.set_focused_window(FocusedWindow::CloudFormationGraph);
-            } else {
-                warn!("No project loaded - CloudFormation graph not available. Load a CloudFormation template first.");
-            }
-        }
+        // Project management removed
+        // if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::G))
+        //     && !ctx.wants_keyboard_input()
+        // {
+        //     info!("Ctrl+G pressed - opening CloudFormation scene graph");
+        //     if let Some(project) = &self.project_command_palette.current_project {
+        //         info!(
+        //             "Current project: {} has {} CloudFormation resources",
+        //             project.name,
+        //             project.get_resources().len()
+        //         );
+        //
+        //         // CloudFormation scene graph removed
+        //     } else {
+        //         warn!("No project loaded - CloudFormation graph not available. Load a CloudFormation template first.");
+        //     }
+        // }
 
         // Windows+C to close windows (legacy code kept for compatibility)
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
-            self.resource_types_window.show = false;
-            self.resource_details_window.show = false;
-            self.resource_types_window.selected_resource_index = None;
+            // Resource/template editor windows removed
+            // self.resource_types_window.show = false;
+            // Resource/template editor windows removed
+            // self.resource_details_window.show = false;
+            // Resource/template editor windows removed
+            // self.resource_types_window.selected_resource_index = None;
         }
     }
 
@@ -1621,20 +1513,26 @@ impl DashApp {
     fn render_top_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                let project_info = self.project_command_palette.get_current_project_summary();
+                // Project management removed
+                // let project_info = self.project_command_palette.get_current_project_summary();
+                let project_info = None;
 
                 // Get resource count if a project is loaded
-                let resource_count = self
-                    .project_command_palette
-                    .current_project
-                    .as_ref()
-                    .map(|project| project.get_resources().len());
+                // Project management removed
+                // let resource_count = self
+                //     .project_command_palette
+                //     .current_project
+                //     .as_ref()
+                //     .map(|project| project.get_resources().len());
+                let resource_count = None;
 
                 // Get compliance programs from current project
-                let compliance_programs = self.project_command_palette
-                    .current_project
-                    .as_ref()
-                    .map(|project| &project.compliance_programs);
+                // Project management removed
+                // let compliance_programs = self.project_command_palette
+                //     .current_project
+                //     .as_ref()
+                //     .map(|project| &project.compliance_programs);
+                let compliance_programs = None;
 
                 let (menu_action, selected_window) = menu::build_menu(
                     ui,
@@ -1750,11 +1648,15 @@ impl DashApp {
                         // Show focused window info
                         if let Some(focused) = self.currently_focused_window {
                             let window_name = match focused {
-                                FocusedWindow::ResourceTypes => "Resource Types",
-                                FocusedWindow::ResourceForm => "Resource Form",
-                                FocusedWindow::ResourceJsonEditor => "JSON Editor",
-                                FocusedWindow::CloudFormationGraph => "CF Graph",
-                                FocusedWindow::TemplateSections => "Template Sections",
+                                // Resource/template editor windows removed
+                                // FocusedWindow::ResourceTypes => "Resource Types",
+                                // Resource/template editor windows removed
+                                // FocusedWindow::ResourceForm => "Resource Form",
+                                // Resource/template editor windows removed
+                                // FocusedWindow::ResourceJsonEditor => "JSON Editor",
+                                // CloudFormation graph removed
+                                // Resource/template editor windows removed
+                                // FocusedWindow::TemplateSections => "Template Sections",
                                 FocusedWindow::Help => "Help",
                                 FocusedWindow::Log => "Log",
                                 FocusedWindow::Chat => "Chat",
@@ -1771,70 +1673,40 @@ impl DashApp {
     /// Handle download-related operations
     fn handle_downloads(&mut self) {
         // Only update the download status, no auto-download
-        self.download_manager.update_download_status();
-    }
-
-    /// Download CloudFormation resources for regions in the current project
-    fn download_resources_for_project(&mut self) {
-        if let Some(project) = &self.project_command_palette.current_project {
-            // Get all regions from the project
-            let mut project_regions = Vec::new();
-
-            // Add the default region if it exists
-            if let Some(default_region) = &project.default_region {
-                project_regions.push(default_region.clone());
-            }
-
-            // Add all regions from environments
-            for env in &project.environments {
-                for region in &env.aws_regions {
-                    let region_str = region.0.clone();
-                    if !project_regions.contains(&region_str) {
-                        project_regions.push(region_str);
-                    }
-                }
-            }
-
-            // Download resources for these regions
-            if !project_regions.is_empty() {
-                tracing::info!(
-                    "Downloading CloudFormation resources for project regions: {:?}",
-                    project_regions
-                );
-                self.download_manager.download_for_regions(project_regions);
-            }
-        }
+        // Download manager removed
     }
 
     /// Render the central panel with content
     fn render_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Only show download progress if a download is in progress
-            if self.download_manager.download_status.is_some() {
-                self.download_manager.show_download_progress(ui);
-            } else {
-                // Render the main content with resource grid
-                self.render_main_content_area(ctx, ui);
-            }
+            // Render the main content with resource grid
+            self.render_main_content_area(ctx, ui);
         });
     }
 
     /// Handle resource types and details windows
-    fn handle_resource_windows(&mut self, ctx: &egui::Context) {
-        self.handle_resource_types_window(ctx);
-        self.handle_resource_details_window(ctx);
+    fn handle_resource_windows(&mut self, _ctx: &egui::Context) {
+        // Resource/template editor windows removed
+        // self.handle_resource_types_window(ctx);
+        // self.handle_resource_details_window(ctx);
     }
 
     /// Handle the resource types window
+    // Resource/template editor windows removed
+    /*
     fn handle_resource_types_window(&mut self, ctx: &egui::Context) {
-        if self.resource_types_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.resource_types_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::ResourceTypes) {
-                self.set_focused_window(FocusedWindow::ResourceTypes);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::ResourceTypes) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceTypes);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.resource_types_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.resource_types_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
@@ -1846,7 +1718,8 @@ impl DashApp {
                 .show_with_focus(ctx, bring_to_front)
             {
                 // Close the resource types window after selection
-                self.resource_types_window.show = false;
+                // Resource/template editor windows removed
+                // self.resource_types_window.show = false;
 
                 if self.project_command_palette.current_project.is_some() {
                     // Open the resource form window for a new resource
@@ -1859,12 +1732,14 @@ impl DashApp {
 
                     // Reset previous form and open a new one
                     self.resource_form_window = ResourceFormWindow::new();
-                    self.resource_form_window.open_new(
+                    // Resource/template editor windows removed
+                    // self.resource_form_window.open_new(
                         resource_type.clone(),
                         &project,
                         |_| {}, // Empty closure for now, we'll handle saving in the show method
                     );
-                    self.set_focused_window(FocusedWindow::ResourceForm);
+                    // Resource/template editor windows removed
+                    // self.set_focused_window(FocusedWindow::ResourceForm);
                 } else {
                     // Fallback to showing resource details if no project is open
                     self.open_resource_details(&resource_type);
@@ -1872,17 +1747,24 @@ impl DashApp {
             }
         }
     }
+    */
 
     /// Handle the resource details window
+    // Resource/template editor windows removed
+    /*
     fn handle_resource_details_window(&mut self, ctx: &egui::Context) {
-        if self.resource_details_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.resource_details_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::ResourceDetails) {
-                self.set_focused_window(FocusedWindow::ResourceDetails);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::ResourceDetails) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceDetails);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.resource_details_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.resource_details_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
@@ -1897,16 +1779,21 @@ impl DashApp {
             }
         }
     }
+    */
 
     /// Handle property type windows
+    // Resource/template editor windows removed
+    /*
     fn handle_property_windows(&mut self, ctx: &egui::Context) {
         // Display all property type windows and get property types to open
         let (property_types_to_open, focused_window_idx) =
-            self.property_type_manager.show_windows(ctx);
+            // Resource/template editor windows removed
+            // self.property_type_manager.show_windows(ctx);
 
         // Update focus if one of the property type windows was interacted with
         if let Some(idx) = focused_window_idx {
-            self.set_focused_window(FocusedWindow::PropertyType(idx));
+            // Resource/template editor windows removed
+            // self.set_focused_window(FocusedWindow::PropertyType(idx));
         }
 
         // Open any properties that were requested from the property windows
@@ -1929,11 +1816,16 @@ impl DashApp {
             ctx.request_repaint();
         }
     }
+    */
 
     /// Handle the command palettes (main, project, and cloudformation)
+    // Project management removed - this method heavily relied on project_command_palette
     fn handle_command_palettes(&mut self, ctx: &egui::Context) {
         // Display command palette if open
         self.ui_command_palette(ctx);
+
+        // Project command palette handling removed
+        /*
 
         // Show project command palette if open
         if self.project_command_palette.mode != ProjectCommandAction::Closed {
@@ -1949,10 +1841,6 @@ impl DashApp {
             // Set AWS Identity Center if available
             self.project_command_palette
                 .set_aws_identity_center(self.aws_identity_center.clone());
-
-            // Set ComplianceDiscovery service
-            self.project_command_palette
-                .set_compliance_discovery(Arc::new(Mutex::new(self.compliance_discovery.clone())));
 
             // Track whether there was a project before showing
             let had_project = self.project_command_palette.current_project.is_some();
@@ -1999,31 +1887,25 @@ impl DashApp {
                     // Project loaded/saved
                     tracing::info!("🔄 APP_RESPONSE: Project loaded/saved successfully");
 
-                    // Load the CloudFormation template if available
-                    if let Some(cfn_template) = &project.cfn_template {
-                        self.template_sections_window
-                            .set_template(cfn_template.clone());
-                        tracing::info!(
-                            "🔄 APP_RESPONSE: CloudFormation template loaded into template sections window"
-                        );
-                    }
+                    // Resource/template editor windows removed
+                    // // Load the CloudFormation template if available
+                    // if let Some(cfn_template) = &project.cfn_template {
+                    //     self.template_sections_window
+                    //         .set_template(cfn_template.clone());
+                    //     tracing::info!(
+                    //         "🔄 APP_RESPONSE: CloudFormation template loaded into template sections window"
+                    //     );
+                    // }
 
-                    // CRITICAL FIX: Create scene graph with restored positions
-                    tracing::info!(
-                        "🔄 APP_RESPONSE: Creating CloudFormation scene graph from loaded project"
-                    );
-                    self.cloudformation_scene_graph.create_from_project(project);
-                    tracing::info!(
-                        "✅ APP_RESPONSE: Scene graph created with position restoration"
-                    );
+                    // CloudFormation scene graph removed
 
                     // Show the template sections window (focus will be set by handle_template_sections_window)
-                    self.template_sections_window.show = true;
-                    self.template_sections_window.selected_section =
-                        super::template_sections_window::TemplateSection::Resources;
-
-                    // Download resources for the regions in this project
-                    self.download_resources_for_project();
+                    // Resource/template editor windows removed
+                    // self.template_sections_window.show = true;
+                    // Resource/template editor windows removed
+                    // self.template_sections_window.selected_section =
+                        // Resource/template editor windows removed
+                        // super::template_sections_window::TemplateSection::Resources;
                 }
                 
                 // Trigger validation if project was saved with compliance programs
@@ -2033,635 +1915,7 @@ impl DashApp {
                 }
             }
         }
-
-        // Show CloudFormation command palette if open
-        if self.cloudformation_command_palette.mode != CloudFormationCommandAction::Closed {
-            // Set focus based on mode - only if not already focused to avoid stealing focus every frame
-            if self.cloudformation_command_palette.mode
-                == CloudFormationCommandAction::CommandPalette
-            {
-                if self.currently_focused_window
-                    != Some(FocusedWindow::CloudFormationCommandPalette)
-                {
-                    self.set_focused_window(FocusedWindow::CloudFormationCommandPalette);
-                }
-            } else if self.currently_focused_window != Some(FocusedWindow::CloudFormationForm) {
-                self.set_focused_window(FocusedWindow::CloudFormationForm);
-            }
-
-            // Check if user is logged in to AWS Identity Center
-            let is_logged_in = if let Some(aws_identity) = &self.aws_identity_center {
-                if let Ok(identity) = aws_identity.lock() {
-                    matches!(
-                        identity.login_state,
-                        crate::app::aws_identity::LoginState::LoggedIn
-                    )
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            // Show the CloudFormation Command Palette window
-            match self.cloudformation_command_palette.show(
-                ctx,
-                Some(&self.project_command_palette),
-                is_logged_in,
-            ) {
-                CloudFormationPaletteResult::EditSections => {
-                    // Open the template sections window
-                    self.template_sections_window.show = true;
-                }
-                CloudFormationPaletteResult::AddResource => {
-                    // Handle Add Resource action - similar to the main command palette
-                    // Check if we have a current project
-                    let has_project = self.project_command_palette.current_project.is_some();
-
-                    if !has_project {
-                        // Show a message that we need a project first
-                        self.project_command_palette.error_message = Some(
-                            "Please create or open project before adding resources".to_string(),
-                        );
-                        self.project_command_palette.mode = ProjectCommandAction::CommandPalette;
-                        self.currently_focused_window = Some(FocusedWindow::ProjectCommandPalette);
-                    } else {
-                        // Load resource types before showing the window
-                        let region = self
-                            .project_command_palette
-                            .current_project
-                            .as_ref()
-                            .unwrap()
-                            .get_default_region();
-
-                        match CfnResourcesDownloader::get_resource_types(&region) {
-                            Ok(types) => {
-                                self.resource_types_window.show = true;
-                                self.resource_types_window.resource_types = types;
-                                // Focus will be set when the window is shown
-                            }
-                            Err(e) => {
-                                eprintln!("Error loading resource types: {}", e);
-                            }
-                        }
-                    }
-                }
-                CloudFormationPaletteResult::None => {
-                    // No action needed
-                }
-            }
-
-            // Handle validation requests from the "Validate" BUTTON in the validation window
-            // (This is separate from the "Validate" command in the command palette)
-            if self.cloudformation_command_palette.validation_requested {
-                tracing::info!("=== VALIDATION BUTTON CLICKED ===");
-                self.cloudformation_command_palette.validation_requested = false;
-
-                // Ensure CloudFormation manager is initialized if we have AWS credentials
-                self.ensure_cloudformation_manager_initialized();
-
-                // Check preconditions
-                tracing::info!(
-                    "CloudFormation manager available: {}",
-                    self.cloudformation_manager.is_some()
-                );
-                tracing::info!(
-                    "Current project available: {}",
-                    self.project_command_palette.current_project.is_some()
-                );
-
-                if let (Some(cloudformation_manager), Some(project)) = (
-                    &self.cloudformation_manager,
-                    &self.project_command_palette.current_project,
-                ) {
-                    tracing::info!("=== VALIDATION PRECONDITIONS MET ===");
-                    let account_id = self
-                        .cloudformation_command_palette
-                        .selected_account_id
-                        .clone();
-                    let region = self.cloudformation_command_palette.selected_region.clone();
-
-                    tracing::info!("Account ID: '{}', Region: '{}'", account_id, region);
-
-                    // Use CloudFormation Manager to handle validation
-                    let manager = cloudformation_manager.clone();
-                    let project_clone = project.clone();
-                    let ctx_clone = ctx.clone();
-
-                    // Launch async validation using standard thread spawn with Tokio runtime
-                    thread::spawn(move || {
-                        // Create a new Tokio runtime for this thread
-                        let runtime = match tokio::runtime::Runtime::new() {
-                            Ok(rt) => rt,
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to create Tokio runtime for validation: {}",
-                                    e
-                                );
-                                return;
-                            }
-                        };
-
-                        // Execute the async validation in the Tokio runtime
-                        runtime.block_on(async move {
-                            tracing::info!("=== ASYNC VALIDATION TASK STARTED ===");
-
-                            match manager.validate_project_template(&project_clone, &account_id, &region).await {
-                                Ok(validation_result) => {
-                                    tracing::info!("Validation completed successfully: {}", validation_result.is_valid);
-
-                                    // Results will be processed by handle_validation_results()
-                                    ctx_clone.request_repaint();
-                                }
-                                Err(e) => {
-                                    tracing::error!("Template validation failed: {}", e);
-
-                                    // Create a failed validation result for errors
-                                    let error_result = crate::app::cloudformation_manager::manager::ValidationResult {
-                                        is_valid: false,
-                                        errors: vec![crate::app::cloudformation_manager::manager::ValidationError::new_simple(
-                                            format!("Validation failed: {}", e),
-                                            Some("ValidationError".to_string()),
-                                        )],
-                                        warnings: vec![],
-                                        parameters: vec![],
-                                        description: None,
-                                    };
-
-                                    // Store the error result
-                                    let validation_lock = manager.get_validation_result_lock();
-                                    let mut latest_result = validation_lock.write().await;
-                                    *latest_result = Some(error_result);
-
-                                    ctx_clone.request_repaint();
-                                }
-                            }
-                        });
-                    });
-                } else if self.cloudformation_manager.is_none() {
-                    tracing::warn!("=== VALIDATION FAILED: No CloudFormation manager ===");
-                    self.cloudformation_command_palette.complete_validation(
-                        false,
-                        "AWS credentials not available. Please log in first.".to_string(),
-                    );
-                } else if self.project_command_palette.current_project.is_none() {
-                    tracing::warn!("=== VALIDATION FAILED: No current project ===");
-                    self.cloudformation_command_palette.complete_validation(
-                        false,
-                        "No project open. Please open a project first.".to_string(),
-                    );
-                }
-            }
-
-            // Handle deployment requests from the CloudFormation command palette
-            if self.cloudformation_command_palette.deploy_requested {
-                self.cloudformation_command_palette.deploy_requested = false;
-                tracing::info!("=== START CLOUDFORMATION DEPLOYMENT PROCESS ===");
-
-                // Ensure CloudFormation manager is initialized if we have AWS credentials
-                self.ensure_cloudformation_manager_initialized();
-
-                // Check preconditions
-                if let (Some(_cloudformation_manager), Some(project)) = (
-                    &self.cloudformation_manager,
-                    &self.project_command_palette.current_project,
-                ) {
-                    let account_id = self
-                        .cloudformation_command_palette
-                        .selected_account_id
-                        .clone();
-                    let region = self.cloudformation_command_palette.selected_region.clone();
-                    let stack_name = self
-                        .cloudformation_command_palette
-                        .deploy_stack_name
-                        .clone();
-
-                    // Validate deployment prerequisites
-                    let mut validation_errors = Vec::new();
-
-                    if stack_name.trim().is_empty() {
-                        validation_errors.push("Stack name cannot be empty");
-                    } else if !stack_name.chars().all(|c| c.is_alphanumeric() || c == '-') {
-                        validation_errors.push(
-                            "Stack name can only contain alphanumeric characters and hyphens",
-                        );
-                    }
-
-                    if account_id.trim().is_empty() {
-                        validation_errors.push("Account ID must be selected");
-                    }
-
-                    if region.trim().is_empty() {
-                        validation_errors.push("Region must be selected");
-                    }
-
-                    if project.cfn_template.is_none() {
-                        validation_errors
-                            .push("Project must have a CloudFormation template loaded");
-                    }
-
-                    if !validation_errors.is_empty() {
-                        tracing::warn!("=== DEPLOYMENT FAILED: Validation errors ===");
-                        for error in &validation_errors {
-                            tracing::warn!("  - {}", error);
-                        }
-
-                        self.notification_manager.add_notification(
-                            crate::app::notifications::Notification::new_error(
-                                uuid::Uuid::new_v4().to_string(),
-                                "Deployment Validation Failed".to_string(),
-                                validation_errors
-                                    .iter()
-                                    .map(|error| crate::app::notifications::NotificationError {
-                                        message: error.to_string(),
-                                        code: None,
-                                        details: None,
-                                    })
-                                    .collect(),
-                                "CloudFormation Deployment".to_string(),
-                            ),
-                        );
-                        return;
-                    }
-
-                    tracing::info!("Deployment configuration:");
-                    tracing::info!("  - Stack name: {}", stack_name);
-                    tracing::info!("  - Account ID: {}", account_id);
-                    tracing::info!("  - Region: {}", region);
-                    tracing::info!("  - Project: {}", project.name);
-
-                    if let Some(template) = &project.cfn_template {
-                        // Extract parameters from template for collection
-                        let mut parameter_discovery =
-                            crate::app::cloudformation_manager::parameters::ParameterDiscovery::new(
-                            );
-                        let parameters = match parameter_discovery.load_template(template.clone()) {
-                            Ok(_) => Ok(parameter_discovery
-                                .get_parameters()
-                                .values()
-                                .cloned()
-                                .collect::<Vec<_>>()),
-                            Err(e) => Err(e),
-                        };
-
-                        match parameters {
-                            Ok(param_info) => {
-                                if param_info.is_empty() {
-                                    // No parameters needed, proceed directly to deployment
-                                    tracing::info!(
-                                        "No parameters required, initiating direct deployment"
-                                    );
-                                    self.initiate_deployment_with_parameters(
-                                        stack_name,
-                                        account_id,
-                                        region,
-                                        std::collections::HashMap::new(),
-                                    );
-                                } else {
-                                    // Parameters needed, open parameter dialog
-                                    tracing::info!(
-                                        "Template has {} parameters, opening parameter dialog",
-                                        param_info.len()
-                                    );
-                                    self.parameter_dialog.open(
-                                        param_info,
-                                        Some(project.clone()),
-                                        self.cloudformation_command_palette
-                                            .selected_environment
-                                            .clone(),
-                                        account_id,
-                                        region,
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to extract parameters: {}", e);
-                                self.notification_manager.add_notification(
-                                    crate::app::notifications::Notification::new_error(
-                                        uuid::Uuid::new_v4().to_string(),
-                                        "Parameter Extraction Failed".to_string(),
-                                        vec![crate::app::notifications::NotificationError {
-                                            message: format!(
-                                                "Failed to extract template parameters: {}",
-                                                e
-                                            ),
-                                            code: None,
-                                            details: None,
-                                        }],
-                                        "CloudFormation Deployment".to_string(),
-                                    ),
-                                );
-                            }
-                        }
-                    } else {
-                        tracing::warn!("Project has no CloudFormation template loaded");
-                        self.notification_manager.add_notification(
-                            crate::app::notifications::Notification::new_error(
-                                uuid::Uuid::new_v4().to_string(),
-                                "No Template".to_string(),
-                                vec![crate::app::notifications::NotificationError {
-                                    message:
-                                        "Project does not have a CloudFormation template loaded"
-                                            .to_string(),
-                                    code: None,
-                                    details: None,
-                                }],
-                                "CloudFormation Deployment".to_string(),
-                            ),
-                        );
-                    }
-                } else if self.cloudformation_manager.is_none() {
-                    tracing::warn!("=== DEPLOYMENT FAILED: No CloudFormation manager ===");
-                    self.notification_manager.add_notification(
-                        crate::app::notifications::Notification::new_error(
-                            uuid::Uuid::new_v4().to_string(),
-                            "Authentication Required".to_string(),
-                            vec![crate::app::notifications::NotificationError {
-                                message: "Please login to AWS Identity Center first".to_string(),
-                                code: None,
-                                details: None,
-                            }],
-                            "CloudFormation Deployment".to_string(),
-                        ),
-                    );
-                } else if self.project_command_palette.current_project.is_none() {
-                    tracing::warn!("=== DEPLOYMENT FAILED: No current project ===");
-                    self.notification_manager.add_notification(
-                        crate::app::notifications::Notification::new_error(
-                            uuid::Uuid::new_v4().to_string(),
-                            "No Project".to_string(),
-                            vec![crate::app::notifications::NotificationError {
-                                message: "Please open a project first".to_string(),
-                                code: None,
-                                details: None,
-                            }],
-                            "CloudFormation Deployment".to_string(),
-                        ),
-                    );
-                }
-            }
-
-            // Check if we imported a new template
-            if let Some(imported_template) =
-                self.cloudformation_command_palette.imported_template.take()
-            {
-                tracing::info!("=== START CLOUDFORMATION IMPORT PROCESS ===");
-
-                // Log the imported template details
-                tracing::info!("Imported template contains:");
-                tracing::info!("  - {} resources", imported_template.resources.len());
-                tracing::info!("  - {} parameters", imported_template.parameters.len());
-                tracing::info!("  - {} mappings", imported_template.mappings.len());
-                tracing::info!("  - {} conditions", imported_template.conditions.len());
-                tracing::info!("  - {} outputs", imported_template.outputs.len());
-                tracing::info!("  - {} rules", imported_template.rules.len());
-
-                // Log each resource in the imported template
-                for (resource_id, resource) in &imported_template.resources {
-                    tracing::info!(
-                        "Imported resource: {} (Type: {})",
-                        resource_id,
-                        resource.resource_type
-                    );
-                    tracing::debug!("Resource properties: {:?}", resource.properties);
-                }
-
-                // Update the current project with the imported template
-                if let Some(project) = &mut self.project_command_palette.current_project {
-                    tracing::info!("Current project: {}", project.name);
-
-                    // Log existing template state before merge
-                    if let Some(existing_template) = &project.cfn_template {
-                        tracing::info!("Existing template before merge:");
-                        tracing::info!("  - {} resources", existing_template.resources.len());
-                        for (id, res) in &existing_template.resources {
-                            tracing::info!(
-                                "  - Existing resource: {} (Type: {})",
-                                id,
-                                res.resource_type
-                            );
-                        }
-                    } else {
-                        tracing::info!("No existing template found - will create new one");
-                    }
-
-                    // Merge the imported template with any existing template
-                    if let Some(existing_template) = &mut project.cfn_template {
-                        tracing::info!("Merging imported template with existing template");
-
-                        // Merge resources
-                        for (key, resource) in imported_template.resources {
-                            tracing::info!(
-                                "Adding/updating resource: {} (Type: {})",
-                                key,
-                                resource.resource_type
-                            );
-                            existing_template.resources.insert(key, resource);
-                        }
-                        // Merge other sections
-                        for (key, parameter) in imported_template.parameters {
-                            tracing::info!("Adding/updating parameter: {}", key);
-                            existing_template.parameters.insert(key, parameter);
-                        }
-                        for (key, mapping) in imported_template.mappings {
-                            tracing::info!("Adding/updating mapping: {}", key);
-                            existing_template.mappings.insert(key, mapping);
-                        }
-                        for (key, condition) in imported_template.conditions {
-                            tracing::info!("Adding/updating condition: {}", key);
-                            existing_template.conditions.insert(key, condition);
-                        }
-                        for (key, output) in imported_template.outputs {
-                            tracing::info!("Adding/updating output: {}", key);
-                            existing_template.outputs.insert(key, output);
-                        }
-                        for (key, metadata) in imported_template.metadata {
-                            tracing::info!("Adding/updating metadata: {}", key);
-                            existing_template.metadata.insert(key, metadata);
-                        }
-                        for (key, rule) in imported_template.rules {
-                            tracing::info!("Adding/updating rule: {}", key);
-                            existing_template.rules.insert(key, rule);
-                        }
-                        // Update transformation if provided
-                        if let Some(transform) = imported_template.transform {
-                            tracing::info!("Updating transform");
-                            existing_template.transform = Some(transform);
-                        }
-                        // Update description if provided
-                        if let Some(description) = imported_template.description {
-                            tracing::info!("Updating description");
-                            existing_template.description = Some(description);
-                        }
-
-                        tracing::info!("Template after merge:");
-                        tracing::info!("  - {} resources", existing_template.resources.len());
-                        for (id, res) in &existing_template.resources {
-                            tracing::info!(
-                                "  - Merged resource: {} (Type: {})",
-                                id,
-                                res.resource_type
-                            );
-                        }
-                    } else {
-                        // No existing template, use the imported one
-                        tracing::info!("Creating new template from import");
-                        project.cfn_template = Some(imported_template);
-                    }
-
-                    // Template is already stored in project.cfn_template
-                    // No need to process individual resources - template-only storage
-                    if let Some(cfn_template) = &project.cfn_template {
-                        tracing::info!(
-                            "Template stored with {} resources",
-                            cfn_template.resources.len()
-                        );
-                        
-                        for (resource_id, _) in &cfn_template.resources {
-                            tracing::info!("  - Template resource: {}", resource_id);
-                        }
-                    }
-
-                    // Save the project to disk
-                    tracing::info!("Saving project after import...");
-                    let save_result = project.save_all_resources();
-                    let project_folder = project.local_folder.clone();
-
-                    if let Err(e) = save_result {
-                        tracing::error!("Failed to save imported CloudFormation template: {}", e);
-                    } else {
-                        tracing::info!("CloudFormation template imported and saved successfully");
-
-                        // Log the saved file location
-                        if let Some(folder) = &project_folder {
-                            let template_path = folder
-                                .join("Resources")
-                                .join("cloudformation_template.json");
-                            tracing::info!("Template saved to: {}", template_path.display());
-
-                            // Log the content of the saved file
-                            if let Ok(content) = std::fs::read_to_string(&template_path) {
-                                if let Ok(json) =
-                                    serde_json::from_str::<serde_json::Value>(&content)
-                                {
-                                    if let Some(resources) =
-                                        json.get("Resources").and_then(|r| r.as_object())
-                                    {
-                                        tracing::info!(
-                                            "Saved template contains {} resources",
-                                            resources.len()
-                                        );
-                                        for (id, _) in resources {
-                                            tracing::info!("  - Saved resource: {}", id);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Template import complete - resources are available via template
-                    let resource_count = project.get_resources().len();
-                    tracing::info!("Template imported with {} resources", resource_count);
-                    for resource in project.get_resources() {
-                        tracing::info!(
-                            "  - Project resource: {} (Type: {})",
-                            resource.resource_id,
-                            resource.resource_type
-                        );
-                    }
-
-                    // Set the template in the sections window
-                    if let Some(cfn_template) = &project.cfn_template {
-                        tracing::info!("Setting template in sections window...");
-                        self.template_sections_window
-                            .set_template(cfn_template.clone());
-                        tracing::info!("Template sections window updated");
-                    }
-
-                    // Perform verification of the imported template
-                    tracing::info!("Performing CloudFormation import verification...");
-
-                    // Take the imported template that was stored (this ensures it only runs once)
-                    if let Some(original_imported_template) = self
-                        .cloudformation_command_palette
-                        .last_imported_template
-                        .take()
-                    {
-                        // Read the saved template from disk
-                        if let Some(folder) = &project.local_folder {
-                            let template_path = folder
-                                .join("Resources")
-                                .join("cloudformation_template.json");
-
-                            match crate::app::cfn_template::CloudFormationTemplate::from_file(
-                                &template_path,
-                            ) {
-                                Ok(saved_template) => {
-                                    // Perform verification
-                                    let discrepancies =
-                                        saved_template.verify_against(&original_imported_template);
-
-                                    if discrepancies.is_empty() {
-                                        tracing::info!("✓ CloudFormation import verification passed - all sections match!");
-                                    } else {
-                                        tracing::warn!("⚠ CloudFormation import verification found {} discrepancies", discrepancies.len());
-                                        for discrepancy in &discrepancies {
-                                            tracing::warn!("  - {}", discrepancy);
-                                        }
-                                    }
-
-                                    // Show the verification window
-                                    let import_path = self
-                                        .cloudformation_command_palette
-                                        .last_import_path
-                                        .take()
-                                        .unwrap_or_else(|| "imported template".to_string());
-                                    self.verification_window.show(&import_path, discrepancies);
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to read saved template for verification: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
-
-                        // Clear the last import path as well to ensure we don't re-verify
-                        self.cloudformation_command_palette.last_import_path = None;
-                    }
-
-                    tracing::info!("=== END CLOUDFORMATION IMPORT PROCESS ===");
-                }
-
-                tracing::info!("CloudFormation import successful");
-                self.start_delayed_shake_animation();
-            } else {
-                // Load the current project's CloudFormation template if available (only when changed)
-                if let Some(project) = &self.project_command_palette.current_project {
-                    if let Some(cfn_template) = &project.cfn_template {
-                        // Calculate hash of current template to detect changes
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        format!("{:?}", cfn_template).hash(&mut hasher);
-                        let template_hash = hasher.finish();
-
-                        // Only set template if it has changed
-                        if self.current_template_hash != Some(template_hash) {
-                            self.current_template_hash = Some(template_hash);
-                            self.template_sections_window
-                                .set_template(cfn_template.clone());
-                        }
-                    } else {
-                        // Clear hash if no template
-                        self.current_template_hash = None;
-                    }
-                } else {
-                    // Clear hash if no project
-                    self.current_template_hash = None;
-                }
-            }
-        }
+        */
     }
 
     /// Handle authentication windows
@@ -2721,28 +1975,29 @@ impl DashApp {
                     .set_aws_identity_center(Some(aws_identity.clone()));
                 tracing::info!("🚀 ResourceExplorer proactively initialized for bridge tools");
 
+                // CloudFormation manager removed
                 // Initialize CloudFormation Manager with shared AWS Explorer infrastructure
-                if self.cloudformation_manager.is_none() {
-                    if let Ok(identity) = aws_identity.lock() {
-                        let default_role_name = identity.default_role_name.clone();
-                        drop(identity); // Release the lock early
-
-                        let credential_coordinator = std::sync::Arc::new(
-                            crate::app::resource_explorer::credentials::CredentialCoordinator::new(
-                                aws_identity.clone(),
-                                default_role_name,
-                            ),
-                        );
-                        let mut manager = CloudFormationManager::new(credential_coordinator);
-
-                        // Set AWS client from ResourceExplorer if available
-                        if let Some(aws_client) = self.resource_explorer.get_aws_client() {
-                            manager.set_aws_client(Some(aws_client));
-                        }
-
-                        self.cloudformation_manager = Some(std::sync::Arc::new(manager));
-                    }
-                }
+                // if self.cloudformation_manager.is_none() {
+                //     if let Ok(identity) = aws_identity.lock() {
+                //         let default_role_name = identity.default_role_name.clone();
+                //         drop(identity); // Release the lock early
+                //
+                //         let credential_coordinator = std::sync::Arc::new(
+                //             crate::app::resource_explorer::credentials::CredentialCoordinator::new(
+                //                 aws_identity.clone(),
+                //                 default_role_name,
+                //             ),
+                //         );
+                //         let mut manager = CloudFormationManager::new(credential_coordinator);
+                //
+                //         // Set AWS client from ResourceExplorer if available
+                //         if let Some(aws_client) = self.resource_explorer.get_aws_client() {
+                //             manager.set_aws_client(Some(aws_client));
+                //         }
+                //
+                //         self.cloudformation_manager = Some(std::sync::Arc::new(manager));
+                //     }
+                // }
 
                 // Check if we just completed login
                 let is_logged_in_now = if let Ok(identity) = aws_identity.lock() {
@@ -2764,7 +2019,8 @@ impl DashApp {
                 // and the logged_out flag is set, it means user logged out
                 tracing::info!("Clearing AWS Identity Center reference due to logout");
                 self.aws_identity_center = None;
-                self.cloudformation_manager = None;
+                // CloudFormation manager removed
+                // self.cloudformation_manager = None;
 
                 // Clear global AwsIdentity for bridge tools
                 set_global_aws_identity(None);
@@ -2833,19 +2089,18 @@ impl DashApp {
 
     /// Handle continuous repainting logic
     fn handle_continuous_repainting(&mut self, ctx: &egui::Context) {
-        // Request continuous redrawing while downloading or when any window is open
-        if self.download_manager.download_receiver.is_some()
-            || self.resource_types_window.show
-            || self.resource_details_window.show
-            || self.resource_form_window.show
-            || self.show_command_palette
-            || !self.property_type_manager.windows.is_empty()
+        // Request continuous redrawing when any window is open
+        // Resource/template editor windows removed
+        // if self.resource_types_window.show
+        //     || self.resource_details_window.show
+        //     || self.resource_form_window.show
+        //     || !self.property_type_manager.windows.is_empty()
+        if self.show_command_palette
             || self.show_startup_popup
-            || self.project_command_palette.mode != ProjectCommandAction::Closed
-            || self.cloudformation_command_palette.mode != CloudFormationCommandAction::Closed
+            // Project management removed
+            // || self.project_command_palette.mode != ProjectCommandAction::Closed
             || self.help_window.open
             || self.log_window.open
-            || self.chat_window.open
             || self.credentials_debug_window.open
             || self.verification_window.visible
             || self.resource_explorer.is_open()
@@ -2854,68 +2109,15 @@ impl DashApp {
         }
 
         // Always repaint when we have a project loaded to keep the resource graph responsive
-        if self.project_command_palette.current_project.is_some() {
-            ctx.request_repaint();
-        }
+        // Project management removed
+        // if self.project_command_palette.current_project.is_some() {
+        //     ctx.request_repaint();
+        // }
     }
 
-    /// Handle the chat window
-    fn handle_chat_window(&mut self, ctx: &egui::Context) {
-        if self.chat_window.is_open() {
-            // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::Chat) {
-                self.set_focused_window(FocusedWindow::Chat);
-            }
-
-            // Check if this window should be brought to the front
-            let window_id = self.chat_window.window_id();
-            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
-            if bring_to_front {
-                self.window_focus_manager.clear_bring_to_front(window_id);
-            }
-
-            // Show the chat window with AWS identity center for credentials
-            if let Some(aws_identity) = &self.aws_identity_center {
-                // Check if logged in before showing chat
-                let logged_in = {
-                    let identity = aws_identity.lock().unwrap();
-                    matches!(
-                        identity.login_state,
-                        crate::app::aws_identity::LoginState::LoggedIn
-                    )
-                };
-
-                if logged_in {
-                    // Use the trait-based pattern for focus management
-                    let params = IdentityShowParams {
-                        aws_identity: Some(aws_identity.clone()),
-                    };
-                    FocusableWindow::show_with_focus(
-                        &mut self.chat_window,
-                        ctx,
-                        params,
-                        bring_to_front,
-                    );
-                } else {
-                    // User has an identity center object but not logged in
-                    self.show_login_required_message(ctx);
-                }
-            } else {
-                // No identity center available
-                self.show_login_required_message(ctx);
-            }
-        }
-    }
-
-    /// Show login required message in chat window
-    fn show_login_required_message(&mut self, ctx: &egui::Context) {
-        egui::Window::new("AWS Bedrock Chat")
-            .open(&mut self.chat_window.open)
-            .show(ctx, |ui| {
-                ui.label("Please log in to AWS Identity Center first to use the chat feature.");
-                ui.label("Press F1 to close this window and Space to open the command palette.");
-                ui.label("Then, select 'Login' to connect to AWS Identity Center.");
-            });
+    /// Handle the chat window - REMOVED (chat window deleted)
+    fn handle_chat_window(&mut self, _ctx: &egui::Context) {
+        // Chat window removed in Phase 1.2
     }
 
     /// Handle the Control Bridge window - closable like other windows
@@ -3002,43 +2204,38 @@ impl DashApp {
     }
 
     /// Handle the deployment info window
+// Resource/template editor windows removed
+    /*
     fn handle_deployment_info_window(&mut self, ctx: &egui::Context) {
-        if self.deployment_info_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.deployment_info_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::DeploymentInfo) {
-                self.set_focused_window(FocusedWindow::DeploymentInfo);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::DeploymentInfo) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::DeploymentInfo);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.deployment_info_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.deployment_info_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
             }
 
             // Get notification and deployment status data
-            let current_environment = if !self
-                .cloudformation_command_palette
-                .selected_environment
-                .is_empty()
-            {
-                Some(
-                    self.cloudformation_command_palette
-                        .selected_environment
-                        .clone(),
-                )
-            } else {
-                // If no environment is selected, try to find the first environment with deployment status
-                if let Some(project) = &self.project_command_palette.current_project {
-                    project
-                        .environments
-                        .iter()
-                        .find(|env| env.deployment_status.is_some())
-                        .map(|env| env.name.clone())
-                } else {
-                    None
-                }
-            };
+            // Project management removed
+            // let current_environment = if let Some(project) = &self.project_command_palette.current_project {
+            //     project
+            //         .environments
+            //         .iter()
+            //         .find(|env| env.deployment_status.is_some())
+            //         .map(|env| env.name.clone())
+            // } else {
+            //     None
+            // };
+            let current_environment = None;
 
             let notification = if let Some(env_name) = &current_environment {
                 self.notification_manager.get_deployment_status(env_name)
@@ -3046,21 +2243,24 @@ impl DashApp {
                 None
             };
 
-            let deployment_status = if let (Some(project), Some(env_name)) = (
-                &self.project_command_palette.current_project,
-                &current_environment,
-            ) {
-                project
-                    .environments
-                    .iter()
-                    .find(|env| env.name == *env_name)
-                    .and_then(|env| env.deployment_status.as_ref())
-            } else {
-                None
-            };
+            // Project management removed
+            // let deployment_status = if let (Some(project), Some(env_name)) = (
+            //     &self.project_command_palette.current_project,
+            //     &current_environment,
+            // ) {
+            //     project
+            //         .environments
+            //         .iter()
+            //         .find(|env| env.name == *env_name)
+            //         .and_then(|env| env.deployment_status.as_ref())
+            // } else {
+            //     None
+            // };
+            let deployment_status = None;
 
             // Show the window with deployment information
-            self.deployment_info_window.show_with_focus(
+            // Resource/template editor windows removed
+            // self.deployment_info_window.show_with_focus(
                 ctx,
                 notification,
                 deployment_status,
@@ -3068,6 +2268,7 @@ impl DashApp {
             );
         }
     }
+    */
 
     /// Handle the verification window
     fn handle_verification_window(&mut self, ctx: &egui::Context) {
@@ -3114,16 +2315,17 @@ impl DashApp {
 
     /// Update the window tracking to reflect current window states
     fn update_window_tracking(&mut self) {
-        // Track Resource Form Window
-        if self.resource_form_window.show {
-            let window_id = format!("resource_form_{}", self.resource_form_window.resource_id);
-            let title = format!("Edit Resource: {}", self.resource_form_window.resource_id);
-            self.window_selector
-                .register_window(window_id, title, WindowType::ResourceForm);
-        } else {
-            let window_id = format!("resource_form_{}", self.resource_form_window.resource_id);
-            self.window_selector.unregister_window(&window_id);
-        }
+        // Resource/template editor windows removed
+        // // Track Resource Form Window
+        // if self.resource_form_window.show {
+        //     let window_id = format!("resource_form_{}", self.resource_form_window.resource_id);
+        //     let title = format!("Edit Resource: {}", self.resource_form_window.resource_id);
+        //     self.window_selector
+        //         .register_window(window_id, title, WindowType::ResourceForm);
+        // } else {
+        //     let window_id = format!("resource_form_{}", self.resource_form_window.resource_id);
+        //     self.window_selector.unregister_window(&window_id);
+        // }
 
         // Track Help Window
         if self.help_window.open {
@@ -3158,50 +2360,33 @@ impl DashApp {
             self.window_selector.unregister_window("aws_login_window");
         }
 
-        // Track Resource Types Window
-        if self.resource_types_window.show {
-            self.window_selector.register_window(
-                "resource_types".to_string(),
-                "CloudFormation Resource Types".to_string(),
-                WindowType::ResourceTypes,
-            );
-        } else {
-            self.window_selector.unregister_window("resource_types");
-        }
+        // Resource/template editor windows removed
+        // // Track Resource Types Window
+        // if self.resource_types_window.show {
+        //     self.window_selector.register_window(
+        //         "resource_types".to_string(),
+        //         "CloudFormation Resource Types".to_string(),
+        //         WindowType::ResourceTypes,
+        //     );
+        // } else {
+        //     self.window_selector.unregister_window("resource_types");
+        // }
 
-        // Track Resource Details Window
-        if self.resource_details_window.show {
-            self.window_selector.register_window(
-                "resource_details".to_string(),
-                self.resource_details_window.window_title(),
-                WindowType::ResourceDetails,
-            );
-        } else {
-            self.window_selector.unregister_window("resource_details");
-        }
+        // Resource/template editor windows removed
+        // // Track Resource Details Window
+        // if self.resource_details_window.show {
+        //     self.window_selector.register_window(
+        //         "resource_details".to_string(),
+        //         self.resource_details_window.window_title(),
+        //         WindowType::ResourceDetails,
+        //     );
+        // } else {
+        //     self.window_selector.unregister_window("resource_details");
+        // }
 
-        // Track CloudFormation Scene Graph
-        if self.cloudformation_scene_graph.show {
-            self.window_selector.register_window(
-                "cloudformation_scene".to_string(),
-                "CloudFormation Graph".to_string(),
-                WindowType::CloudFormationScene,
-            );
-        } else {
-            self.window_selector
-                .unregister_window("cloudformation_scene");
-        }
+        // Track CloudFormation Scene Graph - removed
 
-        // Track Chat Window
-        if self.chat_window.open {
-            self.window_selector.register_window(
-                "chat_window".to_string(),
-                "AWS Q Chat".to_string(),
-                WindowType::Chat,
-            );
-        } else {
-            self.window_selector.unregister_window("chat_window");
-        }
+        // Track Chat Window - REMOVED (chat window deleted)
 
         // Track Control Bridge Window - always open
         self.window_selector.register_window(
@@ -3221,28 +2406,30 @@ impl DashApp {
             self.window_selector.unregister_window("credentials_debug");
         }
 
-        // Track Template Sections Window
-        if self.template_sections_window.show {
-            self.window_selector.register_window(
-                "template_sections".to_string(),
-                "CloudFormation Template".to_string(),
-                WindowType::TemplateSection,
-            );
-        } else {
-            self.window_selector.unregister_window("template_sections");
-        }
+        // Resource/template editor windows removed
+        // // Track Template Sections Window
+        // if self.template_sections_window.show {
+        //     self.window_selector.register_window(
+        //         "template_sections".to_string(),
+        //         "CloudFormation Template".to_string(),
+        //         WindowType::TemplateSection,
+        //     );
+        // } else {
+        //     self.window_selector.unregister_window("template_sections");
+        // }
 
-        // Track Resource JSON Editor Window
-        if self.resource_json_editor_window.show {
-            self.window_selector.register_window(
-                "resource_json_editor".to_string(),
-                "Resource JSON Editor".to_string(),
-                WindowType::ResourceJsonEditor,
-            );
-        } else {
-            self.window_selector
-                .unregister_window("resource_json_editor");
-        }
+        // Resource/template editor windows removed
+        // // Track Resource JSON Editor Window
+        // if self.resource_json_editor_window.show {
+        //     self.window_selector.register_window(
+        //         "resource_json_editor".to_string(),
+        //         "Resource JSON Editor".to_string(),
+        //         WindowType::ResourceJsonEditor,
+        //     );
+        // } else {
+        //     self.window_selector
+        //         .unregister_window("resource_json_editor");
+        // }
 
         // Track Verification Window
         if self.verification_window.visible {
@@ -3281,20 +2468,22 @@ impl DashApp {
                 self.set_focused_window(FocusedWindow::AwsLogin);
             }
             "resource_types" => {
-                self.resource_types_window.show = true;
-                self.set_focused_window(FocusedWindow::ResourceTypes);
+                // Resource/template editor windows removed
+                // self.resource_types_window.show = true;
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceTypes);
             }
             "resource_details" => {
-                self.resource_details_window.show = true;
-                self.set_focused_window(FocusedWindow::ResourceDetails);
+                // Resource/template editor windows removed
+                // self.resource_details_window.show = true;
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceDetails);
             }
             "cloudformation_scene" => {
-                self.cloudformation_scene_graph.show = true;
-                self.set_focused_window(FocusedWindow::CloudFormationGraph);
+                // CloudFormation scene graph removed
             }
             "chat_window" => {
-                self.chat_window.open = true;
-                self.set_focused_window(FocusedWindow::Chat);
+                // Chat window removed
             }
             "control_bridge" => {
                 self.control_bridge_window.open = true;
@@ -3305,26 +2494,31 @@ impl DashApp {
                 self.set_focused_window(FocusedWindow::CredentialsDebug);
             }
             "template_sections" => {
-                self.template_sections_window.show = true;
-                self.set_focused_window(FocusedWindow::TemplateSections);
+                // Resource/template editor windows removed
+                // self.template_sections_window.show = true;
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::TemplateSections);
             }
             "resource_json_editor" => {
-                self.resource_json_editor_window.show = true;
-                self.set_focused_window(FocusedWindow::ResourceJsonEditor);
+                // Resource/template editor windows removed
+                // self.resource_json_editor_window.show = true;
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceJsonEditor);
             }
             "verification_window" => {
                 self.verification_window.visible = true;
                 self.set_focused_window(FocusedWindow::Verification);
             }
             "guard_violations" => {
-                self.guard_violations_window.visible = true;
-                self.set_focused_window(FocusedWindow::GuardViolations);
+                // Guard violations window removed in Phase 2.1
             }
             _ => {
                 // Handle resource form windows with dynamic IDs
                 if window_id.starts_with("resource_form_") {
-                    self.resource_form_window.show = true;
-                    self.set_focused_window(FocusedWindow::ResourceForm);
+                    // Resource/template editor windows removed
+                    // self.resource_form_window.show = true;
+                    // Resource/template editor windows removed
+                    // self.set_focused_window(FocusedWindow::ResourceForm);
                 }
                 // TODO: Handle property type windows and other dynamic windows
             }
@@ -3332,15 +2526,21 @@ impl DashApp {
     }
 
     /// Handle the template sections window
+// Resource/template editor windows removed
+    /*
     fn handle_template_sections_window(&mut self, ctx: &egui::Context) {
-        if self.template_sections_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.template_sections_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::TemplateSections) {
-                self.set_focused_window(FocusedWindow::TemplateSections);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::TemplateSections) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::TemplateSections);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.template_sections_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.template_sections_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
@@ -3349,7 +2549,8 @@ impl DashApp {
             // Get position for window
             let window_pos = self.get_window_position(window_id);
 
-            let (command_result, window_rect) = self.template_sections_window.show_with_focus(
+            // Resource/template editor windows removed
+            // let (command_result, window_rect) = self.template_sections_window.show_with_focus(
                 ctx,
                 self.project_command_palette.current_project.as_ref(),
                 window_pos,
@@ -3363,7 +2564,8 @@ impl DashApp {
 
             if let Some(command_result) = command_result {
                 match command_result {
-                    super::template_sections_window::CommandResult::TemplateUpdated(
+                    // Resource/template editor windows removed
+                    // super::template_sections_window::CommandResult::TemplateUpdated(
                         updated_template,
                     ) => {
                         // Save the updated template back to the project
@@ -3377,7 +2579,8 @@ impl DashApp {
                             }
                         }
                     }
-                    super::template_sections_window::CommandResult::EditResource(resource_id) => {
+                    // Resource/template editor windows removed
+                    // super::template_sections_window::CommandResult::EditResource(resource_id) => {
                         // Open the resource form window for editing
                         let resource_id_owned = resource_id.clone();
 
@@ -3392,7 +2595,8 @@ impl DashApp {
                         if let Some(project_resource) = project_resource {
                             // Use the resource from project (has current state including metadata)
                             if let Some(project) = &self.project_command_palette.current_project {
-                                self.resource_form_window.open_edit(
+                                // Resource/template editor windows removed
+                                // self.resource_form_window.open_edit(
                                     project_resource,
                                     project,
                                     |_resource| {
@@ -3409,7 +2613,8 @@ impl DashApp {
                             self.fallback_to_template_resource_by_id(&resource_id_owned);
                         }
                     }
-                    super::template_sections_window::CommandResult::DeleteResource(resource_id) => {
+                    // Resource/template editor windows removed
+                    // super::template_sections_window::CommandResult::DeleteResource(resource_id) => {
                         // Delete the resource
                         if let Some(project) = &mut self.project_command_palette.current_project {
                             match project.remove_resource(&resource_id) {
@@ -3419,7 +2624,8 @@ impl DashApp {
                                         resource_id
                                     );
                                     // Clear any error message
-                                    self.template_sections_window.error_message = None;
+                                    // Resource/template editor windows removed
+                                    // self.template_sections_window.error_message = None;
 
                                     // Update the template sections window with the latest template
                                     if let Some(cfn_template) = &project.cfn_template {
@@ -3433,7 +2639,8 @@ impl DashApp {
                                         resource_id,
                                         e
                                     );
-                                    self.template_sections_window.error_message = Some(format!(
+                                    // Resource/template editor windows removed
+                                    // self.template_sections_window.error_message = Some(format!(
                                         "Failed to delete resource '{}': {}",
                                         resource_id, e
                                     ));
@@ -3441,7 +2648,8 @@ impl DashApp {
                             }
                         }
                     }
-                    super::template_sections_window::CommandResult::JsonEditResource(
+                    // Resource/template editor windows removed
+                    // super::template_sections_window::CommandResult::JsonEditResource(
                         resource_id,
                     ) => {
                         // Open the JSON editor for the resource
@@ -3470,7 +2678,8 @@ impl DashApp {
 
                         if let Some(resource) = resource_for_editor {
                             // Open the JSON editor with a simple save handler
-                            self.resource_json_editor_window.open_for_resource(
+                            // Resource/template editor windows removed
+                            // self.resource_json_editor_window.open_for_resource(
                                 resource_id_owned,
                                 resource,
                                 move |res_id, _updated_resource| {
@@ -3479,7 +2688,8 @@ impl DashApp {
                                 },
                             );
 
-                            self.set_focused_window(FocusedWindow::ResourceJsonEditor);
+                            // Resource/template editor windows removed
+                            // self.set_focused_window(FocusedWindow::ResourceJsonEditor);
                         } else {
                             tracing::error!(
                                 "Resource {} not found for JSON editing",
@@ -3491,36 +2701,41 @@ impl DashApp {
             }
         }
     }
+    */
 
     /// Fallback method to load resource from template when DAG is not available
-    fn fallback_to_template_resource_by_id(&mut self, resource_id: &str) {
-        if let Some(project) = &self.project_command_palette.current_project {
-            if let Some(cfn_template) = &project.cfn_template {
-                if let Some(resource) = cfn_template.resources.get(resource_id) {
-                    // Create a CloudFormationResource from the template resource
-                    let cfn_resource =
-                        crate::app::projects::CloudFormationResource::from_cfn_resource(
-                            resource_id.to_string(),
-                            resource,
-                        );
-
-                    // Open the resource form window for editing
-                    self.resource_form_window
-                        .open_edit(cfn_resource, project, |_resource| {
-                            // Callback handled in handle_resource_form_window
-                        });
-                } else {
-                    tracing::error!("Resource {} not found in template either", resource_id);
-                }
-            } else {
-                tracing::error!(
-                    "No CloudFormation template available for resource {}",
-                    resource_id
-                );
-            }
-        } else {
-            tracing::error!("No project available for resource {}", resource_id);
-        }
+    // Project management removed
+    #[allow(dead_code)]
+    fn fallback_to_template_resource_by_id(&mut self, _resource_id: &str) {
+        // Project management removed
+        // if let Some(project) = &self.project_command_palette.current_project {
+        //     if let Some(cfn_template) = &project.cfn_template {
+        //         if let Some(resource) = cfn_template.resources.get(resource_id) {
+        //             // Create a CloudFormationResource from the template resource
+        //             // Resource/template editor windows removed
+        //             // let cfn_resource =
+        //             //     crate::app::projects::CloudFormationResource::from_cfn_resource(
+        //             //         resource_id.to_string(),
+        //             //         resource,
+        //             //     );
+        //
+        //             // // Open the resource form window for editing
+        //             // self.resource_form_window
+        //             //     .open_edit(cfn_resource, project, |_resource| {
+        //             //         // Callback handled in handle_resource_form_window
+        //             //     });
+        //         } else {
+        //             tracing::error!("Resource {} not found in template either", resource_id);
+        //         }
+        //     } else {
+        //         tracing::error!(
+        //             "No CloudFormation template available for resource {}",
+        //             resource_id
+        //         );
+        //     }
+        // } else {
+        //     tracing::error!("No project available for resource {}", resource_id);
+        // }
     }
 
     /// Generic handler for simple focusable windows
@@ -3599,15 +2814,21 @@ impl DashApp {
     }
 
     /// Handle the resource JSON editor window
+// Resource/template editor windows removed
+    /*
     fn handle_resource_json_editor_window(&mut self, ctx: &egui::Context) {
-        if self.resource_json_editor_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.resource_json_editor_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::ResourceJsonEditor) {
-                self.set_focused_window(FocusedWindow::ResourceJsonEditor);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::ResourceJsonEditor) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceJsonEditor);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.resource_json_editor_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.resource_json_editor_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
@@ -3626,12 +2847,16 @@ impl DashApp {
         }
 
         // Check if a save was requested
-        if self.resource_json_editor_window.save_requested {
-            self.resource_json_editor_window.save_requested = false;
+        // Resource/template editor windows removed
+        // if self.resource_json_editor_window.save_requested {
+            // Resource/template editor windows removed
+            // self.resource_json_editor_window.save_requested = false;
 
             // Get the saved resource
-            if let Some(saved_resource) = self.resource_json_editor_window.saved_resource.take() {
-                let resource_id = self.resource_json_editor_window.resource_id.clone();
+            // Resource/template editor windows removed
+            // if let Some(saved_resource) = self.resource_json_editor_window.saved_resource.take() {
+                // Resource/template editor windows removed
+                // let resource_id = self.resource_json_editor_window.resource_id.clone();
 
                 // Update the project
                 if let Some(project) = &mut self.project_command_palette.current_project {
@@ -3661,17 +2886,24 @@ impl DashApp {
             }
         }
     }
+    */
 
     /// Handle the resource form window
+// Resource/template editor windows removed
+    /*
     fn handle_resource_form_window(&mut self, ctx: &egui::Context) {
-        if self.resource_form_window.is_open() {
+        // Resource/template editor windows removed
+        // if self.resource_form_window.is_open() {
             // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::ResourceForm) {
-                self.set_focused_window(FocusedWindow::ResourceForm);
+            // Resource/template editor windows removed
+            // if self.currently_focused_window != Some(FocusedWindow::ResourceForm) {
+                // Resource/template editor windows removed
+                // self.set_focused_window(FocusedWindow::ResourceForm);
             }
 
             // Check if this window should be brought to the front
-            let window_id = self.resource_form_window.window_id();
+            // Resource/template editor windows removed
+            // let window_id = self.resource_form_window.window_id();
             let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
             if bring_to_front {
                 self.window_focus_manager.clear_bring_to_front(window_id);
@@ -3686,10 +2918,13 @@ impl DashApp {
                 if let Some(project) = &mut self.project_command_palette.current_project {
                     // Create the CloudFormation resource
                     let mut resource = CloudFormationResource::new(
-                        self.resource_form_window.resource_id.clone(),
-                        self.resource_form_window.resource_type.clone(),
+                        // Resource/template editor windows removed
+                        // self.resource_form_window.resource_id.clone(),
+                        // Resource/template editor windows removed
+                        // self.resource_form_window.resource_type.clone(),
                     );
-                    resource.properties = self.resource_form_window.properties.clone();
+                    // Resource/template editor windows removed
+                    // resource.properties = self.resource_form_window.properties.clone();
 
                     // Add the resource to the project
                     match project.add_resource(resource.clone(), Vec::new()) {
@@ -3704,10 +2939,14 @@ impl DashApp {
                             }
 
                             // After saving, go back to the template sections window
-                            self.template_sections_window.show = true;
-                            self.template_sections_window.selected_section =
-                                super::template_sections_window::TemplateSection::Resources;
-                            self.set_focused_window(FocusedWindow::TemplateSections);
+                            // Resource/template editor windows removed
+                            // self.template_sections_window.show = true;
+                            // Resource/template editor windows removed
+                            // self.template_sections_window.selected_section =
+                                // Resource/template editor windows removed
+                                // super::template_sections_window::TemplateSection::Resources;
+                            // Resource/template editor windows removed
+                            // self.set_focused_window(FocusedWindow::TemplateSections);
                         }
                         Err(e) => {
                             error!("Failed to add resource to project: {}", e);
@@ -3717,155 +2956,40 @@ impl DashApp {
             }
         }
     }
+    */
 
-    /// Handle the CloudFormation scene graph window
-    fn handle_cloudformation_scene_graph(&mut self, ctx: &egui::Context) {
-        let was_showing = self.cloudformation_scene_graph.show;
-
-        if self.cloudformation_scene_graph.show {
-            // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::CloudFormationGraph) {
-                self.set_focused_window(FocusedWindow::CloudFormationGraph);
-            }
-
-            // Show the scene graph window
-            self.cloudformation_scene_graph.show(ctx);
-
-            // Sync node coordinates back to project metadata AFTER show() completes
-            // This ensures nodes HashMap is populated when sync runs
-            if let Some(project) = &mut self.project_command_palette.current_project {
-                self.cloudformation_scene_graph
-                    .sync_coordinates_to_project(project);
-            }
-        }
-
-        // Reset font scaling when scene graph window is closed
-        if was_showing && !self.cloudformation_scene_graph.show {
-            self.reset_font_scaling_for_scene_graph(ctx);
-
-            // Save any pending position changes when window closes
-            if let Some(project) = &mut self.project_command_palette.current_project {
-                info!("🔒 SCENE_CLOSE: Saving final positions before closing scene graph");
-                self.cloudformation_scene_graph
-                    .sync_coordinates_to_project(project);
-            }
-        }
-    }
+    // CloudFormation scene graph removed
 
     /// Handle the validation results window
-    fn handle_validation_results_window(&mut self, ctx: &egui::Context) {
-        if self.validation_results_window.open {
-            self.validation_results_window.show(ctx);
-        }
+    fn handle_validation_results_window(&mut self, _ctx: &egui::Context) {
+        // CloudFormation manager removed
+        // if self.validation_results_window.open {
+        //     self.validation_results_window.show(ctx);
+        // }
     }
 
-    /// Handle the guard violations window
-    fn handle_guard_violations_window(&mut self, ctx: &egui::Context) {
-        if self.guard_violations_window.is_open() {
-            // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::GuardViolations) {
-                self.set_focused_window(FocusedWindow::GuardViolations);
-            }
-            // Check if this window should be brought to the front
-            let window_id = self.guard_violations_window.window_id();
-            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
-            if bring_to_front {
-                self.window_focus_manager.clear_bring_to_front(window_id);
-            }
-            // Show the window using the trait
-            FocusableWindow::show_with_focus(
-                &mut self.guard_violations_window,
-                ctx,
-                (),
-                bring_to_front,
-            );
-        }
+    /// Handle the guard violations window (removed in Phase 2.1)
+    fn handle_guard_violations_window(&mut self, _ctx: &egui::Context) {
+        // Guard violations window removed
     }
 
-    fn handle_compliance_error_window(&mut self, ctx: &egui::Context) {
-        if self.compliance_error_window.is_open() {
-            // Check if this window should be brought to the front
-            let window_id = self.compliance_error_window.window_id();
-            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
-            if bring_to_front {
-                self.window_focus_manager.clear_bring_to_front(window_id);
-            }
-            
-            // Handle retry button click
-            let retry_clicked = self.compliance_error_window.show(ctx);
-            if retry_clicked {
-                // Trigger compliance discovery retry
-                self.retry_compliance_discovery();
-            }
-        }
+    fn handle_compliance_error_window(&mut self, _ctx: &egui::Context) {
+        // Compliance error window removed in Phase 2.1
     }
 
+    #[allow(dead_code)]
     fn retry_compliance_discovery(&mut self) {
-        // Reset compliance discovery state and attempt to reload programs
-        // This will trigger the discovery process again in the next frame
-        self.compliance_discovery = ComplianceDiscovery::new_with_default_cache();
-        
-        // Close the error window since we're retrying
-        self.compliance_error_window.close();
-        
-        // Start repository sync again in case it failed
-        self.start_repository_sync();
-        
-        // Log retry attempt
-        tracing::info!("Retrying compliance discovery after user request");
+        // Compliance discovery removed in Phase 2.1
     }
 
-    /// Start repository synchronization in background
+    /// Start repository synchronization in background (removed in Phase 2.2)
     fn start_repository_sync(&mut self) {
-        // Check if we need to sync the repository
-        if let Ok(manager) = GuardRepositoryManager::new() {
-            if !manager.is_repository_cloned() || manager.needs_update() {
-                tracing::info!("Starting Guard Rules repository synchronization...");
-                
-                // Start async sync and get the receiver
-                let receiver = GuardRepositoryManager::sync_repository_async();
-                self.repo_sync_receiver = Some(receiver);
-                self.repo_sync_status = None;
-            } else {
-                tracing::info!("Guard Rules repository is up to date, skipping sync");
-            }
-        } else {
-            tracing::error!("Failed to initialize GuardRepositoryManager for sync");
-        }
+        // Guard repository system removed
     }
 
-    /// Update repository sync status from background thread
-    fn update_repository_sync_status(&mut self, ctx: &egui::Context) {
-        if let Some(receiver) = &self.repo_sync_receiver {
-            // Check for new status updates
-            match receiver.try_recv() {
-                Ok(status) => {
-                    let is_complete = status.completed || status.error.is_some();
-                    self.repo_sync_status = Some(status);
-                    
-                    if is_complete {
-                        // Sync is done, remove receiver
-                        self.repo_sync_receiver = None;
-                        
-                        // Request repaint to update UI
-                        ctx.request_repaint();
-                        
-                        tracing::info!("Guard Rules repository synchronization completed");
-                    } else {
-                        // Still in progress, request repaint to show progress
-                        ctx.request_repaint();
-                    }
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // No new status, continue waiting
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // Thread finished, clean up
-                    self.repo_sync_receiver = None;
-                    tracing::warn!("Guard Rules repository sync thread disconnected unexpectedly");
-                }
-            }
-        }
+    /// Update repository sync status from background thread (removed in Phase 2.2)
+    fn update_repository_sync_status(&mut self, _ctx: &egui::Context) {
+        // Guard repository system removed
     }
 
     fn handle_notification_details_window(&mut self, ctx: &egui::Context) {
@@ -3881,7 +3005,8 @@ impl DashApp {
                     NotificationType::DeploymentStatus
                 ) {
                     // Open the deployment info window instead of the generic details window
-                    self.deployment_info_window.open = true;
+                    // Resource/template editor windows removed
+                    // self.deployment_info_window.open = true;
                     self.notification_manager.show_details_window = false;
                     self.notification_manager.selected_notification_id = None;
                     return;
@@ -3893,28 +3018,28 @@ impl DashApp {
         NotificationDetailsWindow::show(&mut self.notification_manager, ctx);
     }
 
-    fn handle_parameter_dialog(&mut self, ctx: &egui::Context) {
-        if self.parameter_dialog.is_open {
-            let parameters_confirmed = self.parameter_dialog.show(ctx);
-            if parameters_confirmed {
-                self.initiate_deployment();
-            }
-        }
+    fn handle_parameter_dialog(&mut self, _ctx: &egui::Context) {
+        // CloudFormation manager removed
+        // if self.parameter_dialog.is_open {
+        //     let parameters_confirmed = self.parameter_dialog.show(ctx);
+        //     if parameters_confirmed {
+        //         self.initiate_deployment();
+        //     }
+        // }
     }
 
-    fn handle_deployment_progress_window(&mut self, ctx: &egui::Context) {
-        if self.deployment_progress_window.is_open {
-            self.deployment_progress_window.show(ctx);
-        }
+    fn handle_deployment_progress_window(&mut self, _ctx: &egui::Context) {
+        // CloudFormation manager removed
+        // if self.deployment_progress_window.is_open {
+        //     self.deployment_progress_window.show(ctx);
+        // }
     }
 
     /// Check for new validation results and display them in UI
     fn handle_validation_results(&mut self) {
+        // CloudFormation manager removed
+        /*
         if let Some(cloudformation_manager) = &self.cloudformation_manager {
-            // Only proceed if we might have results to check
-            if !self.cloudformation_command_palette.validation_in_progress {
-                return;
-            }
             let manager = cloudformation_manager.clone();
 
             // Extract validation result if available
@@ -3942,14 +3067,7 @@ impl DashApp {
                 if validation_result.is_valid {
                     tracing::info!("Validation successful - showing results window");
 
-                    // Update command palette state
-                    self.cloudformation_command_palette.complete_validation(
-                        true,
-                        format!(
-                            "Validation successful with {} parameters",
-                            validation_result.parameters.len()
-                        ),
-                    );
+                    // CloudFormation command palette removed
 
                     // Create success notification
                     let notification = crate::app::notifications::Notification::new_success(
@@ -3969,16 +3087,7 @@ impl DashApp {
                 } else {
                     tracing::warn!("Validation failed - creating error notification");
 
-                    // Create error message for command palette
-                    let error_summary = if validation_result.errors.is_empty() {
-                        "Validation failed".to_string()
-                    } else {
-                        format!("Validation failed: {}", validation_result.errors[0].message)
-                    };
-
-                    // Update command palette state
-                    self.cloudformation_command_palette
-                        .complete_validation(false, error_summary);
+                    // CloudFormation command palette removed - error_summary no longer needed
 
                     // Create error notification from validation errors
                     let notification_errors = validation_result
@@ -4006,9 +3115,11 @@ impl DashApp {
                 }
             }
         }
+        */
     }
 
     /// Reset font scaling after scene graph is closed
+    #[allow(dead_code)]
     fn reset_font_scaling_for_scene_graph(&self, ctx: &egui::Context) {
         // Reset to default font scaling
         let base_font_size = 14.0;
@@ -4030,172 +3141,47 @@ impl DashApp {
         tracing::debug!("Reset font scaling after scene graph closed");
     }
 
-    /// Render the main content area with resource grid
+    /// Render the main content area
     fn render_main_content_area(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
-        use tracing::info;
-
-        // If we have a project loaded, show project info
-        if let Some(project) = &self.project_command_palette.current_project {
-            let project_name = project.name.clone();
-            let project_region = project.default_region.clone();
-            let resource_count = project.get_resources().len();
-
-            // Add a header with project information
-            ui.horizontal(|ui| {
-                ui.heading(&project_name);
-                ui.separator();
-                if let Some(region) = &project_region {
-                    ui.label(format!("Region: {}", region));
-                }
-
-                // Add resource count if any
-                if resource_count > 0 {
-                    ui.separator();
-                    ui.label(format!("{} resources", resource_count));
-                }
-
-                // Add a "Add Resource" button
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("+ Add Resource").clicked() {
-                        // Load resource types before showing the window
-                        if let Some(project) = &self.project_command_palette.current_project {
-                            let region = project.get_default_region();
-                            match CfnResourcesDownloader::get_resource_types(&region) {
-                                Ok(types) => {
-                                    self.resource_types_window.show = true;
-                                    self.resource_types_window.resource_types = types;
-                                    trace_info!(
-                                        "Opened resource types window for region: {}",
-                                        region
-                                    );
-                                }
-                                Err(e) => {
-                                    error!("Error loading resource types: {}", e);
-                                }
-                            }
-                        }
-                    }
-
-                    // Add Graph View button
-                    if ui.button("📊 Graph View").clicked() {
-                        info!("Graph View button clicked - opening CloudFormation scene graph");
-                        if let Some(project) = &self.project_command_palette.current_project {
-                            self.cloudformation_scene_graph.set_show(true);
-                            self.cloudformation_scene_graph.create_from_project(project);
-                            self.set_focused_window(FocusedWindow::CloudFormationGraph);
-                        }
-                    }
+        // Show welcome message
+        egui::Frame::default()
+            .fill(ui.style().visuals.window_fill)
+            .inner_margin(egui::vec2(10.0, 10.0))
+            .show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(50.0);
+                    ui.heading("AWS Resource Explorer");
+                    ui.add_space(10.0);
+                    ui.label("Press Space to open the command palette");
+                    ui.add_space(5.0);
+                    ui.label("Use the Bridge window to explore AWS resources with AI assistance");
                 });
             });
-
-            ui.add_space(10.0);
-
-            // Show instructions
-            ui.vertical_centered(|ui| {
-                ui.heading("AWS CloudFormation Dashboard");
-                ui.add_space(10.0);
-                ui.label(
-                    "Press G in command palette or click Graph View to see the dependency graph.",
-                );
-                ui.add_space(5.0);
-                ui.label("Press Space to access all commands.");
-            });
-        } else {
-            // Create a nice framed area for the main content when no project is loaded
-            egui::Frame::default()
-                .fill(ui.style().visuals.window_fill)
-                .inner_margin(egui::vec2(10.0, 10.0))
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(50.0);
-                        ui.heading("No Project Loaded");
-                        ui.add_space(10.0);
-                        ui.label(
-                            "Press Space to open the command palette and create or open a project.",
-                        );
-                    });
-                });
-        }
     }
 
     // Open resource details window
-    fn open_resource_details(&mut self, type_name: &str) {
-        let start_time = Instant::now();
-        trace_info!("Opening details for: {}", type_name);
-
-        self.resource_details_window.selected_resource_type = type_name.to_string();
-        self.resource_details_window.show = true;
-
-        // Load properties
-        match load_property_definitions("us-east-1", type_name) {
-            Ok(props) => {
-                self.resource_details_window.selected_resource_properties = Some(props);
-            }
-            Err(_) => {
-                // Try loading as property type
-                match load_property_type_definitions("us-east-1", type_name) {
-                    Ok(props) => {
-                        self.resource_details_window.selected_resource_properties = Some(props);
-                        self.resource_details_window.selected_resource_attributes = None;
-                    }
-                    Err(_) => {
-                        self.resource_details_window.selected_resource_properties = None;
-                        self.resource_details_window.selected_resource_attributes = None;
-                    }
-                }
-            }
-        }
-
-        // Load attributes
-        match load_attribute_definitions("us-east-1", type_name) {
-            Ok(attrs) => {
-                self.resource_details_window.selected_resource_attributes = Some(attrs);
-            }
-            Err(_) => {
-                self.resource_details_window.selected_resource_attributes = None;
-            }
-        }
-
-        trace_info!("Details window opened in: {:?}", start_time.elapsed());
+    #[allow(dead_code)]
+    fn open_resource_details(&mut self, _type_name: &str) {
+        // Resource/template editor windows removed
     }
 
     // Open property type details in a new window
-    fn open_property_type(&mut self, property_type: &str) {
-        let start_time = Instant::now();
-        trace_info!("Opening property type details for: {}", property_type);
-
-        // Load property type properties
-        match load_property_type_definitions("us-east-1", property_type) {
-            Ok(props) => {
-                self.property_type_manager
-                    .open_window(property_type.to_string(), Some(props));
-            }
-            Err(_) => {
-                self.property_type_manager
-                    .open_window(property_type.to_string(), None);
-            }
-        }
-
-        trace_info!(
-            "Property type details window opened in: {:?}",
-            start_time.elapsed()
-        );
+    #[allow(dead_code)]
+    fn open_property_type(&mut self, _property_type: &str) {
+        // Resource/template editor windows removed
     }
 
     // Show command palette
     fn show_startup_popup(&mut self, ctx: &egui::Context) {
-        // Check if we should stop showing the popup
-        // Keep showing if repository sync is in progress, otherwise use timer
-        let keep_showing_for_sync = self.repo_sync_receiver.is_some();
-        
+        // Check if we should stop showing the popup using timer
         if let Some(start_time) = self.startup_popup_timer {
-            if !keep_showing_for_sync && start_time.elapsed() > Duration::from_secs(3) {
+            if start_time.elapsed() > Duration::from_secs(3) {
                 self.show_startup_popup = false;
                 self.startup_popup_timer = None;
                 return;
             }
-        } else if !keep_showing_for_sync {
-            return; // Timer is None and no sync, so we don't show the popup
+        } else {
+            return; // Timer is None, so we don't show the popup
         }
 
         if !self.show_startup_popup {
@@ -4204,28 +3190,9 @@ impl DashApp {
 
         // Center the popup in the screen
         let screen_rect = ctx.screen_rect();
-        
-        // Determine popup content based on repository sync status
-        let (title, content) = if let Some(ref status) = self.repo_sync_status {
-            let phase_text = match status.phase {
-                crate::app::guard_repository_manager::SyncPhase::CheckingLocal => "Checking local repository...",
-                crate::app::guard_repository_manager::SyncPhase::Cloning => "Downloading Guard Rules...",
-                crate::app::guard_repository_manager::SyncPhase::Pulling => "Updating Guard Rules...",
-                crate::app::guard_repository_manager::SyncPhase::ParsingPrograms => "Parsing compliance programs...",
-                crate::app::guard_repository_manager::SyncPhase::IndexingRules => "Indexing rules...",
-                crate::app::guard_repository_manager::SyncPhase::Complete => "Setup complete!",
-            };
-            
-            if let Some(ref error) = status.error {
-                ("Setup Error", format!("Failed: {}", error))
-            } else {
-                ("AWS Dash Setup", format!("{} ({}%)", phase_text, status.progress))
-            }
-        } else if self.repo_sync_receiver.is_some() {
-            ("AWS Dash Setup", "Initializing Guard Rules...".to_string())
-        } else {
-            ("Tip", "Press the Space Bar\nto open the Command Window".to_string())
-        };
+
+        // Show tip about command palette
+        let (title, content) = ("Tip", "Press the Space Bar\nto open the Command Window".to_string());
 
         egui::Window::new(title)
             .fixed_pos(egui::pos2(
@@ -4266,57 +3233,14 @@ impl DashApp {
                 // When an action is returned, the command palette closes itself
                 self.show_command_palette = false;
                 match action {
-                    CommandAction::Search => {
-                        // Open the template sections window with Resources tab when 'S' is pressed
-                        self.template_sections_window.show = true;
-                        self.template_sections_window.selected_section =
-                            super::template_sections_window::TemplateSection::Resources;
-                        // Set focus to template sections window
-                        self.set_focused_window(FocusedWindow::TemplateSections);
-                    }
                     CommandAction::Login => {
-                        // Open login window
                         self.aws_login_window.open = true;
-                        self.aws_login_window.reset_position(); // Reset to center window
-                                                                // Focus will be set when the window is shown
-                    }
-                    CommandAction::Project => {
-                        // Open project command palette
-                        self.project_command_palette
-                            .set_mode(ProjectCommandAction::CommandPalette);
-                        self.currently_focused_window = Some(FocusedWindow::ProjectCommandPalette);
-                    }
-                    CommandAction::CloudFormation => {
-                        // Open CloudFormation command palette
-                        self.cloudformation_command_palette
-                            .set_mode(CloudFormationCommandAction::CommandPalette);
-                        self.currently_focused_window =
-                            Some(FocusedWindow::CloudFormationCommandPalette);
-                    }
-                    CommandAction::GraphView => {
-                        info!("CommandAction::GraphView triggered - opening CloudFormation scene graph");
-                        // Enable and focus the CloudFormation scene graph window
-                        self.cloudformation_scene_graph.set_show(true);
-                        self.set_focused_window(FocusedWindow::CloudFormationGraph);
-
-                        // Ensure the graph is updated with current project
-                        if let Some(project) = &self.project_command_palette.current_project {
-                            info!(
-                                "Updating CloudFormation scene graph with project: {}",
-                                project.name
-                            );
-                            self.cloudformation_scene_graph.create_from_project(project);
-                        } else {
-                            info!("No project loaded - graph will show empty state");
-                        }
+                        self.aws_login_window.reset_position();
                     }
                     CommandAction::AWSExplorer => {
-                        // Open AWS Explorer window
                         self.resource_explorer.set_open(true);
-                        // TODO: Add focus management when needed
                     }
                     CommandAction::ControlBridge => {
-                        // Open Control Bridge window
                         self.control_bridge_window.open = true;
                         self.set_focused_window(FocusedWindow::ControlBridge);
                     }
@@ -4384,7 +3308,10 @@ impl DashApp {
 
     /// Poll CloudFormation stack status and events for active deployments
     /// This is a simplified implementation that simulates progress for demonstration
+    // Project management removed
     fn poll_deployment_status(&mut self) {
+        // Project management removed
+        /*
         use chrono::Utc;
 
         // Only poll if we have a current project
@@ -4507,10 +3434,14 @@ impl DashApp {
                 }
             }
         }
+        */
     }
 
     /// Initialize deployment status notifications when a project is loaded
+    // Project management removed
     fn initialize_deployment_status_notifications(&mut self) {
+        // Project management removed
+        /*
         if let Some(project) = &self.project_command_palette.current_project {
             for environment in &project.environments {
                 if let Some(deployment_status) = &environment.deployment_status {
@@ -4552,50 +3483,12 @@ impl DashApp {
                 }
             }
         }
+        */
     }
 
-    /// Handle validation task monitoring for async compliance validation operations
+    /// Handle validation task monitoring for async compliance validation operations (removed in Phase 2.1)
     fn handle_validation_task_monitoring(&mut self) {
-        if let Some(task) = &self.pending_validation_task {
-            if task.is_finished() {
-                let completed_task = self.pending_validation_task.take().unwrap();
-                // Process the validation result
-                match completed_task.join() {
-                    Ok(Ok(validation_result)) => {
-                        let violation_count = validation_result.violations.len();
-                        tracing::info!("Compliance validation completed: {} violations found", violation_count);
-                        
-                        // Update compliance status based on results
-                        self.compliance_status = if violation_count == 0 {
-                            Some(crate::app::dashui::menu::ComplianceStatus::Compliant)
-                        } else {
-                            Some(crate::app::dashui::menu::ComplianceStatus::Violations(violation_count))
-                        };
-                        
-                        // Store violations in guard violations window
-                        let template_name = self.project_command_palette
-                            .current_project
-                            .as_ref()
-                            .map(|p| p.name.clone())
-                            .unwrap_or_else(|| "Unknown Template".to_string());
-                        self.guard_violations_window.show(&template_name, validation_result);
-                        self.focus_window("guard_violations");
-                    }
-                    Ok(Err(validation_error)) => {
-                        tracing::error!("Compliance validation failed: {}", validation_error);
-                        self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::ValidationError(
-                            validation_error.to_string()
-                        ));
-                    }
-                    Err(thread_error) => {
-                        tracing::error!("Validation task thread panicked: {:?}", thread_error);
-                        self.compliance_status = Some(crate::app::dashui::menu::ComplianceStatus::ValidationError(
-                            "Validation task failed unexpectedly".to_string()
-                        ));
-                    }
-                }
-            }
-        }
+        // Compliance validation removed
     }
 
     /// Handle deployment task monitoring for async deployment operations
@@ -4619,23 +3512,24 @@ impl DashApp {
                         );
 
                         // Update project deployment status with real deployment ID
-                        if let Some(project) = &mut self.project_command_palette.current_project {
-                            if let Some(env) = project
-                                .environments
-                                .iter_mut()
-                                .find(|e| e.name == environment)
-                            {
-                                if let Some(status) = &mut env.deployment_status {
-                                    status.deployment_id = deployment_id.clone();
-                                    status.set_stack_status("CREATE_IN_PROGRESS".to_string());
-
-                                    // Save project to persist updated deployment status
-                                    if let Err(e) = project.save_to_file() {
-                                        tracing::warn!("Failed to save project with updated deployment status: {}", e);
-                                    }
-                                }
-                            }
-                        }
+                        // Project management removed
+                        // if let Some(project) = &mut self.project_command_palette.current_project {
+                        //     if let Some(env) = project
+                        //         .environments
+                        //         .iter_mut()
+                        //         .find(|e| e.name == environment)
+                        //     {
+                        //         if let Some(status) = &mut env.deployment_status {
+                        //             status.deployment_id = deployment_id.clone();
+                        //             status.set_stack_status("CREATE_IN_PROGRESS".to_string());
+                        //
+                        //             // Save project to persist updated deployment status
+                        //             if let Err(e) = project.save_to_file() {
+                        //                 tracing::warn!("Failed to save project with updated deployment status: {}", e);
+                        //             }
+                        //         }
+                        //     }
+                        // }
 
                         // TODO: Start polling CloudFormation stack status here
                         // For now, simulate eventual completion after some time
@@ -4644,13 +3538,9 @@ impl DashApp {
                         tracing::error!("Deployment task failed: {}", e);
 
                         // Update deployment status to failed
-                        if !self
-                            .cloudformation_command_palette
-                            .selected_environment
-                            .is_empty()
-                        {
-                            let environment_name =
-                                &self.cloudformation_command_palette.selected_environment;
+                        // CloudFormation command palette removed - using empty environment
+                        let environment_name = "";
+                        if !environment_name.is_empty() {
                             self.notification_manager.update_deployment_status(
                                 environment_name,
                                 "Unknown".to_string(), // We don't have stack name in error case
@@ -4660,26 +3550,27 @@ impl DashApp {
                             );
 
                             // Update project deployment status
-                            if let Some(project) = &mut self.project_command_palette.current_project
-                            {
-                                if let Some(env) = project
-                                    .environments
-                                    .iter_mut()
-                                    .find(|e| e.name == *environment_name)
-                                {
-                                    if let Some(status) = &mut env.deployment_status {
-                                        status.set_error(format!(
-                                            "Failed to initiate deployment: {}",
-                                            e
-                                        ));
-
-                                        // Save project to persist failed deployment status
-                                        if let Err(save_err) = project.save_to_file() {
-                                            tracing::warn!("Failed to save project with failed deployment status: {}", save_err);
-                                        }
-                                    }
-                                }
-                            }
+                            // Project management removed
+                            // if let Some(project) = &mut self.project_command_palette.current_project
+                            // {
+                            //     if let Some(env) = project
+                            //         .environments
+                            //         .iter_mut()
+                            //         .find(|e| e.name == *environment_name)
+                            //     {
+                            //         if let Some(status) = &mut env.deployment_status {
+                            //             status.set_error(format!(
+                            //                 "Failed to initiate deployment: {}",
+                            //                 e
+                            //             ));
+                            //
+                            //                     // Save project to persist failed deployment status
+                            //                     if let Err(save_err) = project.save_to_file() {
+                            //                         tracing::warn!("Failed to save project with failed deployment status: {}", save_err);
+                            //                     }
+                            //                 }
+                            //             }
+                            // }
                         }
 
                         self.notification_manager.add_notification(
@@ -4730,7 +3621,10 @@ impl DashApp {
     }
 
     /// Ensure CloudFormation manager is initialized if AWS credentials are available
+    #[allow(dead_code)]
     fn ensure_cloudformation_manager_initialized(&mut self) {
+        // CloudFormation manager removed
+        /*
         // Skip if already initialized
         if self.cloudformation_manager.is_some() {
             return;
@@ -4755,15 +3649,16 @@ impl DashApp {
                         ),
                     );
 
-                    let mut manager =
-                        crate::app::cloudformation_manager::CloudFormationManager::new(
-                            credential_coordinator,
-                        );
-
-                    // Set AWS client from ResourceExplorer if available
-                    if let Some(aws_client) = self.resource_explorer.get_aws_client() {
-                        manager.set_aws_client(Some(aws_client));
-                    }
+                    // CloudFormation manager removed
+                    // let mut manager =
+                    //     crate::app::cloudformation_manager::CloudFormationManager::new(
+                    //         credential_coordinator,
+                    //     );
+                    //
+                    // // Set AWS client from ResourceExplorer if available
+                    // if let Some(aws_client) = self.resource_explorer.get_aws_client() {
+                    //     manager.set_aws_client(Some(aws_client));
+                    // }
 
                     self.cloudformation_manager = Some(std::sync::Arc::new(manager));
                     tracing::info!("CloudFormation manager initialized successfully");
@@ -4780,23 +3675,22 @@ impl DashApp {
                 "No AWS Identity Center available for CloudFormation manager initialization"
             );
         }
+        */
     }
 
     /// Initiate deployment when parameters are confirmed from parameter dialog
+    #[allow(dead_code)]
     fn initiate_deployment(&mut self) {
+        // CloudFormation manager removed
+        /*
         tracing::info!("Initiating deployment with confirmed parameters");
 
         if let Some(_project) = &self.project_command_palette.current_project {
             let parameter_values = self.parameter_dialog.get_parameter_values();
-            let stack_name = self
-                .cloudformation_command_palette
-                .deploy_stack_name
-                .clone();
-            let account_id = self
-                .cloudformation_command_palette
-                .selected_account_id
-                .clone();
-            let region = self.cloudformation_command_palette.selected_region.clone();
+            // CloudFormation command palette removed - deployment data unavailable
+            let stack_name = String::new();
+            let account_id = String::new();
+            let region = String::new();
 
             self.initiate_deployment_with_parameters(
                 stack_name,
@@ -4805,16 +3699,20 @@ impl DashApp {
                 parameter_values,
             );
         }
+        */
     }
 
     /// Initiate deployment with specific parameters
+    #[allow(dead_code)]
     fn initiate_deployment_with_parameters(
         &mut self,
-        stack_name: String,
+        _stack_name: String,
         _account_id: String,
         _region: String,
-        parameters: std::collections::HashMap<String, String>,
+        _parameters: std::collections::HashMap<String, String>,
     ) {
+        // CloudFormation manager removed
+        /*
         tracing::info!(
             "Initiating deployment with parameters for stack: {}",
             stack_name
@@ -4860,10 +3758,8 @@ impl DashApp {
                     }
                 };
                 let project_clone = project.clone();
-                let environment = self
-                    .cloudformation_command_palette
-                    .selected_environment
-                    .clone();
+                // CloudFormation command palette removed - environment unavailable
+                let environment = String::new();
 
                 // Create deployment task using std::thread to avoid tokio runtime conflicts
                 let deployment_task = std::thread::spawn(move || {
@@ -4940,13 +3836,9 @@ impl DashApp {
                 self.pending_deployment_task = Some(deployment_task);
 
                 // Create deployment status notification
-                if !self
-                    .cloudformation_command_palette
-                    .selected_environment
-                    .is_empty()
-                {
-                    let environment_name =
-                        &self.cloudformation_command_palette.selected_environment;
+                // CloudFormation command palette removed
+                if false {
+                    let environment_name = "";
                     // Generate a temporary deployment ID for UI tracking
                     let ui_deployment_id = uuid::Uuid::new_v4().to_string();
 
@@ -5014,6 +3906,7 @@ impl DashApp {
                 ),
             );
         }
+        */
     }
 }
 
@@ -5061,7 +3954,8 @@ impl eframe::App for DashApp {
         self.widget_manager.start_frame();
 
         // Start widget capture for template sections window
-        self.template_sections_window.start_widget_capture();
+        // Resource/template editor windows removed
+        // self.template_sections_window.start_widget_capture();
 
         // Process pending widget actions from previous frame
         self.process_pending_widget_actions();
@@ -5099,10 +3993,12 @@ impl eframe::App for DashApp {
         // Handle different windows - move resource list window before command palette
         // to ensure it's processed before any potential command palette action handling
         self.handle_resource_windows(ctx);
-        self.handle_property_windows(ctx);
-        self.handle_resource_form_window(ctx);
-        self.handle_resource_json_editor_window(ctx);
-        self.handle_cloudformation_scene_graph(ctx);
+        // Resource/template editor windows removed
+        // self.handle_property_windows(ctx);
+        // Resource/template editor windows removed
+        // self.handle_resource_form_window(ctx);
+        // self.handle_resource_json_editor_window(ctx);
+        // CloudFormation scene graph removed
         self.handle_command_palettes(ctx);
         self.handle_auth_windows(ctx);
         self.handle_startup_popup(ctx);
@@ -5111,8 +4007,9 @@ impl eframe::App for DashApp {
         self.handle_chat_window(ctx);
         self.handle_control_bridge_window(ctx);
         self.handle_credentials_debug_window(ctx);
-        self.handle_deployment_info_window(ctx);
-        self.handle_template_sections_window(ctx);
+        // Resource/template editor windows removed
+        // self.handle_deployment_info_window(ctx);
+        // self.handle_template_sections_window(ctx);
         self.handle_verification_window(ctx);
         self.handle_guard_violations_window(ctx);
         self.handle_compliance_error_window(ctx);

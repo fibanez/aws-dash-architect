@@ -160,6 +160,5 @@ if ui.button("Create").clicked() {
 
 **References:**
 - [Command Palette System](command-palette-system.md) - File picker integration
-- [Project Management](project-management.md) - Project.json discovery
-- [CloudFormation Manager](cloudformation-manager.md) - Template import integration
 - [Keyboard Navigation System](keyboard-navigation-system.md) - Keyboard shortcut integration
+- [UI Testing Framework](ui-testing-framework.md) - Testing file picker interactions

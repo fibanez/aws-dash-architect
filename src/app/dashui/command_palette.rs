@@ -2,11 +2,7 @@ use egui::{self, Align2, Context, FontId, Id, Pos2, Rect, RichText, Vec2};
 
 // Define an enum for main command palette actions
 pub enum CommandAction {
-    Search,
     Login,
-    Project,        // Main project management
-    CloudFormation, // CloudFormation operations
-    GraphView,      // CloudFormation graph visualization
     AWSExplorer,    // AWS resource explorer
     ControlBridge,  // Control Bridge AI assistant
     Quit,
@@ -170,18 +166,11 @@ impl CommandPalette {
         // Command entries with colors and descriptions
         let commands = [
             CommandEntry {
-                key: egui::Key::S,
-                key_char: 'S',
-                label: "Show Resources",
-                color: egui::Color32::from_rgb(100, 170, 255), // Blue
-                description: "Show and search project resources",
-            },
-            CommandEntry {
                 key: egui::Key::L,
                 key_char: 'L',
                 label: "Login AWS",
                 color: egui::Color32::from_rgb(255, 190, 70), // Orange
-                description: "Login to AWS",
+                description: "Login to AWS Identity Center",
             },
             CommandEntry {
                 key: egui::Key::E,
@@ -191,32 +180,11 @@ impl CommandPalette {
                 description: "Explore AWS resources across accounts",
             },
             CommandEntry {
-                key: egui::Key::P,
-                key_char: 'P',
-                label: "Project",
-                color: egui::Color32::from_rgb(180, 140, 220), // Purple
-                description: "Manage Projects",
-            },
-            CommandEntry {
-                key: egui::Key::C,
-                key_char: 'C',
-                label: "CloudFormation",
-                color: egui::Color32::from_rgb(60, 180, 200), // Teal
-                description: "CloudFormation Operations",
-            },
-            CommandEntry {
                 key: egui::Key::B,
                 key_char: 'B',
                 label: "Control Bridge",
                 color: egui::Color32::from_rgb(70, 150, 200), // Blue
-                description: "AI assistant for AWS infrastructure",
-            },
-            CommandEntry {
-                key: egui::Key::G,
-                key_char: 'G',
-                label: "Graph View",
-                color: egui::Color32::from_rgb(120, 200, 80), // Light Green
-                description: "CloudFormation dependency graph",
+                description: "AI assistant for AWS resource operations",
             },
             CommandEntry {
                 key: egui::Key::Q,
@@ -276,15 +244,10 @@ impl CommandPalette {
                                 if clicked || key_pressed {
                                     self.show = false;
                                     match cmd.key {
-                                        egui::Key::S => result = Some(CommandAction::Search),
                                         egui::Key::L => result = Some(CommandAction::Login),
                                         egui::Key::E => result = Some(CommandAction::AWSExplorer),
-                                        egui::Key::P => result = Some(CommandAction::Project),
-                                        egui::Key::Q => result = Some(CommandAction::Quit),
-                                        egui::Key::C => {
-                                            result = Some(CommandAction::CloudFormation)
-                                        }
                                         egui::Key::B => result = Some(CommandAction::ControlBridge),
+                                        egui::Key::Q => result = Some(CommandAction::Quit),
                                         _ => {}
                                     }
                                 }
@@ -313,14 +276,11 @@ impl CommandPalette {
                                 if clicked || key_pressed {
                                     self.show = false;
                                     match cmd.key {
-                                        egui::Key::C => {
-                                            result = Some(CommandAction::CloudFormation)
-                                        }
-                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
-                                        egui::Key::G => result = Some(CommandAction::GraphView),
+                                        egui::Key::L => result = Some(CommandAction::Login),
                                         egui::Key::E => result = Some(CommandAction::AWSExplorer),
+                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
                                         egui::Key::Q => result = Some(CommandAction::Quit),
-                                        _ => {} // Other keys not handled here
+                                        _ => {}
                                     }
                                 }
 

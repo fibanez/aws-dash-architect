@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Comprehensive guide for diagnosing and resolving common issues in AWS Dash Architect.
+Comprehensive guide for diagnosing and resolving common issues in AWS Dash.
 
 ## General Troubleshooting Approach
 
@@ -9,7 +9,7 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash Archi
 *Application Logs*:
 * Location: `$HOME/.local/share/awsdash/logs/awsdash.log`
 * Contains both `log` and `tracing` output
-* Includes AWS SDK debug information for Bedrock
+* Includes AWS SDK debug information
 * Automatically rotated to prevent disk space issues
 
 *Debug Mode*:
@@ -85,123 +85,45 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash Archi
 * **Manual Refresh**: Re-authenticate through login window
 * **Session Length**: Request longer session duration in Identity Center
 
-## CloudFormation Template Issues
+## AWS Resource Explorer Issues
 
-### Template Parsing Errors
+### Resource Discovery Problems
 
-*Symptoms*: Templates fail to load or display errors
-* JSON/YAML syntax errors
-* Unrecognized resource types or properties
-* Template structure validation failures
-
-*Diagnostic Steps*:
-1. Validate template syntax with external tools
-2. Check resource type availability in selected region
-3. Review template against CloudFormation documentation
-4. Test template in AWS console directly
-
-*Solutions*:
-* **Syntax Errors**: Use JSON/YAML validators to fix structure
-* **Resource Availability**: Verify resource types support in target region
-* **Schema Updates**: Download latest AWS resource specifications
-* **Template Version**: Ensure CloudFormation template format version compatibility
-
-### Dependency Validation Problems
-
-*Symptoms*: Dependency graph shows errors or fails to build
-* Circular dependency warnings
-* Missing dependency relationships
-* Graph rendering issues
+*Symptoms*: Resources not appearing or incomplete listings
+* Missing resources in specific regions
+* Account switching issues
+* Resource cache outdated
 
 *Diagnostic Steps*:
-1. Review dependency graph in visualization window
-2. Check for circular references in template
-3. Validate resource reference syntax
-4. Test dependency order with deployment simulation
+1. Verify account permissions for resource access
+2. Check selected regions in Explorer configuration
+3. Review application logs for API errors
+4. Test resource access in AWS console directly
 
 *Solutions*:
-* **Circular Dependencies**: Restructure template to eliminate cycles
-* **Reference Syntax**: Fix Ref and GetAtt function usage
-* **Missing Dependencies**: Add explicit DependsOn declarations
-* **Graph Corruption**: Use emergency recovery in verification window
+* **Permissions**: Ensure IAM policies allow resource discovery API calls
+* **Region Selection**: Verify correct regions are enabled for scanning
+* **Cache Refresh**: Clear resource cache and reload
+* **API Throttling**: Review rate limiting and implement retry logic
 
-### Resource Configuration Issues
+### Resource Details and Metadata
 
-*Symptoms*: Resource forms show validation errors
-* Property validation failures
-* Required fields not enforced
-* Schema constraint violations
+*Symptoms*: Resource details incomplete or not displaying
+* Property values missing or incorrect
+* Metadata not loading
+* Resource relationships not shown
 
 *Diagnostic Steps*:
-1. Review resource documentation for property requirements
-2. Check constraint validation in property forms
-3. Verify resource type schema compatibility
-4. Test configuration in AWS console
+1. Check AWS API response in application logs
+2. Verify resource type is supported
+3. Test describe operations in AWS CLI
+4. Review resource normalization logic
 
 *Solutions*:
-* **Required Properties**: Ensure all required fields are completed
-* **Data Types**: Verify property values match expected types
-* **Constraints**: Review and fix constraint violations
-* **Schema Updates**: Download latest resource specifications
-
-## Project Management Issues
-
-### File Operations Problems
-
-*Symptoms*: Cannot save, load, or export projects
-* File permission errors
-* Corrupt project files
-* Import/export failures
-
-*Diagnostic Steps*:
-1. Check file system permissions for project directory
-2. Verify disk space availability
-3. Test file operations with simple projects
-4. Review file format compatibility
-
-*Solutions*:
-* **Permissions**: Ensure read/write access to project directories
-* **Disk Space**: Free up disk space or choose different location
-* **File Corruption**: Use backup copies or emergency recovery
-* **Format Issues**: Convert projects to supported formats
-
-### Resource Import Problems
-
-*Symptoms*: Resources don't import correctly from templates
-* Property type conversion errors
-* Dependency resolution failures
-* Metadata loss during import
-
-*Diagnostic Steps*:
-1. Review import process in application logs
-2. Check template compatibility with project format
-3. Verify resource type support
-4. Test with simpler template structures
-
-*Solutions*:
-* **Type Conversion**: Update property type handling for complex values
-* **Dependencies**: Import resources in dependency order
-* **Metadata Preservation**: Use template sections for additional metadata
-* **Batch Processing**: Import large templates in smaller batches
-
-### Environment Management Issues
-
-*Symptoms*: Environment configuration problems
-* Environment switching failures
-* Resource deployment errors
-* Cross-environment conflicts
-
-*Diagnostic Steps*:
-1. Verify environment configuration settings
-2. Check AWS credentials for each environment
-3. Review resource naming and tag consistency
-4. Test environment isolation
-
-*Solutions*:
-* **Configuration**: Update environment settings for correct regions/accounts
-* **Credentials**: Ensure proper AWS access for each environment
-* **Naming**: Use consistent naming conventions across environments
-* **Isolation**: Implement proper resource tagging and separation
+* **API Support**: Verify resource type has describe API
+* **Property Mapping**: Check resource normalizer implementation
+* **Metadata Loading**: Review caching and refresh logic
+* **Relationships**: Verify dependency analysis configuration
 
 ## User Interface Issues
 
@@ -262,69 +184,43 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash Archi
 * **Theme Switching**: Fix theme persistence and application
 * **Custom Styling**: Update custom components for theme compatibility
 
-## Resource Specification Issues
+## Control Bridge Issues
 
-### Download Problems
+### AI Agent Communication Problems
 
-*Symptoms*: AWS resource specifications don't download
-* Network timeouts during download
-* Authentication failures for resource access
-* Incomplete or corrupt specification files
-
-*Diagnostic Steps*:
-1. Test network connectivity to AWS documentation
-2. Review download manager status and logs
-3. Check available disk space
-4. Verify file write permissions
-
-*Solutions*:
-* **Network**: Configure proxy or firewall settings
-* **Authentication**: Update AWS credentials for resource access
-* **Storage**: Ensure adequate disk space for specifications
-* **Permissions**: Fix file system write permissions
-
-### Schema Validation Problems
-
-*Symptoms*: Resource forms don't generate correctly
-* Missing property fields
-* Incorrect validation rules
-* Schema parsing errors
+*Symptoms*: Bridge agent not responding or errors
+* Agent task execution failures
+* Tool invocation errors
+* Response parsing issues
 
 *Diagnostic Steps*:
-1. Review resource specification file integrity
-2. Check schema parsing logic for errors
-3. Verify resource type classification
-4. Test with known good specifications
+1. Check Bridge window logs for errors
+2. Verify AI service connectivity
+3. Review task execution status
+4. Test with simpler queries
 
 *Solutions*:
-* **File Integrity**: Re-download corrupted specifications
-* **Parsing Logic**: Update schema parser for new formats
-* **Classification**: Fix resource type vs property type detection
-* **Validation**: Update constraint parsing for new schema features
+* **Network**: Verify connectivity to AI service endpoints
+* **Authentication**: Check AI service credentials configuration
+* **Tool Errors**: Review tool implementation and permissions
+* **Task Complexity**: Break down complex operations into smaller steps
 
 ## Error Recovery Procedures
 
 ### Emergency Data Recovery
 
-*For Corrupt Project Files*:
-1. Check for automatic backup files in project directory
-2. Use emergency recovery methods in project management
-3. Restore from version control if available
-4. Reconstruct from CloudFormation templates
-
 *For Corrupt Application State*:
 1. Clear application cache and temporary files
 2. Reset window layouts and preferences
-3. Re-download AWS resource specifications
-4. Restart with clean configuration
+3. Restart with clean configuration
+4. Check application logs for corruption sources
 
 ### Factory Reset Procedures
 
-*Complete Reset* (preserves projects):
+*Complete Reset*:
 1. Close application completely
 2. Delete configuration directory: `$HOME/.local/share/awsdash/`
-3. Keep project files in separate directories
-4. Restart application for fresh configuration
+3. Restart application for fresh configuration
 
 *Partial Reset* (preserves preferences):
 1. Clear specific cache directories
@@ -338,7 +234,8 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash Archi
 
 *Important Log Sections*:
 * Authentication flows and credential management
-* Template parsing and validation operations
+* AWS resource discovery and API operations
+* Control Bridge agent task execution
 * AWS SDK interactions and error responses
 * UI event processing and window management
 
@@ -365,7 +262,5 @@ For enterprise users requiring professional support:
 
 ## Related Documentation
 
-* [System Architecture](system-architecture.md)
-* [User Interface Guide](user-interface.md)
-* [Performance Optimization](performance-optimization.md)
-* [Development Guide](development-guide.md)
+* [Setup IAM Identity Center](setup-iam-identity-center.md) - AWS authentication configuration
+* [Technical Documentation](../technical/README.md) - System architecture and development guides

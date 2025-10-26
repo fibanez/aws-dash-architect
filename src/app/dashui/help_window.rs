@@ -71,9 +71,31 @@ impl HelpWindow {
                 ui.label(RichText::new("Escape").strong());
                 ui.label("- Close current window");
             });
+
+            ui.add_space(15.0);
+
+            // Command Palette section
+            ui.heading("Command Palette");
+            ui.add_space(5.0);
+
+            ui.label("Press Space to open the command palette, then:");
+            ui.add_space(10.0);
+
             ui.horizontal(|ui| {
-                ui.label(RichText::new("F1").strong());
-                ui.label("- Help Assistant");
+                ui.label(RichText::new("L").strong());
+                ui.label("- Login to AWS Identity Center");
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("E").strong());
+                ui.label("- Open AWS Resource Explorer");
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("B").strong());
+                ui.label("- Open Control Bridge (AI Assistant)");
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Q").strong());
+                ui.label("- Quit application");
             });
 
             ui.add_space(15.0);
@@ -82,16 +104,12 @@ impl HelpWindow {
             ui.heading("AWS IAM Identity Center Setup");
             ui.add_space(5.0);
 
-            ui.label("To use the AWS Dash login functionality, you need to set up a Permission Set in IAM Identity Center:");
+            ui.label("To use AWS Dash, you need to set up IAM Identity Center:");
             ui.add_space(10.0);
 
-            ui.add_space(10.0);
-            ui.label(RichText::new("Get started by:").strong());
-            ui.label("1. Creating a new project (Space > Project > New)");
-            ui.label("2. Login to AWS (Space > Login)");
-            ui.label("3. Adding resources to your project");
-            ui.label("4. Configuring resource properties");
-            ui.label("5. Deploying CloudFormation");
+            ui.label("1. Login to AWS (Space > Login)");
+            ui.label("2. Explore AWS resources across your accounts (Space > AWS Explorer)");
+            ui.label("3. Use the AI assistant for infrastructure operations (Space > Control Bridge)");
 
             ui.add_space(20.0);
         });

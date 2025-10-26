@@ -138,6 +138,5 @@ if let Some(status) = manager.get_deployment_status(environment_name) {
 - Status bar updates only when notifications exist
 
 **References:**
-- [CloudFormation Manager](cloudformation-manager.md) - Deployment status integration
 - [Window Focus System](window-focus-system.md) - Notification detail window integration
-- [User Interface](user-interface.md) - Status bar integration patterns
+- [UI Testing Framework](ui-testing-framework.md) - Testing notification behavior

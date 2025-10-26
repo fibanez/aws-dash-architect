@@ -231,9 +231,16 @@ pub(crate) use impl_simple_focusable_window;
 pub type PositionShowParams = egui::Pos2;
 
 /// Parameters for windows that need project context
+// Project management removed
+// #[derive(Clone)]
+// pub struct ProjectShowParams {
+//     pub project: Option<crate::app::projects::Project>,
+//     pub window_pos: Option<egui::Pos2>,
+// }
+
+// Stubbed version
 #[derive(Clone)]
 pub struct ProjectShowParams {
-    pub project: Option<crate::app::projects::Project>,
     pub window_pos: Option<egui::Pos2>,
 }
 

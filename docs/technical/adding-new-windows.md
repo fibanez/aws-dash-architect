@@ -13,8 +13,7 @@ Adding a new window that integrates with the focus system involves implementing 
 First, identify what parameters your window needs:
 
 * **No parameters**: Use `SimpleShowParams`
-* **Position only**: Use `PositionShowParams`  
-* **Project + position**: Use `ProjectShowParams`
+* **Position only**: Use `PositionShowParams`
 * **Theme**: Use `ThemeShowParams`
 * **AWS Identity**: Use `IdentityShowParams`
 * **Complex state**: Create custom parameter type

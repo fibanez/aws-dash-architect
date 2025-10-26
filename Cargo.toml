@@ -23,8 +23,8 @@ stood = { git = "https://github.com/fibanez/stood.git" }
 async-trait = "0.1"
 
 # UI framework
-egui = "0.32"
-eframe = { version = "0.32", default-features = false, features = [
+egui = "=0.32.3"  # Pinned to 0.32.3 for compatibility with egui_code_editor
+eframe = { version = "=0.32.3", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers
     "default_fonts", # Embed the default egui fonts
     "glow",          # Use the glow rendering backend
@@ -33,7 +33,7 @@ eframe = { version = "0.32", default-features = false, features = [
     "x11",           # Support older Linux distributions
 ] }
 catppuccin-egui = { version = "5.6.0", default-features = false, features = ["egui32"] }
-egui_extras = { version = "0.32", features = ["image", "svg"] }
+egui_extras = { version = "=0.32.3", features = ["image", "svg"] }
 egui_code_editor = "0.2.17"
 egui_json_tree = "0.12"
 image = "0.25.4"
@@ -55,7 +55,6 @@ once_cell = "1.20"
 directories = "5.0"
 dirs = "5.0"
 zip = "0.6.6"
-git2 = { version = "0.18", default-features = false, features = ["vendored-openssl", "https", "vendored-libgit2"] }
 
 # AWS support
 aws-config = "1.1"
@@ -133,9 +132,6 @@ aws-sdk-cloudtraildata = "1.67"
 aws-sdk-autoscaling = "1.67"
 aws-sdk-xray = "1.67"
 aws-sdk-shield = "1.67"
-
-# CloudFormation Guard
-cfn-guard = "3.1.2"
 
 # HTTP and web
 reqwest = { version = "0.11", features = ["blocking", "json"] }

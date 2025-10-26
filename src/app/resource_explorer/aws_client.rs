@@ -786,7 +786,19 @@ impl AWSResourceClient {
         Ok(())
     }
 
-    /// Legacy sequential method for backward compatibility
+    /// Convenience wrapper around query_aws_resources_parallel() that collects all
+    /// results into a single Vec<ResourceEntry> and extracts resource relationships.
+    ///
+    /// Used by: CloudFormation Manager's ResourceLookupService (resource_lookup.rs)
+    /// for populating parameter dropdowns with AWS resources (e.g., EC2 instance IDs,
+    /// S3 bucket names, Lambda function ARNs).
+    ///
+    /// Why this exists: Simplifies API for callers that need synchronous result
+    /// collection rather than streaming results via channels. Internally delegates
+    /// to query_aws_resources_parallel() but handles channel setup/teardown and
+    /// aggregates QueryResults into a single vector.
+    ///
+    /// Returns: Aggregated Vec<ResourceEntry> with relationships extracted
     pub async fn query_aws_resources(
         &self,
         scope: &QueryScope,

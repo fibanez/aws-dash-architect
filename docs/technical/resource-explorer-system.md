@@ -25,7 +25,7 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - AWS Identity Center for live credential management and multi-account access
 - Window Focus System for keyboard navigation integration
 - Color System for consistent visual coding across the application
-- CloudFormation Manager for shared AWS client functionality
+- Control Bridge for AI-powered resource operations
 
 ## Implementation Details
 
@@ -94,5 +94,5 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 
 **References:**
 - [Window Focus System](window-focus-system.md) - Integration with application focus management
-- [CloudFormation System](cloudformation-system.md) - Shared AWS client functionality
+- [Credential Management](credential-management.md) - AWS authentication and multi-account access
 - [Trait Patterns](trait-patterns.md) - Common patterns used throughout the system
