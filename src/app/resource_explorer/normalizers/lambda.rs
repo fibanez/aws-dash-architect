@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Lambda Functions
 pub struct LambdaFunctionNormalizer;
 
-impl ResourceNormalizer for LambdaFunctionNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for LambdaFunctionNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let function_name = raw_response
             .get("FunctionName")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for LambdaFunctionNormalizer {
 
         let display_name = extract_display_name(&raw_response, &function_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Lambda::Function", &function_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Lambda::Function {}: {}", function_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -38,6 +55,9 @@ impl ResourceNormalizer for LambdaFunctionNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -62,13 +82,15 @@ impl ResourceNormalizer for LambdaFunctionNormalizer {
 /// Normalizer for Lambda Layer Versions
 pub struct LambdaLayerVersionNormalizer;
 
-impl ResourceNormalizer for LambdaLayerVersionNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for LambdaLayerVersionNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let layer_name = raw_response
             .get("LayerName")
@@ -78,7 +100,21 @@ impl ResourceNormalizer for LambdaLayerVersionNormalizer {
 
         let display_name = extract_display_name(&raw_response, &layer_name);
         let status = Some("Available".to_string()); // Layers don't have status, default to Available
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Lambda::LayerVersion", &layer_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Lambda::LayerVersion {}: {}", layer_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -94,6 +130,9 @@ impl ResourceNormalizer for LambdaLayerVersionNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -117,13 +156,15 @@ impl ResourceNormalizer for LambdaLayerVersionNormalizer {
 /// Normalizer for Lambda Event Source Mappings
 pub struct LambdaEventSourceMappingNormalizer;
 
-impl ResourceNormalizer for LambdaEventSourceMappingNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let uuid = raw_response
             .get("UUID")
@@ -148,7 +189,28 @@ impl ResourceNormalizer for LambdaEventSourceMappingNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::Lambda::EventSourceMapping", &uuid, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::Lambda::EventSourceMapping {}: {}", uuid, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -164,6 +226,9 @@ impl ResourceNormalizer for LambdaEventSourceMappingNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -206,3 +271,4 @@ impl ResourceNormalizer for LambdaEventSourceMappingNormalizer {
         "AWS::Lambda::EventSourceMapping"
     }
 }
+

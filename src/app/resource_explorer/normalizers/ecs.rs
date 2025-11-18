@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for ECS Clusters
 pub struct ECSClusterNormalizer;
 
-impl ResourceNormalizer for ECSClusterNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSClusterNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let cluster_name = raw_response
             .get("ClusterName")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for ECSClusterNormalizer {
 
         let display_name = extract_display_name(&raw_response, &cluster_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::ECS::Cluster", &cluster_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::Cluster {}: {}", cluster_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -38,6 +55,9 @@ impl ResourceNormalizer for ECSClusterNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -62,13 +82,15 @@ impl ResourceNormalizer for ECSClusterNormalizer {
 /// Normalizer for ECS Services
 pub struct ECSServiceNormalizer;
 
-impl ResourceNormalizer for ECSServiceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSServiceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let service_name = raw_response
             .get("ServiceName")
@@ -78,7 +100,21 @@ impl ResourceNormalizer for ECSServiceNormalizer {
 
         let display_name = extract_display_name(&raw_response, &service_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::ECS::Service", &service_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::Service {}: {}", service_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -94,6 +130,9 @@ impl ResourceNormalizer for ECSServiceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -162,13 +201,15 @@ impl ResourceNormalizer for ECSServiceNormalizer {
 /// Normalizer for ECS Tasks
 pub struct ECSTaskNormalizer;
 
-impl ResourceNormalizer for ECSTaskNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSTaskNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let task_arn = raw_response
             .get("TaskArn")
@@ -194,7 +235,28 @@ impl ResourceNormalizer for ECSTaskNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::ECS::Task", &task_arn, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::Task {}: {}", task_arn, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -210,6 +272,9 @@ impl ResourceNormalizer for ECSTaskNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -278,13 +343,15 @@ impl ResourceNormalizer for ECSTaskNormalizer {
 /// Normalizer for ECS Task Definitions
 pub struct ECSTaskDefinitionNormalizer;
 
-impl ResourceNormalizer for ECSTaskDefinitionNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSTaskDefinitionNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let family = raw_response
             .get("Family")
@@ -294,7 +361,21 @@ impl ResourceNormalizer for ECSTaskDefinitionNormalizer {
 
         let display_name = extract_display_name(&raw_response, &family);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::ECS::TaskDefinition", &family, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::TaskDefinition {}: {}", family, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -310,6 +391,9 @@ impl ResourceNormalizer for ECSTaskDefinitionNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -329,3 +413,4 @@ impl ResourceNormalizer for ECSTaskDefinitionNormalizer {
         "AWS::ECS::TaskDefinition"
     }
 }
+

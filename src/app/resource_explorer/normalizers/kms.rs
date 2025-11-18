@@ -1,18 +1,21 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for KMS Keys
 pub struct KmsKeyNormalizer;
 
-impl ResourceNormalizer for KmsKeyNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for KmsKeyNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("KeyId")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for KmsKeyNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::KMS::Key", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::KMS::Key {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -38,6 +55,9 @@ impl ResourceNormalizer for KmsKeyNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -46,8 +66,8 @@ impl ResourceNormalizer for KmsKeyNormalizer {
 
     fn extract_relationships(
         &self,
-        _entry: &ResourceEntry,
-        _all_resources: &[ResourceEntry],
+        __entry: &ResourceEntry,
+        __all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         // KMS keys can be related to S3 buckets, EBS volumes, RDS instances, Secrets Manager
         // Implementation would analyze other resources for KMS key references
@@ -58,3 +78,4 @@ impl ResourceNormalizer for KmsKeyNormalizer {
         "AWS::KMS::Key"
     }
 }
+

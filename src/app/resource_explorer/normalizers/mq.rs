@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Amazon MQ Brokers
 pub struct MQBrokerNormalizer;
 
-impl ResourceNormalizer for MQBrokerNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for MQBrokerNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let broker_id = raw_response
             .get("BrokerId")
@@ -28,7 +31,20 @@ impl ResourceNormalizer for MQBrokerNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+            .fetch_tags_for_resource("AWS::AmazonMQ::Broker", &broker_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::AmazonMQ::Broker {}: {}",
+                    broker_id,
+                    e
+                );
+
+                Vec::new()
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -44,6 +60,9 @@ impl ResourceNormalizer for MQBrokerNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -108,3 +127,4 @@ impl ResourceNormalizer for MQBrokerNormalizer {
         "AWS::AmazonMQ::Broker"
     }
 }
+

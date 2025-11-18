@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Auto Scaling Groups
 pub struct AutoScalingGroupNormalizer;
 
-impl ResourceNormalizer for AutoScalingGroupNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for AutoScalingGroupNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("AutoScalingGroupName")
             .and_then(|v| v.as_str())
@@ -25,7 +29,8 @@ impl ResourceNormalizer for AutoScalingGroupNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::AutoScaling::AutoScalingGroup".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -38,81 +43,32 @@ impl ResourceNormalizer for AutoScalingGroupNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-        
-        // Auto Scaling Groups relate to Load Balancers
-        if let Some(load_balancer_names) = entry.raw_properties.get("LoadBalancerNames") {
-            if let Some(lb_array) = load_balancer_names.as_array() {
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::ElasticLoadBalancing::LoadBalancer" {
-                        for lb_name in lb_array {
-                            if let Some(lb_name_str) = lb_name.as_str() {
-                                if resource.display_name == lb_name_str || resource.resource_id == lb_name_str {
-                                    relationships.push(ResourceRelationship {
-                                        relationship_type: RelationshipType::Uses,
-                                        target_resource_id: resource.resource_id.clone(),
-                                        target_resource_type: resource.resource_type.clone(),
-                                    });
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Auto Scaling Groups relate to Target Groups (ALB/NLB)
-        if let Some(target_group_arns) = entry.raw_properties.get("TargetGroupARNs") {
-            if let Some(tg_array) = target_group_arns.as_array() {
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::ElasticLoadBalancingV2::TargetGroup" {
-                        for tg_arn in tg_array {
-                            if let Some(tg_arn_str) = tg_arn.as_str() {
-                                if resource.raw_properties.get("TargetGroupArn")
-                                    .and_then(|v| v.as_str()) == Some(tg_arn_str) {
-                                    relationships.push(ResourceRelationship {
-                                        relationship_type: RelationshipType::Uses,
-                                        target_resource_id: resource.resource_id.clone(),
-                                        target_resource_type: resource.resource_type.clone(),
-                                    });
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Auto Scaling Groups relate to Subnets through VPCZoneIdentifier
-        if let Some(vpc_zone_identifier) = entry.raw_properties.get("VPCZoneIdentifier") {
-            if let Some(vpc_zone_str) = vpc_zone_identifier.as_str() {
-                let subnet_ids: Vec<&str> = vpc_zone_str.split(',').map(|s| s.trim()).collect();
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::EC2::Subnet" && subnet_ids.contains(&resource.resource_id.as_str()) {
-                        relationships.push(ResourceRelationship {
-                            relationship_type: RelationshipType::Uses,
-                            target_resource_id: resource.resource_id.clone(),
-                            target_resource_type: resource.resource_type.clone(),
-                        });
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -123,13 +79,15 @@ impl ResourceNormalizer for AutoScalingGroupNormalizer {
 /// Normalizer for Auto Scaling Policies
 pub struct AutoScalingPolicyNormalizer;
 
-impl ResourceNormalizer for AutoScalingPolicyNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for AutoScalingPolicyNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("PolicyName")
@@ -139,7 +97,21 @@ impl ResourceNormalizer for AutoScalingPolicyNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::AutoScaling::ScalingPolicy", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::AutoScaling::ScalingPolicy {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -155,6 +127,9 @@ impl ResourceNormalizer for AutoScalingPolicyNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -192,3 +167,4 @@ impl ResourceNormalizer for AutoScalingPolicyNormalizer {
         "AWS::AutoScaling::ScalingPolicy"
     }
 }
+

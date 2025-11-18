@@ -1,18 +1,21 @@
-use super::{utils::*, ResourceNormalizer};
+use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Application/Network Load Balancers (ELBv2)
 pub struct ELBv2LoadBalancerNormalizer;
 
-impl ResourceNormalizer for ELBv2LoadBalancerNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let lb_arn = raw_response
             .get("LoadBalancerArn")
@@ -36,7 +39,28 @@ impl ResourceNormalizer for ELBv2LoadBalancerNormalizer {
             .and_then(|c| c.as_str())
             .map(|s| s.to_string());
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::ElasticLoadBalancingV2::LoadBalancer", &lb_arn, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancingV2::LoadBalancer {}: {}", lb_arn, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -52,6 +76,9 @@ impl ResourceNormalizer for ELBv2LoadBalancerNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -119,13 +146,15 @@ impl ResourceNormalizer for ELBv2LoadBalancerNormalizer {
 /// Normalizer for Target Groups (ELBv2)
 pub struct ELBv2TargetGroupNormalizer;
 
-impl ResourceNormalizer for ELBv2TargetGroupNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let tg_arn = raw_response
             .get("TargetGroupArn")
@@ -154,7 +183,28 @@ impl ResourceNormalizer for ELBv2TargetGroupNormalizer {
             Some("inactive".to_string())
         };
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::ElasticLoadBalancingV2::TargetGroup", &tg_arn, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancingV2::TargetGroup {}: {}", tg_arn, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -170,6 +220,9 @@ impl ResourceNormalizer for ELBv2TargetGroupNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -217,3 +270,4 @@ impl ResourceNormalizer for ELBv2TargetGroupNormalizer {
         "AWS::ElasticLoadBalancingV2::TargetGroup"
     }
 }
+

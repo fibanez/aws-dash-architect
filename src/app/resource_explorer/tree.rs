@@ -1,4 +1,6 @@
 use super::{colors::*, state::*};
+use crate::app::data_plane::cloudtrail_events::has_cloudtrail_support;
+use crate::app::data_plane::cloudwatch_logs::{get_log_group_name, has_cloudwatch_logs};
 use egui::{Color32, RichText, Ui};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -112,14 +114,58 @@ impl TreeBuilder {
             Self::filter_resources(resources, search_filter)
         };
 
+        // Separate parent resources from child resources
+        // Child resources will be attached to their parents, not shown at top level
+        let parent_resources: Vec<ResourceEntry> = filtered_resources
+            .iter()
+            .filter(|r| !r.is_child_resource)
+            .cloned()
+            .collect();
+
         let mut root = TreeNode::new(
             "root".to_string(),
             "AWS Resources".to_string(),
             NodeType::Resource,
         );
 
-        // Group by primary grouping
-        let primary_groups = Self::group_by_mode(&filtered_resources, &primary_grouping);
+        // Special handling for hierarchical tag grouping
+        if let GroupingMode::ByTagHierarchy(tag_keys) = &primary_grouping {
+            if !tag_keys.is_empty() {
+                Self::build_tag_hierarchy_tree(
+                    &mut root,
+                    &parent_resources,
+                    tag_keys,
+                    &filtered_resources,
+                );
+
+                // Add total count to root node display name
+                let total_resources = filtered_resources.len();
+                root.display_name = format!("AWS Resources ({})", total_resources);
+
+                return root;
+            }
+        }
+
+        // Special handling for hierarchical property grouping
+        if let GroupingMode::ByPropertyHierarchy(property_paths) = &primary_grouping {
+            if !property_paths.is_empty() {
+                Self::build_property_hierarchy_tree(
+                    &mut root,
+                    &parent_resources,
+                    property_paths,
+                    &filtered_resources,
+                );
+
+                // Add total count to root node display name
+                let total_resources = filtered_resources.len();
+                root.display_name = format!("AWS Resources ({})", total_resources);
+
+                return root;
+            }
+        }
+
+        // Group by primary grouping (only parent resources)
+        let primary_groups = Self::group_by_mode(&parent_resources, &primary_grouping);
 
         for (primary_key, primary_resources) in primary_groups {
             let (primary_display, primary_color) =
@@ -163,9 +209,12 @@ impl TreeBuilder {
                     );
 
                     // Add individual resources
-                    for resource in type_resources {
-                        type_node.add_resource(resource);
+                    for resource in &type_resources {
+                        type_node.add_resource(resource.clone());
                     }
+
+                    // Attach child resources to their parent resources
+                    Self::attach_child_resources(&mut type_node, &filtered_resources);
 
                     primary_node.add_child(type_node);
                 }
@@ -196,9 +245,12 @@ impl TreeBuilder {
                     }
 
                     // Add individual resources to the sub-node
-                    for resource in account_region_resources {
-                        sub_node.add_resource(resource);
+                    for resource in &account_region_resources {
+                        sub_node.add_resource(resource.clone());
                     }
+
+                    // Attach child resources to their parent resources
+                    Self::attach_child_resources(&mut sub_node, &filtered_resources);
 
                     primary_node.add_child(sub_node);
                 }
@@ -214,6 +266,306 @@ impl TreeBuilder {
         root
     }
 
+    /// Attach child resources as tree nodes under their parent resources
+    /// This creates a hierarchical structure for resources with parent-child relationships
+    fn attach_child_resources(parent_node: &mut TreeNode, all_resources: &[ResourceEntry]) {
+        // Iterate through all resource entries in this node
+        // We need to clone the resource_entries to avoid borrowing issues
+        let parent_resources = parent_node.resource_entries.clone();
+
+        for parent_resource in &parent_resources {
+            // Find all child resources for this parent
+            let children: Vec<ResourceEntry> = all_resources
+                .iter()
+                .filter(|r| {
+                    r.is_child_resource
+                        && r.parent_resource_id.as_ref() == Some(&parent_resource.resource_id)
+                        && r.parent_resource_type.as_ref() == Some(&parent_resource.resource_type)
+                })
+                .cloned()
+                .collect();
+
+            if !children.is_empty() {
+                // Create a child node for this parent resource with its children
+                // Group children by resource type
+                let mut child_groups: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
+                for child in &children {
+                    child_groups
+                        .entry(child.resource_type.clone())
+                        .or_default()
+                        .push(child.clone());
+                }
+
+                // For each child resource type, create a sub-node
+                for (child_type, child_resources) in child_groups {
+                    let child_type_display = child_type
+                        .strip_prefix("AWS::")
+                        .and_then(|s| s.split("::").last())
+                        .unwrap_or(&child_type);
+
+                    let child_node_id = format!(
+                        "child:{}:{}:{}",
+                        parent_resource.resource_id, parent_resource.resource_type, child_type
+                    );
+
+                    let mut child_node = TreeNode::new(
+                        child_node_id,
+                        format!("{} ({})", child_type_display, child_resources.len()),
+                        NodeType::ResourceType,
+                    );
+
+                    // Add child resources to this node
+                    for child_resource in &child_resources {
+                        child_node.add_resource(child_resource.clone());
+                    }
+
+                    // Recursively attach grandchildren
+                    Self::attach_child_resources(&mut child_node, all_resources);
+
+                    // Add the child node to the parent node
+                    parent_node.add_child(child_node);
+                }
+            }
+        }
+    }
+
+    /// Build a hierarchical tree structure based on multiple tag keys
+    ///
+    /// This method recursively groups resources by tag keys in the specified order.
+    /// For example, with tag_keys = ["Environment", "Team", "Project"]:
+    /// - Level 1: Group by Environment (Production, Staging, etc.)
+    /// - Level 2: Under each Environment, group by Team (Backend, Frontend, etc.)
+    /// - Level 3: Under each Team, group by Project (API, WebUI, etc.)
+    ///
+    /// Resources without a tag at any level are grouped under "No {TagKey}" (e.g., "No Environment")
+    fn build_tag_hierarchy_tree(
+        parent_node: &mut TreeNode,
+        resources: &[ResourceEntry],
+        tag_keys: &[String],
+        all_resources: &[ResourceEntry],
+    ) {
+        if tag_keys.is_empty() || resources.is_empty() {
+            return;
+        }
+
+        let current_tag_key = &tag_keys[0];
+        let remaining_tag_keys = &tag_keys[1..];
+
+        // Group resources by the current tag key
+        let mut groups: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
+
+        for resource in resources {
+            let tag_value = resource
+                .tags
+                .iter()
+                .find(|tag| &tag.key == current_tag_key)
+                .map(|tag| tag.value.clone())
+                .unwrap_or_else(|| format!("No {}", current_tag_key));
+
+            groups.entry(tag_value).or_default().push(resource.clone());
+        }
+
+        // Sort groups alphabetically, but put "No {tag}" groups at the end
+        let mut sorted_keys: Vec<String> = groups.keys().cloned().collect();
+        let no_tag_label = format!("No {}", current_tag_key);
+        sorted_keys.sort_by(|a, b| match (a.as_str(), b.as_str()) {
+            (a_val, b_val) if a_val == no_tag_label && b_val == no_tag_label => {
+                std::cmp::Ordering::Equal
+            }
+            (a_val, _) if a_val == no_tag_label => std::cmp::Ordering::Greater,
+            (_, b_val) if b_val == no_tag_label => std::cmp::Ordering::Less,
+            _ => a.cmp(b),
+        });
+
+        for tag_value in sorted_keys {
+            let group_resources = groups.get(&tag_value).unwrap();
+
+            // Create display name for this tag group
+            let display_name = if tag_value == no_tag_label {
+                format!("{} ({} resources)", no_tag_label, group_resources.len())
+            } else {
+                format!(
+                    "{}: {} ({})",
+                    current_tag_key,
+                    tag_value,
+                    group_resources.len()
+                )
+            };
+
+            // Create stable node ID for this tag group
+            let node_id = format!("tag:{}:{}", current_tag_key, tag_value);
+            let mut tag_node = TreeNode::new(node_id, display_name, NodeType::Account);
+
+            // Use consistent color for tag groups
+            let tag_color = if tag_value == no_tag_label {
+                Color32::from_rgb(150, 150, 150) // Gray for missing tag
+            } else {
+                Color32::from_rgb(100, 150, 200) // Blue for tagged
+            };
+            tag_node = tag_node.with_color(tag_color);
+
+            // If there are more tag keys, recursively build the hierarchy
+            if !remaining_tag_keys.is_empty() {
+                Self::build_tag_hierarchy_tree(
+                    &mut tag_node,
+                    group_resources,
+                    remaining_tag_keys,
+                    all_resources,
+                );
+            } else {
+                // This is the last level - group by resource type and add resources
+                let resource_type_groups =
+                    Self::group_by_mode(group_resources, &GroupingMode::ByResourceType);
+
+                for (resource_type, type_resources) in resource_type_groups {
+                    let type_display = Self::resource_type_to_display_name(&resource_type);
+                    let type_node_id = format!("{}:type:{}", tag_node.id, resource_type);
+
+                    let mut type_node = TreeNode::new(
+                        type_node_id,
+                        format!("{} ({})", type_display, type_resources.len()),
+                        NodeType::ResourceType,
+                    );
+
+                    // Add individual resources
+                    for resource in &type_resources {
+                        type_node.add_resource(resource.clone());
+                    }
+
+                    // Attach child resources to their parent resources
+                    Self::attach_child_resources(&mut type_node, all_resources);
+
+                    tag_node.add_child(type_node);
+                }
+            }
+
+            parent_node.add_child(tag_node);
+        }
+    }
+
+    /// Build a hierarchical tree structure based on multiple property paths
+    ///
+    /// This method recursively groups resources by property values in the specified order.
+    /// For example, with property_paths = ["raw_properties.State", "raw_properties.InstanceType"]:
+    /// - Level 1: Group by State (running, stopped, etc.)
+    /// - Level 2: Under each State, group by InstanceType (t2.micro, m5.large, etc.)
+    ///
+    /// Resources without a property at any level are grouped under "No {PropertyName}" (e.g., "No State")
+    fn build_property_hierarchy_tree(
+        parent_node: &mut TreeNode,
+        resources: &[ResourceEntry],
+        property_paths: &[String],
+        all_resources: &[ResourceEntry],
+    ) {
+        if property_paths.is_empty() || resources.is_empty() {
+            return;
+        }
+
+        let current_property_path = &property_paths[0];
+        let remaining_property_paths = &property_paths[1..];
+
+        tracing::info!("=== Property Hierarchy Grouping ===");
+        tracing::info!("Property path: {}", current_property_path);
+        tracing::info!("Resources to group: {}", resources.len());
+
+        // Log first resource structure for debugging
+        if let Some(first_resource) = resources.first() {
+            tracing::info!("First resource type: {}", first_resource.resource_type);
+            tracing::info!(
+                "First resource properties JSON: {}",
+                serde_json::to_string_pretty(&first_resource.properties)
+                    .unwrap_or_else(|_| "ERROR".to_string())
+            );
+        }
+
+        // Group resources by the current property value
+        let mut groups: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
+
+        for resource in resources {
+            let property_value =
+                Self::extract_property_value_from_resource(resource, current_property_path)
+                    .unwrap_or_else(|| {
+                        format!("No {}", Self::property_display_name(current_property_path))
+                    });
+
+            groups
+                .entry(property_value)
+                .or_default()
+                .push(resource.clone());
+        }
+
+        tracing::info!("Grouped into {} distinct values", groups.len());
+        for (value, res) in &groups {
+            tracing::info!("  '{}': {} resources", value, res.len());
+        }
+
+        // Sort property values alphabetically
+        let mut sorted_values: Vec<String> = groups.keys().cloned().collect();
+        sorted_values.sort();
+
+        for property_value in sorted_values {
+            let group_resources = groups.get(&property_value).unwrap();
+
+            // Create display name for this property group
+            let display_name = format!(
+                "{}: {} ({})",
+                Self::property_display_name(current_property_path),
+                property_value,
+                group_resources.len()
+            );
+
+            // Create stable node ID for this property group
+            let node_id = format!("property:{}:{}", current_property_path, property_value);
+            let mut property_node = TreeNode::new(node_id, display_name, NodeType::Account);
+
+            // Use color for property groups
+            let property_color = Color32::from_rgb(100, 200, 150); // Green for properties
+            property_node = property_node.with_color(property_color);
+
+            // If there are more property paths, recursively build the hierarchy
+            if !remaining_property_paths.is_empty() {
+                Self::build_property_hierarchy_tree(
+                    &mut property_node,
+                    group_resources,
+                    remaining_property_paths,
+                    all_resources,
+                );
+            } else {
+                // This is the last level - group by resource type and add resources
+                let resource_type_groups =
+                    Self::group_by_mode(group_resources, &GroupingMode::ByResourceType);
+
+                for (resource_type, type_resources) in resource_type_groups {
+                    let type_display = Self::resource_type_to_display_name(&resource_type);
+                    let type_node_id = format!("{}:type:{}", property_node.id, resource_type);
+
+                    let mut type_node = TreeNode::new(
+                        type_node_id,
+                        format!("{} ({})", type_display, type_resources.len()),
+                        NodeType::ResourceType,
+                    );
+
+                    // Add resources to the type node
+                    for resource in type_resources {
+                        type_node.add_resource(resource.clone());
+                    }
+
+                    // Attach child resources to their parent resources
+                    Self::attach_child_resources(&mut type_node, all_resources);
+
+                    property_node.add_child(type_node);
+                }
+            }
+
+            parent_node.add_child(property_node);
+        }
+    }
+
+    /// Get a display-friendly name for a property path (show full path)
+    fn property_display_name(property_path: &str) -> String {
+        property_path.to_string()
+    }
+
     fn group_by_mode(
         resources: &[ResourceEntry],
         grouping: &GroupingMode,
@@ -225,6 +577,31 @@ impl TreeBuilder {
                 GroupingMode::ByAccount => resource.account_id.clone(),
                 GroupingMode::ByRegion => resource.region.clone(),
                 GroupingMode::ByResourceType => resource.resource_type.clone(),
+                GroupingMode::ByTag(tag_key) => {
+                    // Group by single tag value
+                    resource
+                        .tags
+                        .iter()
+                        .find(|tag| &tag.key == tag_key)
+                        .map(|tag| tag.value.clone())
+                        .unwrap_or_else(|| format!("No {}", tag_key))
+                }
+                GroupingMode::ByTagHierarchy(_) => {
+                    // Tag hierarchy grouping requires special handling
+                    // For now, fall back to account grouping
+                    // Future enhancement: full tag hierarchy implementation
+                    resource.account_id.clone()
+                }
+                GroupingMode::ByProperty(property_path) => {
+                    // Group by single property value
+                    Self::extract_property_value_from_resource(resource, property_path)
+                        .unwrap_or_else(|| "(not set)".to_string())
+                }
+                GroupingMode::ByPropertyHierarchy(_) => {
+                    // Property hierarchy grouping requires special handling
+                    // For now, fall back to account grouping
+                    resource.account_id.clone()
+                }
             };
 
             groups.entry(key).or_default().push(resource.clone());
@@ -281,6 +658,50 @@ impl TreeBuilder {
                 let color = Some(assign_resource_type_color(key));
                 (format!("{} ({})", display_name, resources.len()), color)
             }
+            GroupingMode::ByTag(tag_key) => {
+                // For tag grouping, display tag value
+                let no_tag_label = format!("No {}", tag_key);
+                let display_name = if key == no_tag_label {
+                    format!("{} ({} resources)", no_tag_label, resources.len())
+                } else {
+                    format!("{}: {} ({})", tag_key, key, resources.len())
+                };
+                // Use a consistent color for tag groups
+                let color = if key == no_tag_label {
+                    Some(Color32::from_rgb(150, 150, 150)) // Gray for missing tag
+                } else {
+                    Some(Color32::from_rgb(100, 150, 200)) // Blue for tagged
+                };
+                (display_name, color)
+            }
+            GroupingMode::ByTagHierarchy(_) => {
+                // Future enhancement: tag hierarchy implementation
+                // For now, use a generic display
+                (format!("{} ({})", key, resources.len()), None)
+            }
+            GroupingMode::ByProperty(property_path) => {
+                // For property grouping, display property value
+                let not_set_label = "(not set)";
+                let display_name = if key == not_set_label {
+                    format!("{} ({} resources)", not_set_label, resources.len())
+                } else {
+                    // Extract last segment of property path for display
+                    let property_name = property_path.split('.').last().unwrap_or(property_path);
+                    format!("{}: {} ({})", property_name, key, resources.len())
+                };
+                // Use a consistent color for property groups
+                let color = if key == not_set_label {
+                    Some(Color32::from_rgb(150, 150, 150)) // Gray for missing property
+                } else {
+                    Some(Color32::from_rgb(150, 100, 200)) // Purple for properties
+                };
+                (display_name, color)
+            }
+            GroupingMode::ByPropertyHierarchy(_) => {
+                // Property hierarchy will be implemented later
+                // For now, use a generic display
+                (format!("{} ({})", key, resources.len()), None)
+            }
         }
     }
 
@@ -289,6 +710,10 @@ impl TreeBuilder {
             GroupingMode::ByAccount => NodeType::Account,
             GroupingMode::ByRegion => NodeType::Region,
             GroupingMode::ByResourceType => NodeType::ResourceType,
+            GroupingMode::ByTag(_) => NodeType::Account, // Temporary placeholder
+            GroupingMode::ByTagHierarchy(_) => NodeType::Account, // Temporary placeholder
+            GroupingMode::ByProperty(_) => NodeType::Account, // Temporary placeholder
+            GroupingMode::ByPropertyHierarchy(_) => NodeType::Account, // Temporary placeholder
         }
     }
 
@@ -319,6 +744,115 @@ impl TreeBuilder {
             "af-south-1" => "Africa (Cape Town)",
             "me-south-1" => "Middle East (Bahrain)",
             _ => "Unknown Region",
+        }
+    }
+
+    /// Extract a property value from a ResourceEntry using dot notation
+    ///
+    /// This searches across multiple property fields in order of preference:
+    /// 1. detailed_properties (most complete)
+    /// 2. raw_properties (original AWS response)
+    /// 3. properties (minimal normalized data)
+    ///
+    /// Property paths can have prefixes like "raw_properties.State" or just "State"
+    fn extract_property_value_from_resource(
+        resource: &ResourceEntry,
+        property_path: &str,
+    ) -> Option<String> {
+        tracing::debug!(
+            "Extracting property '{}' from resource {}",
+            property_path,
+            resource.resource_type
+        );
+
+        // Determine which field to search and the actual path within that field
+        let (search_field, actual_path) = if property_path.starts_with("detailed_properties.") {
+            (
+                "detailed",
+                property_path.strip_prefix("detailed_properties.").unwrap(),
+            )
+        } else if property_path.starts_with("raw_properties.") {
+            (
+                "raw",
+                property_path.strip_prefix("raw_properties.").unwrap(),
+            )
+        } else if property_path.starts_with("properties.") {
+            (
+                "properties",
+                property_path.strip_prefix("properties.").unwrap(),
+            )
+        } else {
+            // No prefix - search in order: detailed → raw → properties
+            ("auto", property_path)
+        };
+
+        tracing::debug!(
+            "  Search strategy: field='{}', path='{}'",
+            search_field,
+            actual_path
+        );
+
+        // Try extraction based on strategy
+        match search_field {
+            "detailed" => {
+                if let Some(ref detailed) = resource.detailed_properties {
+                    Self::extract_from_json(detailed, actual_path)
+                } else {
+                    tracing::debug!("  detailed_properties not available");
+                    None
+                }
+            }
+            "raw" => Self::extract_from_json(&resource.raw_properties, actual_path),
+            "properties" => Self::extract_from_json(&resource.properties, actual_path),
+            "auto" => {
+                // Try detailed first, then raw, then properties
+                if let Some(ref detailed) = resource.detailed_properties {
+                    if let Some(value) = Self::extract_from_json(detailed, actual_path) {
+                        tracing::debug!("  Found in detailed_properties");
+                        return Some(value);
+                    }
+                }
+
+                if let Some(value) = Self::extract_from_json(&resource.raw_properties, actual_path)
+                {
+                    tracing::debug!("  Found in raw_properties");
+                    return Some(value);
+                }
+
+                if let Some(value) = Self::extract_from_json(&resource.properties, actual_path) {
+                    tracing::debug!("  Found in properties");
+                    return Some(value);
+                }
+
+                tracing::debug!("  NOT FOUND in any property field");
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract a value from JSON using dot notation
+    fn extract_from_json(json: &serde_json::Value, property_path: &str) -> Option<String> {
+        let segments: Vec<&str> = property_path.split('.').collect();
+        let mut current = json;
+
+        // Navigate through the JSON structure
+        for segment in segments {
+            match current {
+                serde_json::Value::Object(map) => {
+                    current = map.get(segment)?;
+                }
+                _ => return None,
+            }
+        }
+
+        // Convert the final value to a string
+        match current {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            serde_json::Value::Null => None,
+            _ => Some(current.to_string()),
         }
     }
 
@@ -385,6 +919,15 @@ pub struct TreeRenderer {
     pub pending_detail_requests: Vec<String>,
     // Resource IDs that failed to load (to prevent infinite retries)
     pub failed_detail_requests: std::collections::HashSet<String>,
+    // Tag badge clicks (for adding filters)
+    pub pending_tag_clicks: Vec<super::state::TagClickAction>,
+    // Pending actions to communicate with main app (e.g., open CloudWatch Logs)
+    pub pending_explorer_actions: Vec<super::ResourceExplorerAction>,
+    // Tag badge support
+    badge_selector: Option<super::tag_badges::BadgeSelector>,
+    tag_popularity: Option<super::tag_badges::TagPopularityTracker>,
+    // Flag to track if we're currently rebuilding (for logging debouncing)
+    is_rebuilding: bool,
 }
 
 impl Default for TreeRenderer {
@@ -400,57 +943,11 @@ impl TreeRenderer {
             cache_key: String::new(),
             pending_detail_requests: Vec::new(),
             failed_detail_requests: std::collections::HashSet::new(),
-        }
-    }
-
-    /// Get fuzzy match indices for highlighting specific characters
-    fn get_fuzzy_match_indices(text: &str, search_filter: &str) -> Option<Vec<usize>> {
-        if search_filter.is_empty() {
-            return None;
-        }
-
-        let matcher = SkimMatcherV2::default();
-        if let Some((_, indices)) = matcher.fuzzy_indices(text, search_filter) {
-            Some(indices)
-        } else {
-            None
-        }
-    }
-
-    /// Render text with character-level fuzzy match highlighting
-    fn render_fuzzy_highlighted_text(&self, ui: &mut Ui, text: &str, search_filter: &str) {
-        // Only highlight when search is active (3+ characters) but match against the full search term
-        if search_filter.len() >= 3 {
-            if let Some(indices) = Self::get_fuzzy_match_indices(text, search_filter) {
-                // Create a set of highlighted indices for O(1) lookup
-                let highlighted_indices: std::collections::HashSet<usize> =
-                    indices.into_iter().collect();
-
-                // Render character by character
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0; // No spacing between characters
-
-                    for (i, ch) in text.char_indices() {
-                        if highlighted_indices.contains(&i) {
-                            // Highlighted character
-                            ui.label(
-                                RichText::new(ch.to_string())
-                                    .background_color(Color32::GREEN)
-                                    .color(Color32::BLACK),
-                            );
-                        } else {
-                            // Normal character
-                            ui.label(ch.to_string());
-                        }
-                    }
-                });
-            } else {
-                // No match, render normally
-                ui.label(text);
-            }
-        } else {
-            // Search not active yet, render normally
-            ui.label(text);
+            pending_tag_clicks: Vec::new(),
+            pending_explorer_actions: Vec::new(),
+            badge_selector: None,
+            tag_popularity: None,
+            is_rebuilding: false,
         }
     }
 
@@ -613,22 +1110,33 @@ impl TreeRenderer {
         resources: &[super::state::ResourceEntry],
         primary_grouping: super::state::GroupingMode,
         search_filter: &str,
+        badge_selector: &super::tag_badges::BadgeSelector,
+        tag_popularity: &super::tag_badges::TagPopularityTracker,
     ) {
+        // Update badge support (clone to store in renderer)
+        self.badge_selector = Some(badge_selector.clone());
+        self.tag_popularity = Some(tag_popularity.clone());
+
         let new_cache_key = Self::generate_cache_key(resources, &primary_grouping, search_filter);
 
         // Only rebuild tree if cache key has changed
         if self.cache_key != new_cache_key || self.cached_tree.is_none() {
             tracing::debug!("Tree cache miss - rebuilding tree structure");
+            self.is_rebuilding = true; // Enable verbose logging during rebuild
             let tree = TreeBuilder::build_tree(resources, primary_grouping, search_filter);
             self.cached_tree = Some(tree);
             self.cache_key = new_cache_key;
+        } else {
+            self.is_rebuilding = false; // Disable verbose logging for cached renders
         }
-        // Remove the cache hit debug message to prevent log flooding
 
         // Render the cached tree (clone to avoid borrow checker issues)
         if let Some(tree) = self.cached_tree.clone() {
             self.render_node(ui, &tree, 0, search_filter);
         }
+
+        // Reset rebuild flag after rendering
+        self.is_rebuilding = false;
     }
 
     /// Legacy method for backward compatibility
@@ -637,9 +1145,11 @@ impl TreeRenderer {
     }
 
     fn render_node(&mut self, ui: &mut Ui, node: &TreeNode, depth: usize, search_filter: &str) {
-        // LOG: Track tree node rendering to identify structure and ID issues
-        tracing::trace!("AWS Explorer: Rendering tree node - Type={:?}, ID={}, DisplayName={}, Depth={}, ChildCount={}, ResourceCount={}",
-                       node.node_type, node.id, node.display_name, depth, node.children.len(), node.resource_entries.len());
+        // LOG: Track tree node rendering only during rebuild to avoid flooding
+        if self.is_rebuilding {
+            tracing::trace!("AWS Explorer: Rendering tree node - Type={:?}, ID={}, DisplayName={}, Depth={}, ChildCount={}, ResourceCount={}",
+                           node.node_type, node.id, node.display_name, depth, node.children.len(), node.resource_entries.len());
+        }
 
         // Helper function to render the actual node content
         let mut render_content = |ui: &mut Ui| {
@@ -665,9 +1175,11 @@ impl TreeRenderer {
                 ui.scope(|ui| {
                     Self::disable_vertical_lines(ui);
 
-                    // LOG: Track CollapsingHeader widget ID usage for duplicate detection
-                    tracing::trace!("AWS Explorer: Creating tree CollapsingHeader with ID salt: '{}', DisplayName: '{}'",
-                                   node.id, node.display_name);
+                    // LOG: Track CollapsingHeader widget ID usage only during rebuild
+                    if self.is_rebuilding {
+                        tracing::trace!("AWS Explorer: Creating tree CollapsingHeader with ID salt: '{}', DisplayName: '{}'",
+                                       node.id, node.display_name);
+                    }
 
                     egui::CollapsingHeader::new(final_header)
                         .default_open(false)
@@ -704,7 +1216,12 @@ impl TreeRenderer {
         }
     }
 
-    fn render_resource_node(&mut self, ui: &mut Ui, resource: &ResourceEntry, search_filter: &str) {
+    fn render_resource_node(
+        &mut self,
+        ui: &mut Ui,
+        resource: &ResourceEntry,
+        _search_filter: &str,
+    ) {
         // Create a unique ID for this resource's tree node - include ALL identifying components for true uniqueness
         // FIXED: Include resource_type and resource_id to prevent duplicates across different resource types
         let resource_node_id = format!(
@@ -716,39 +1233,36 @@ impl TreeRenderer {
             resource.display_name
         );
 
-        // LOG: Track resource addition to identify duplicates
-        tracing::debug!("AWS Explorer: Adding resource to tree - Region={}, Account={}, ResourceType={}, NodeId={}, ResourceId={}, DisplayName={}",
-                       resource.region,
-                       resource.account_id,
-                       resource.resource_type,
-                       resource_node_id,
-                       resource.resource_id,
-                       resource.display_name);
+        // LOG: Track resource addition only during rebuild to avoid flooding
+        if self.is_rebuilding {
+            tracing::debug!("AWS Explorer: Adding resource to tree - Region={}, Account={}, ResourceType={}, NodeId={}, ResourceId={}, DisplayName={}",
+                           resource.region,
+                           resource.account_id,
+                           resource.resource_type,
+                           resource_node_id,
+                           resource.resource_id,
+                           resource.display_name);
+        }
 
-        // Build the resource text with all the components
-        let mut header_parts = Vec::new();
+        // Build the resource name and ID for the colored tag
+        let resource_name_id = format!("{} ({})", resource.display_name, resource.resource_id);
 
-        // Add resource name
-        header_parts.push(resource.display_name.clone());
-
-        // Add resource ID
-        header_parts.push(format!("({})", resource.resource_id));
+        // Build status and age info to display separately after the tag
+        let mut additional_info = Vec::new();
 
         // Add status if available
         if let Some(status) = &resource.status {
-            header_parts.push(format!("[{}]", status));
+            additional_info.push(format!("[{}]", status));
         }
 
         // Add age indicator
         let age_text = resource.get_age_display();
         let is_stale = resource.is_stale(15);
         if is_stale {
-            header_parts.push(format!("⚠ {}", age_text));
+            additional_info.push(format!("⚠ {}", age_text));
         } else {
-            header_parts.push(age_text);
+            additional_info.push(age_text);
         }
-
-        let header_text = header_parts.join(" ");
 
         // Use vertical layout to separate header from JSON content
         ui.vertical(|ui| {
@@ -760,9 +1274,11 @@ impl TreeRenderer {
                 let response = ui.scope(|ui| {
                     Self::disable_vertical_lines(ui);
 
-                    // LOG: Track resource CollapsingHeader widget ID usage for duplicate detection
-                    tracing::warn!("AWS Explorer: Creating resource CollapsingHeader with ID salt: '{}', ResourceType: '{}', ResourceId: '{}', DisplayName: '{}'",
-                                  resource_node_id, resource.resource_type, resource.resource_id, resource.display_name);
+                    // LOG: Track resource CollapsingHeader widget ID only during rebuild
+                    if self.is_rebuilding {
+                        tracing::debug!("AWS Explorer: Creating resource CollapsingHeader with ID salt: '{}', ResourceType: '{}', ResourceId: '{}', DisplayName: '{}'",
+                                      resource_node_id, resource.resource_type, resource.resource_id, resource.display_name);
+                    }
 
                     egui::CollapsingHeader::new("")
                         .id_salt(&resource_node_id)
@@ -779,8 +1295,20 @@ impl TreeRenderer {
                 self.render_region_tag(ui, &resource.region, resource.region_color);
                 ui.add_space(8.0);
 
-                // Render the highlighted resource info text
-                self.render_fuzzy_highlighted_text(ui, &header_text, search_filter);
+                // Render the resource type tag with colored background based on resource type
+                // The color is determined by resource_type (e.g., "AWS::EC2::Instance")
+                // but the interior displays only the resource name and ID
+                self.render_resource_type_tag(ui, &resource_name_id, &resource.resource_type);
+
+                // Render status and age information after the tag
+                if !additional_info.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(additional_info.join(" "));
+                }
+
+                // Render tag badges
+                ui.add_space(8.0);
+                self.render_tag_badges(ui, resource);
 
                 response
             }).inner;
@@ -801,6 +1329,67 @@ impl TreeRenderer {
                 ui.indent("json_indent", |ui| {
                     // Add additional indentation to make it clearly a child
                     ui.indent("json_child_indent", |ui| {
+                        // Add View Logs and View Events buttons horizontally
+                        ui.horizontal(|ui| {
+                            // Add "View Logs" button if resource has associated CloudWatch Logs
+                            if has_cloudwatch_logs(&resource.resource_type) {
+                                if let Some(log_group) = get_log_group_name(
+                                    &resource.resource_type,
+                                    &resource.display_name,
+                                    Some(&resource.resource_id),
+                                ) {
+                                    if ui.small_button("View Logs").clicked() {
+                                        // Queue action to open CloudWatch Logs window
+                                        self.pending_explorer_actions.push(
+                                            super::ResourceExplorerAction::OpenCloudWatchLogs {
+                                                log_group_name: log_group,
+                                                resource_name: resource.display_name.clone(),
+                                                account_id: resource.account_id.clone(),
+                                                region: resource.region.clone(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Add "View Events" button for CloudTrail (all resources supported)
+                            if has_cloudtrail_support(&resource.resource_type) {
+                                if ui.small_button("View Events").clicked() {
+                                    // Extract ARN from properties if available (Lambda, EC2, etc.)
+                                    // Otherwise build it from resource metadata
+                                    let resource_arn = extract_or_build_arn(
+                                        &resource.resource_type,
+                                        &resource.raw_properties,
+                                        &resource.region,
+                                        &resource.account_id,
+                                        &resource.resource_id,
+                                    );
+
+                                    // CloudTrail ResourceName filter expects resource ID (not ARN)
+                                    // Use resource_id which contains the actual resource name/identifier
+                                    let filter_name = resource.resource_id.clone();
+
+                                    log::info!(
+                                        "CloudTrail: View Events clicked - resource_name='{}', filter_name='{}', resource_arn='{}', resource_type='{}'",
+                                        resource.display_name,
+                                        filter_name,
+                                        resource_arn,
+                                        resource.resource_type
+                                    );
+
+                                    // Queue action to open CloudTrail Events window
+                                    self.pending_explorer_actions.push(
+                                        super::ResourceExplorerAction::OpenCloudTrailEvents {
+                                            resource_type: resource.resource_type.clone(),
+                                            resource_name: filter_name,  // Use resource_id for filtering
+                                            resource_arn: Some(resource_arn),  // Keep ARN for display
+                                            account_id: resource.account_id.clone(),
+                                            region: resource.region.clone(),
+                                        },
+                                    );
+                                }
+                            }
+                        });
                         self.render_json_tree(ui, resource);
                     });
                 });
@@ -816,120 +1405,96 @@ impl TreeRenderer {
         // Create unique IDs for all components to prevent widget ID warnings
         let resource_id = &resource.resource_id;
         let resize_id = format!("json_resize_{}", resource_id);
-        let scroll_id = format!("json_scroll_{}", resource_id);
-        let search_id = format!("json_search_{}", resource_id);
 
-        // Use egui's built-in Resize widget with fixed sizing behavior
+        // Use egui's built-in Resize widget with auto-sizing and max constraints
         egui::Resize::default()
             .id_salt(&resize_id) // Unique ID for resize widget
-            .default_size([800.0, 300.0]) // Default size - doubled width
-            .min_size([300.0, 150.0])
+            .auto_sized()
+            .max_height(100.0)
+            .min_height(100.0)
+            .max_width(800.0)
+            .min_width(300.0)
             .resizable(true)
+            .with_stroke(false)
             .show(ui, |ui| {
-                // Use available height minus space for header/footer to maintain consistent scroll area size
-                let available_height = ui.available_height();
-                let header_footer_height = 90.0; // Estimated space for header + footer + separators
-                let scroll_height = (available_height - header_footer_height).max(100.0);
+                // JSON Tree viewer - direct rendering without wrappers
+                if resource.detailed_properties.is_some() {
+                    // Show detailed properties if available
+                    let json_data = resource.get_display_properties();
+                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                    ui.scope(|ui| {
+                        ui.style_mut()
+                            .text_styles
+                            .get_mut(&egui::TextStyle::Monospace)
+                            .unwrap()
+                            .size = 10.3;
 
-                ui.vertical(|ui| {
-                    // Header with search functionality
-                    ui.horizontal(|ui| {
-                        ui.label("🔍 Search:");
-                        // Use unique ID for search text field
-                        ui.add_enabled_ui(false, |ui| {
-                            ui.add(egui::TextEdit::singleline(&mut String::new())
-                                .id_salt(&search_id)
-                                .hint_text("Search JSON (coming soon)"));
-                        });
+                        JsonTree::new(format!("resource_json_detailed_{}", resource_id), json_data)
+                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(3))
+                            .show(ui);
                     });
-
-                    ui.separator();
-
-                    // JSON Tree viewer with fixed size scroll area
-                    egui::ScrollArea::vertical()
-                        .id_salt(&scroll_id) // Unique ID for scroll area
-                        .auto_shrink([false, false]) // Don't auto-shrink - maintain container size
-                        .max_height(scroll_height) // Fixed height based on container
-                        .show(ui, |ui| {
-                            if resource.detailed_properties.is_some() {
-                                // Show detailed properties if available
-                                let json_data = resource.get_display_properties();
-                                // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
-                                ui.scope(|ui| {
-                                    ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
-                                        .unwrap()
-                                        .size = 10.3;
-
-                                    JsonTree::new(format!("resource_json_detailed_{}", resource_id), json_data)
-                                        .default_expand(egui_json_tree::DefaultExpand::ToLevel(3))
-                                        .show(ui);
-                                });
-                            } else {
-                                // Show loading state, failed state
-                                let resource_key = format!("{}:{}:{}", resource.account_id, resource.region, resource.resource_id);
-                                if self.failed_detail_requests.contains(&resource_key) {
-                                    ui.horizontal(|ui| {
-                                        ui.colored_label(Color32::from_rgb(255, 165, 0), "⚠");
-                                        ui.label("Detailed properties not available for this resource type");
-                                    });
-                                    // Show basic list data
-                                    let json_data = resource.get_display_properties();
-                                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
-                                    ui.scope(|ui| {
-                                        ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
-                                            .unwrap()
-                                            .size = 10.3;
-
-                                        JsonTree::new(format!("resource_json_basic_{}", resource_id), json_data)
-                                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
-                                            .show(ui);
-                                    });
-                                } else if self.pending_detail_requests.contains(&resource_key) {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label("Loading detailed properties...");
-                                    });
-                                } else {
-                                    // Show basic list data in the meantime
-                                    let json_data = resource.get_display_properties();
-                                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
-                                    ui.scope(|ui| {
-                                        ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace)
-                                            .unwrap()
-                                            .size = 10.3;
-
-                                        JsonTree::new(format!("resource_json_fallback_{}", resource_id), json_data)
-                                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
-                                            .show(ui);
-                                    });
-                                }
-                            }
+                } else {
+                    // Show loading state, failed state
+                    let resource_key = format!(
+                        "{}:{}:{}",
+                        resource.account_id, resource.region, resource.resource_id
+                    );
+                    if self.failed_detail_requests.contains(&resource_key) {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(Color32::from_rgb(255, 165, 0), "⚠");
+                            ui.label("Detailed properties not available for this resource type");
                         });
+                        // Show basic list data
+                        let json_data = resource.get_display_properties();
+                        // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                        ui.scope(|ui| {
+                            ui.style_mut()
+                                .text_styles
+                                .get_mut(&egui::TextStyle::Monospace)
+                                .unwrap()
+                                .size = 10.3;
 
-                    ui.separator();
+                            JsonTree::new(
+                                format!("resource_json_basic_{}", resource_id),
+                                json_data,
+                            )
+                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                            .show(ui);
+                        });
+                    } else if self.pending_detail_requests.contains(&resource_key) {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Loading detailed properties...");
+                        });
+                    } else {
+                        // Show basic list data in the meantime
+                        let json_data = resource.get_display_properties();
+                        // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
+                        ui.scope(|ui| {
+                            ui.style_mut()
+                                .text_styles
+                                .get_mut(&egui::TextStyle::Monospace)
+                                .unwrap()
+                                .size = 10.3;
 
-                    // Footer with actions
-                    ui.horizontal(|ui| {
-                        if ui.small_button("📋 Copy JSON").clicked() {
-                            let formatted_json = serde_json::to_string_pretty(resource.get_display_properties())
+                            JsonTree::new(
+                                format!("resource_json_fallback_{}", resource_id),
+                                json_data,
+                            )
+                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                            .show(ui);
+                        });
+                    }
+                }
+
+                // Footer with actions
+                ui.horizontal(|ui| {
+                    if ui.small_button("Copy JSON").clicked() {
+                        let formatted_json =
+                            serde_json::to_string_pretty(resource.get_display_properties())
                                 .unwrap_or_else(|_| "Error formatting JSON".to_string());
-                            ui.ctx().copy_text(formatted_json);
-                        }
-
-                        ui.add_space(10.0);
-
-                        // Show data freshness
-                        if resource.detailed_properties.is_some() {
-                            ui.label("📄 Detailed data loaded");
-                        } else {
-                            let resource_key = format!("{}:{}:{}", resource.account_id, resource.region, resource.resource_id);
-                            if self.failed_detail_requests.contains(&resource_key) {
-                                ui.colored_label(Color32::from_rgb(255, 165, 0), "⚠ Detailed loading not supported");
-                            } else if self.pending_detail_requests.contains(&resource_key) {
-                                ui.label("🔄 Loading detailed data...");
-                            }
-                        }
-                    });
+                        ui.ctx().copy_text(formatted_json);
+                    }
                 });
             });
     }
@@ -1018,6 +1583,49 @@ impl TreeRenderer {
         response.on_hover_text(format!("Region: {} ({})", region_code, region_description));
     }
 
+    /// Render a resource type tag with colored background based on CF resource type
+    ///
+    /// The background color is determined by the resource_type (e.g., "AWS::EC2::Instance")
+    /// so all resources of the same type have the same color, but the interior displays
+    /// the resource name or ID.
+    fn render_resource_type_tag(&self, ui: &mut Ui, resource_display: &str, resource_type: &str) {
+        // Generate color based on resource type
+        let bg_color = super::colors::assign_resource_type_color(resource_type);
+        let text_color = get_contrasting_text_color(bg_color);
+
+        // Calculate text size
+        let font_size = 11.0; // Slightly larger than account/region tags
+        let text_galley = ui.fonts(|fonts| {
+            fonts.layout_no_wrap(
+                resource_display.to_string(),
+                egui::FontId::proportional(font_size),
+                text_color,
+            )
+        });
+
+        // Add padding to the text size
+        let padding = egui::vec2(8.0, 3.0);
+        let desired_size = text_galley.size() + 2.0 * padding;
+
+        // Allocate space for the tag
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+        if ui.is_rect_visible(rect) {
+            // Draw rounded rectangle background
+            ui.painter().rect_filled(
+                rect, 3.0, // corner radius
+                bg_color,
+            );
+
+            // Draw text centered in the rect
+            let text_pos = rect.center() - text_galley.size() / 2.0;
+            ui.painter().galley(text_pos, text_galley, text_color);
+        }
+
+        // Show tooltip with resource type on hover
+        response.on_hover_text(format!("Resource Type: {}", resource_type));
+    }
+
     /// Get human-readable description for AWS region
     fn get_region_description(&self, region_code: &str) -> &'static str {
         match region_code {
@@ -1041,5 +1649,186 @@ impl TreeRenderer {
             "me-south-1" => "Middle East (Bahrain)",
             _ => "Unknown Region",
         }
+    }
+
+    /// Render tag badges for a resource based on popularity and filters
+    fn render_tag_badges(&mut self, ui: &mut Ui, resource: &super::state::ResourceEntry) {
+        // Only render if we have badge selector and tag popularity
+        if let (Some(badge_selector), Some(tag_popularity)) =
+            (&self.badge_selector, &self.tag_popularity)
+        {
+            // Get badges to display for this resource
+            let badges = badge_selector.select_badges(resource, tag_popularity, 10);
+
+            // Render each badge
+            for badge in badges {
+                ui.add_space(4.0); // Space between badges
+
+                // Generate color based on tag key for visual consistency
+                let color_generator = super::colors::AwsColorGenerator::new();
+                let badge_color = color_generator.get_tag_key_color(&badge.key);
+                let text_color = super::colors::get_contrasting_text_color(badge_color);
+
+                // Format badge text (truncate if too long)
+                let badge_text = badge.short_display(20);
+
+                // Calculate text size
+                let font_size = 9.0;
+                let text_galley = ui.fonts(|fonts| {
+                    fonts.layout_no_wrap(
+                        badge_text.clone(),
+                        egui::FontId::monospace(font_size),
+                        text_color,
+                    )
+                });
+
+                // Add padding to the text size
+                let padding = egui::vec2(4.0, 1.0);
+                let desired_size = text_galley.size() + 2.0 * padding;
+
+                // Allocate space for the badge with click sensing
+                let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+                if ui.is_rect_visible(rect) {
+                    // Determine if badge is hovered for visual feedback
+                    let is_hovered = response.hovered();
+
+                    // Lighten color on hover for interactivity feedback
+                    let final_color = if is_hovered {
+                        // Lighten the badge color slightly on hover
+                        let r = (badge_color.r() as f32 * 1.15).min(255.0) as u8;
+                        let g = (badge_color.g() as f32 * 1.15).min(255.0) as u8;
+                        let b = (badge_color.b() as f32 * 1.15).min(255.0) as u8;
+                        Color32::from_rgb(r, g, b)
+                    } else {
+                        badge_color
+                    };
+
+                    // Draw rounded rectangle background
+                    ui.painter().rect_filled(
+                        rect,
+                        2.0, // corner radius (slightly smaller than region tags)
+                        final_color,
+                    );
+
+                    // Draw text centered in the rect
+                    let text_pos = rect.center() - text_galley.size() / 2.0;
+                    ui.painter().galley(text_pos, text_galley, text_color);
+                }
+
+                // Handle click (check before hover to avoid borrow issues)
+                let was_clicked = response.clicked();
+
+                // Show enhanced tooltip with tag information and count
+                let tag_count = tag_popularity.get_count(&badge);
+                let tag_percentage = tag_popularity.get_percentage(&badge);
+                response.on_hover_text(format!(
+                    "{}\n\n{} resources ({:.1}%)\n\nClick to add this tag to filters",
+                    badge.display_name(),
+                    tag_count,
+                    tag_percentage
+                ));
+
+                // Handle click - add to pending actions for processing
+                if was_clicked {
+                    tracing::info!(
+                        "Tag badge clicked: {} = {} (adding to filter)",
+                        badge.key,
+                        badge.value
+                    );
+
+                    self.pending_tag_clicks.push(super::state::TagClickAction {
+                        tag_key: badge.key.clone(),
+                        tag_value: badge.value.clone(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Extract ARN from resource properties or build it from metadata
+///
+/// Tries to extract ARN from raw_properties first (Lambda has FunctionArn, EC2 has Arn, etc.),
+/// then falls back to constructing it based on AWS resource type patterns.
+///
+/// Note: This ARN is for display purposes. CloudTrail filtering uses resource_id (resource name), not ARN.
+fn extract_or_build_arn(
+    resource_type: &str,
+    raw_properties: &serde_json::Value,
+    region: &str,
+    account_id: &str,
+    resource_id: &str,
+) -> String {
+    // Try to extract ARN from properties first (only if it's an object)
+    if let Some(props_map) = raw_properties.as_object() {
+        // Different AWS services store ARN in different property names
+        let arn_property_names = match resource_type {
+            "AWS::Lambda::Function" => vec!["FunctionArn", "Arn"],
+            "AWS::EC2::Instance" => vec!["Arn", "InstanceArn"],
+            "AWS::DynamoDB::Table" => vec!["TableArn", "Arn"],
+            "AWS::IAM::Role" => vec!["Arn", "RoleArn"],
+            "AWS::IAM::User" => vec!["Arn", "UserArn"],
+            "AWS::S3::Bucket" => vec!["Arn", "BucketArn"],
+            _ => vec!["Arn"],
+        };
+
+        // Try each property name
+        for property_name in arn_property_names {
+            if let Some(arn_value) = props_map.get(property_name) {
+                if let Some(arn_str) = arn_value.as_str() {
+                    log::debug!(
+                        "CloudTrail: Extracted ARN from property '{}' for resource_type='{}'",
+                        property_name,
+                        resource_type
+                    );
+                    return arn_str.to_string();
+                }
+            }
+        }
+    }
+
+    // Fall back to building ARN if not found in properties
+    log::debug!(
+        "CloudTrail: ARN not found in properties for resource_type='{}', building it",
+        resource_type
+    );
+
+    match resource_type {
+        // Lambda functions
+        "AWS::Lambda::Function" => {
+            format!(
+                "arn:aws:lambda:{}:{}:function:{}",
+                region, account_id, resource_id
+            )
+        }
+        // EC2 Instances
+        "AWS::EC2::Instance" => {
+            format!(
+                "arn:aws:ec2:{}:{}:instance/{}",
+                region, account_id, resource_id
+            )
+        }
+        // S3 Buckets (buckets are global, no region in ARN)
+        "AWS::S3::Bucket" => {
+            format!("arn:aws:s3:::{}", resource_id)
+        }
+        // DynamoDB Tables
+        "AWS::DynamoDB::Table" => {
+            format!(
+                "arn:aws:dynamodb:{}:{}:table/{}",
+                region, account_id, resource_id
+            )
+        }
+        // IAM Roles (IAM is global, no region)
+        "AWS::IAM::Role" => {
+            format!("arn:aws:iam::{}:role/{}", account_id, resource_id)
+        }
+        // IAM Users (IAM is global, no region)
+        "AWS::IAM::User" => {
+            format!("arn:aws:iam::{}:user/{}", account_id, resource_id)
+        }
+        // Default fallback - just return the resource_id
+        _ => resource_id.to_string(),
     }
 }

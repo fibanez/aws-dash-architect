@@ -2,8 +2,40 @@
 
 ## [Unreleased] - 0.1.0
 
+### November 2025
+- **Agent Framework V2**
+  - Implemented simplified agent system using Stood library directly with lazy initialization and background execution
+  - Integrated V8 JavaScript runtime with AWS API bindings for intelligent infrastructure operations
+
+- **V8 JavaScript Execution Engine**
+  - Complete V8 runtime integration with timeout enforcement, memory limits, and security sandboxing
+  - Implemented V8 bindings for AWS operations: listAccounts(), listRegions(), queryResources()
+  - Added CloudWatch Logs V8 binding for log stream queries and event retrieval
+  - Implemented CloudWatch Logs client foundation with log group/stream discovery
+  - Added CloudWatch Logs viewer window with real-time log event streaming
+  - Integrated logs viewer with Agent Framework for automated log analysis
+
+- **Advanced Resource Organization**
+  - Developed bookmark folder system with hierarchical organization and drag-drop support
+  - Implemented comprehensive tag filtering with presence/absence, value matching, and logical operators
+  - Added tag hierarchy builder widget with visual grouping and auto-discovery
+  - Created property-based filtering system with dynamic resource grouping
+
+- **Resource Explorer Enhancements**
+  - Expanded service coverage with service-specific tag implementations (ECS, EKS, CloudFront, KMS, SNS)
+
 ### October 2025
-- **Major Architecture Refactoring**: Removed CloudFormation designer to focus on Bridge + Explorer
+- **Agent Framework Rename**: Renamed "Bridge" component to "Agent Framework" for clarity
+  - Internal naming: "Agent Framework" for code, comments, and internal documentation
+  - User-facing naming: "Agent" or "Agent Control" for UI elements
+  - Module renamed: `bridge` → `agent_framework`
+  - Main agent: `BridgeAgent` → Agent V1 (removed) → Agent V2
+  - UI window: `ControlBridgeWindow` → `AgentControlWindow`
+  - Window title: "🚢 Control Bridge" → "🤖 Agent"
+  - All documentation and references updated
+  - Prepares codebase for future "Agent Harness" component
+
+- **Major Architecture Refactoring**: Removed CloudFormation designer to focus on Agent Framework + Explorer
   - Deleted 66 files (43 source + 23 tests), removing 41,756+ lines of code
   - Removed CloudFormation template system, DAG analysis, and deployment manager
   - Removed Project Management system (multi-environment support)
@@ -11,14 +43,14 @@
   - Removed Bedrock Client and standalone Chat Window
   - Removed Compliance/Guard validation system
   - Removed all CloudFormation UI windows (scene graph, resource editors, property forms)
-  - Created minimal `aws_regions` module for Bridge tools
-  - Updated module documentation to reflect Bridge + Explorer architecture
+  - Created minimal `aws_regions` module for Agent Framework tools
+  - Updated module documentation to reflect Agent Framework + Explorer architecture
   - Clean compilation with zero warnings
 
 - **UI Simplification**: Streamlined user interface for resource exploration
   - Removed "No Project Loaded" screen, replaced with welcome message
   - Updated command palette: removed Project, CloudFormation, Graph View, Show Resources commands
-  - Command palette now shows: Login (L), AWS Explorer (E), Control Bridge (B), Quit (Q)
+  - Command palette now shows: Login (L), AWS Explorer (E), Agent (B), Quit (Q)
   - Updated help window with current keyboard shortcuts
   - Removed F1 reference and outdated CloudFormation getting started steps
 

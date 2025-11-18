@@ -1,18 +1,22 @@
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for AWS Organizations Service Control Policies
 pub struct OrganizationsPolicyNormalizer;
 
-impl ResourceNormalizer for OrganizationsPolicyNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for OrganizationsPolicyNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("Id")
             .and_then(|v| v.as_str())
@@ -65,7 +69,8 @@ impl ResourceNormalizer for OrganizationsPolicyNormalizer {
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::Policy".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -78,10 +83,24 @@ impl ResourceNormalizer for OrganizationsPolicyNormalizer {
             detailed_timestamp: None,
             tags: Vec::new(),
             relationships: Vec::new(), // Will be populated by extract_relationships
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color,
             region_color,
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
@@ -89,13 +108,6 @@ impl ResourceNormalizer for OrganizationsPolicyNormalizer {
         _entry: &ResourceEntry,
         _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        // Service Control Policy relationships would require additional API calls
-        // to get policy attachments to OUs and accounts
-        // For now, we'll leave this empty but this could be enhanced to:
-        // - Map to OUs this policy is attached to
-        // - Map to accounts this policy is attached to
-        // - Show policy inheritance hierarchy
-
         Vec::new()
     }
 

@@ -1,18 +1,22 @@
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for SageMaker Training Jobs
 pub struct SageMakerTrainingJobNormalizer;
 
-impl ResourceNormalizer for SageMakerTrainingJobNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for SageMakerTrainingJobNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("TrainingJobName")
             .and_then(|v| v.as_str())
@@ -51,7 +55,8 @@ impl ResourceNormalizer for SageMakerTrainingJobNormalizer {
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::SageMaker::TrainingJob".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -64,64 +69,32 @@ impl ResourceNormalizer for SageMakerTrainingJobNormalizer {
             detailed_timestamp: None,
             tags: Vec::new(),
             relationships: Vec::new(), // Will be populated by extract_relationships
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color,
             region_color,
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // Map to IAM role if present
-        if let Some(role_arn) = entry.raw_properties.get("RoleArn").and_then(|v| v.as_str()) {
-            // Extract role name from ARN: arn:aws:iam::account:role/role-name
-            if let Some(role_name) = role_arn.split('/').nth(1) {
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::IAM::Role"
-                        && resource.resource_id == role_name
-                    {
-                        relationships.push(ResourceRelationship {
-                            target_resource_id: resource.resource_id.clone(),
-                            target_resource_type: resource.resource_type.clone(),
-                            relationship_type: RelationshipType::Uses,
-                        });
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Map to S3 buckets for model artifacts
-        if let Some(model_artifacts) = entry
-            .raw_properties
-            .get("ModelArtifacts")
-            .and_then(|v| v.as_str())
-        {
-            // Extract bucket name from S3 URI: s3://bucket-name/path/to/artifacts
-            if let Some(stripped) = model_artifacts.strip_prefix("s3://") {
-                if let Some(bucket_name) = stripped.split('/').next() {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::S3::Bucket"
-                            && resource.resource_id == bucket_name
-                        {
-                            relationships.push(ResourceRelationship {
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                                relationship_type: RelationshipType::Uses,
-                            });
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {

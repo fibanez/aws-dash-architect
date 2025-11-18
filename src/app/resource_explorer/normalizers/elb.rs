@@ -1,18 +1,21 @@
-use super::{utils::*, ResourceNormalizer};
+use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Classic Load Balancers (ELB)
 pub struct ELBLoadBalancerNormalizer;
 
-impl ResourceNormalizer for ELBLoadBalancerNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let lb_name = raw_response
             .get("LoadBalancerName")
@@ -27,7 +30,28 @@ impl ResourceNormalizer for ELBLoadBalancerNormalizer {
             .and_then(|c| c.as_str())
             .map(|s| s.to_string());
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::ElasticLoadBalancing::LoadBalancer", &lb_name, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancing::LoadBalancer {}: {}", lb_name, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -43,6 +67,9 @@ impl ResourceNormalizer for ELBLoadBalancerNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -123,3 +150,4 @@ impl ResourceNormalizer for ELBLoadBalancerNormalizer {
         "AWS::ElasticLoadBalancing::LoadBalancer"
     }
 }
+

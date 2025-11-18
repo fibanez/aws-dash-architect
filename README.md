@@ -1,12 +1,12 @@
 # <img src="dash-icon.png" width="160" height="160" align="left" padding="20" alt="Dash Architect Icon"> AWS Dash
 
-**AI-powered AWS resource exploration and operations**
+**AI-powered AWS environment exploration and operations**
 <div align="right">
 Powered by <a href="https://github.com/fibanez/stood">Stood Agent Library</a> <img src="https://github.com/fibanez/stood/raw/main/stood-icon.png" width="15" height="15">
 </div>
 <br clear="left">
 &nbsp;<br>
-AWS Dash provides AI-assisted AWS resource exploration and operations through an intuitive desktop interface. Explore resources across multiple AWS accounts and regions, and leverage AI agents powered by the Stood library to perform intelligent infrastructure operations.
+AWS Dash provides AI-assisted AWS environment exploration and operations through an intuitive desktop interface. Explore resources across multiple AWS accounts and regions, and leverage AI agents powered by the Stood library to perform intelligent operations for different domains, including infrastructure, security, system administration.
 &nbsp;<br>
 
 # <img src="aws-dash-architect-1.png" width="800" align="center" padding="20" alt="AWS Dash Desktop">
@@ -52,7 +52,7 @@ cargo build --release
 
 ## ✨ Key Features
 
-### 🤖 AI-Powered Operations with Control Bridge
+### 🤖 AI-Powered Operations with Agent Framework
 
 Intelligent AWS infrastructure operations powered by AI agents:
 
@@ -61,9 +61,9 @@ Intelligent AWS infrastructure operations powered by AI agents:
 - **Context-Aware Assistance**: Agents understand your AWS environment and provide relevant guidance
 - **Task Planning**: Automatic breakdown of complex operations into manageable steps
 
-> **Powered by Stood**: The Control Bridge uses the [Stood Agent Library](https://github.com/fibanez/stood) to provide sophisticated AI agent capabilities with tool use, task planning, and intelligent decision-making.
+> **Powered by Stood**: The Agent Framework uses the [Stood Agent Library](https://github.com/fibanez/stood) to provide sophisticated AI agent capabilities with tool use, task planning, and intelligent decision-making.
 
-### 🌐 Cross-Account AWS Explorer ✅ *Complete*
+### 🌐 Cross-Account and Cross-Region Seamless AWS Explorer 
 
 Unified resource discovery and visualization:
 
@@ -71,13 +71,13 @@ Unified resource discovery and visualization:
 - **Intelligent Resource Discovery**: Find and explore resources with advanced filtering and search
 - **Real-Time Data**: Direct AWS API integration with efficient caching
 - **Resource Details**: View comprehensive resource properties and configurations
-
-> **Status**: The AWS Explorer is fully functional and provides comprehensive cross-account resource discovery with real-time caching and efficient API usage.
+- Support for 93 services and almost 200 resource types
 
 ## 🎯 Who Should Use AWS Dash?
 
 ### Primary Users
-- **DevOps Engineers** managing multi-account AWS environments
+- **DevOps Engineers** managing multi-account and multi-region AWS environments
+- Developers working on complex AWS deployments
 - **Cloud Engineers** performing infrastructure operations
 - **Site Reliability Engineers** troubleshooting and analyzing AWS resources
 - **AWS Administrators** exploring and managing resources across accounts

@@ -1,17 +1,20 @@
-use super::{utils::*, ResourceNormalizer};
+use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub struct EC2InstanceNormalizer;
 
-impl ResourceNormalizer for EC2InstanceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2InstanceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let instance_id = raw_response
             .get("InstanceId")
@@ -21,7 +24,16 @@ impl ResourceNormalizer for EC2InstanceNormalizer {
 
         let display_name = extract_display_name(&raw_response, &instance_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+
+        // Fetch tags asynchronously from AWS API with caching
+        let tags = aws_client
+            .fetch_tags_for_resource("AWS::EC2::Instance", &instance_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for EC2 instance {}: {}", instance_id, e);
+                Vec::new() // Graceful degradation
+            });
+
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -37,6 +49,9 @@ impl ResourceNormalizer for EC2InstanceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(), // Will be populated later
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -84,15 +99,18 @@ impl ResourceNormalizer for EC2InstanceNormalizer {
     }
 }
 
+
 pub struct EC2SecurityGroupNormalizer;
 
-impl ResourceNormalizer for EC2SecurityGroupNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let group_id = raw_response
             .get("GroupId")
@@ -112,7 +130,28 @@ impl ResourceNormalizer for EC2SecurityGroupNormalizer {
             base_name.to_string()
         };
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::EC2::SecurityGroup", &group_id, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::SecurityGroup {}: {}", group_id, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -128,6 +167,9 @@ impl ResourceNormalizer for EC2SecurityGroupNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -158,15 +200,18 @@ impl ResourceNormalizer for EC2SecurityGroupNormalizer {
     }
 }
 
+
 pub struct EC2VPCNormalizer;
 
-impl ResourceNormalizer for EC2VPCNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VPCNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let vpc_id = raw_response
             .get("VpcId")
@@ -174,20 +219,39 @@ impl ResourceNormalizer for EC2VPCNormalizer {
             .unwrap_or("unknown-vpc")
             .to_string();
 
+        tracing::debug!("🔍 EC2VPCNormalizer: Starting normalization for VPC {} in account {} region {}", vpc_id, account, region);
+
         let display_name = extract_display_name(&raw_response, &vpc_id);
         let status = raw_response
             .get("State")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let tags = extract_tags(&raw_response);
+        tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - display_name={}, status={:?}", vpc_id, display_name, status);
+
+        // Fetch tags asynchronously from AWS API with caching
+        tracing::debug!("🔍 EC2VPCNormalizer: Fetching tags for VPC {} using async AWS client", vpc_id);
+
+        let tags = aws_client
+            .fetch_tags_for_resource("AWS::EC2::VPC", &vpc_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for AWS::EC2::VPC {}: {}", vpc_id, e);
+                Vec::new()
+            });
+
+        tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - fetched {} tags", vpc_id, tags.len());
+        for tag in &tags {
+            tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - tag: {}={}", vpc_id, tag.key, tag.value);
+        }
+
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+        let entry = ResourceEntry {
             resource_type: "AWS::EC2::VPC".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: vpc_id,
+            resource_id: vpc_id.clone(),
             display_name,
             status,
             properties,
@@ -196,10 +260,17 @@ impl ResourceNormalizer for EC2VPCNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        tracing::debug!("🔍 EC2VPCNormalizer: Successfully normalized VPC {} - resource_type={}", vpc_id, entry.resource_type);
+
+        Ok(entry)
     }
 
     fn extract_relationships(
@@ -216,16 +287,19 @@ impl ResourceNormalizer for EC2VPCNormalizer {
     }
 }
 
+
 /// Normalizer for EBS Volumes
 pub struct EC2VolumeNormalizer;
 
-impl ResourceNormalizer for EC2VolumeNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VolumeNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let volume_id = raw_response
             .get("VolumeId")
@@ -235,7 +309,21 @@ impl ResourceNormalizer for EC2VolumeNormalizer {
 
         let display_name = extract_display_name(&raw_response, &volume_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::Volume", &volume_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::Volume {}: {}", volume_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -251,6 +339,9 @@ impl ResourceNormalizer for EC2VolumeNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -295,16 +386,19 @@ impl ResourceNormalizer for EC2VolumeNormalizer {
     }
 }
 
+
 /// Normalizer for EBS Snapshots
 pub struct EC2SnapshotNormalizer;
 
-impl ResourceNormalizer for EC2SnapshotNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let snapshot_id = raw_response
             .get("SnapshotId")
@@ -314,7 +408,21 @@ impl ResourceNormalizer for EC2SnapshotNormalizer {
 
         let display_name = extract_display_name(&raw_response, &snapshot_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::Snapshot", &snapshot_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::Snapshot {}: {}", snapshot_id, e);
+
+                Vec::new()
+
+            });
 
         // Extract start time
         let _creation_date = raw_response
@@ -338,6 +446,9 @@ impl ResourceNormalizer for EC2SnapshotNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -377,16 +488,19 @@ impl ResourceNormalizer for EC2SnapshotNormalizer {
     }
 }
 
+
 /// Normalizer for AMIs
 pub struct EC2ImageNormalizer;
 
-impl ResourceNormalizer for EC2ImageNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2ImageNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let image_id = raw_response
             .get("ImageId")
@@ -396,7 +510,21 @@ impl ResourceNormalizer for EC2ImageNormalizer {
 
         let display_name = extract_display_name(&raw_response, &image_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::Image", &image_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::Image {}: {}", image_id, e);
+
+                Vec::new()
+
+            });
 
         // Extract creation date
         let _creation_date = raw_response
@@ -420,6 +548,9 @@ impl ResourceNormalizer for EC2ImageNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -440,16 +571,19 @@ impl ResourceNormalizer for EC2ImageNormalizer {
     }
 }
 
+
 /// Normalizer for Subnets
 pub struct EC2SubnetNormalizer;
 
-impl ResourceNormalizer for EC2SubnetNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2SubnetNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let subnet_id = raw_response
             .get("SubnetId")
@@ -459,7 +593,21 @@ impl ResourceNormalizer for EC2SubnetNormalizer {
 
         let display_name = extract_display_name(&raw_response, &subnet_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::Subnet", &subnet_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::Subnet {}: {}", subnet_id, e);
+
+                Vec::new()
+
+            });
 
         let properties = create_normalized_properties(&raw_response);
 
@@ -476,6 +624,9 @@ impl ResourceNormalizer for EC2SubnetNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -510,16 +661,19 @@ impl ResourceNormalizer for EC2SubnetNormalizer {
     }
 }
 
+
 /// Normalizer for Internet Gateways
 pub struct EC2InternetGatewayNormalizer;
 
-impl ResourceNormalizer for EC2InternetGatewayNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let igw_id = raw_response
             .get("InternetGatewayId")
@@ -529,7 +683,21 @@ impl ResourceNormalizer for EC2InternetGatewayNormalizer {
 
         let display_name = extract_display_name(&raw_response, &igw_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::InternetGateway", &igw_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::InternetGateway {}: {}", igw_id, e);
+
+                Vec::new()
+
+            });
 
         let properties = create_normalized_properties(&raw_response);
 
@@ -546,6 +714,9 @@ impl ResourceNormalizer for EC2InternetGatewayNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -589,15 +760,18 @@ impl ResourceNormalizer for EC2InternetGatewayNormalizer {
     }
 }
 
+
 pub struct EC2RouteTableNormalizer;
 
-impl ResourceNormalizer for EC2RouteTableNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let route_table_id = raw_response
             .get("RouteTableId")
@@ -607,7 +781,21 @@ impl ResourceNormalizer for EC2RouteTableNormalizer {
 
         let display_name = extract_display_name(&raw_response, &route_table_id);
         let status = Some("available".to_string()); // Route tables don't have status in the same way as instances
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::RouteTable", &route_table_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::RouteTable {}: {}", route_table_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -623,6 +811,9 @@ impl ResourceNormalizer for EC2RouteTableNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -695,15 +886,18 @@ impl ResourceNormalizer for EC2RouteTableNormalizer {
     }
 }
 
+
 pub struct EC2NatGatewayNormalizer;
 
-impl ResourceNormalizer for EC2NatGatewayNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let nat_gateway_id = raw_response
             .get("NatGatewayId")
@@ -716,7 +910,21 @@ impl ResourceNormalizer for EC2NatGatewayNormalizer {
             .get("State")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::NatGateway", &nat_gateway_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::NatGateway {}: {}", nat_gateway_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -732,6 +940,9 @@ impl ResourceNormalizer for EC2NatGatewayNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -809,35 +1020,35 @@ impl ResourceNormalizer for EC2NatGatewayNormalizer {
     }
 }
 
-pub struct EC2NetworkInterfaceNormalizer;
 
-impl ResourceNormalizer for EC2NetworkInterfaceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
-        let network_interface_id = raw_response
-            .get("NetworkInterfaceId")
+        // Inline normalization logic
+        let instance_id = raw_response
+            .get("InstanceId")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown-network-interface")
+            .unwrap_or("unknown-instance")
             .to_string();
 
-        let display_name = extract_display_name(&raw_response, &network_interface_id);
-        let status = raw_response
-            .get("Status")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let tags = extract_tags(&raw_response);
+        let display_name = extract_display_name(&raw_response, &instance_id);
+        let status = extract_status(&raw_response);
+        let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
-            resource_type: "AWS::EC2::NetworkInterface".to_string(),
+
+        let mut entry = ResourceEntry {
+            resource_type: "AWS::EC2::Instance".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: network_interface_id,
+            resource_id: instance_id,
             display_name,
             status,
             properties,
@@ -846,95 +1057,32 @@ impl ResourceNormalizer for EC2NetworkInterfaceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
-            for resource in all_resources {
-                if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::MemberOf,
-                        target_resource_id: vpc_id.to_string(),
-                        target_resource_type: "AWS::EC2::VPC".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Find the associated subnet
-        if let Some(subnet_id) = entry
-            .raw_properties
-            .get("SubnetId")
-            .and_then(|v| v.as_str())
-        {
-            for resource in all_resources {
-                if resource.resource_type == "AWS::EC2::Subnet" && resource.resource_id == subnet_id
-                {
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: subnet_id.to_string(),
-                        target_resource_type: "AWS::EC2::Subnet".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Find attached instance from attachment information
-        if let Some(attachment) = entry
-            .raw_properties
-            .get("Attachment")
-            .and_then(|v| v.as_object())
-        {
-            if let Some(instance_id) = attachment.get("InstanceId").and_then(|v| v.as_str()) {
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::EC2::Instance"
-                        && resource.resource_id == instance_id
-                    {
-                        relationships.push(ResourceRelationship {
-                            relationship_type: RelationshipType::AttachedTo,
-                            target_resource_id: instance_id.to_string(),
-                            target_resource_type: "AWS::EC2::Instance".to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Find associated security groups
-        if let Some(groups) = entry
-            .raw_properties
-            .get("Groups")
-            .and_then(|v| v.as_array())
-        {
-            for group in groups {
-                if let Some(group_id) = group.get("GroupId").and_then(|v| v.as_str()) {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::EC2::SecurityGroup"
-                            && resource.resource_id == group_id
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: group_id.to_string(),
-                                target_resource_type: "AWS::EC2::SecurityGroup".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -942,35 +1090,36 @@ impl ResourceNormalizer for EC2NetworkInterfaceNormalizer {
     }
 }
 
-pub struct EC2VPCEndpointNormalizer;
+pub struct EC2NetworkInterfaceNormalizer;
 
-impl ResourceNormalizer for EC2VPCEndpointNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VPCEndpointNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
-        let vpc_endpoint_id = raw_response
-            .get("VpcEndpointId")
+        // Inline normalization logic
+        let instance_id = raw_response
+            .get("InstanceId")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown-vpc-endpoint")
+            .unwrap_or("unknown-instance")
             .to_string();
 
-        let display_name = extract_display_name(&raw_response, &vpc_endpoint_id);
-        let status = raw_response
-            .get("State")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let tags = extract_tags(&raw_response);
+        let display_name = extract_display_name(&raw_response, &instance_id);
+        let status = extract_status(&raw_response);
+        let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
-            resource_type: "AWS::EC2::VPCEndpoint".to_string(),
+
+        let mut entry = ResourceEntry {
+            resource_type: "AWS::EC2::Instance".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: vpc_endpoint_id,
+            resource_id: instance_id,
             display_name,
             status,
             properties,
@@ -979,125 +1128,32 @@ impl ResourceNormalizer for EC2VPCEndpointNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
-            for resource in all_resources {
-                if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::MemberOf,
-                        target_resource_id: vpc_id.to_string(),
-                        target_resource_type: "AWS::EC2::VPC".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Find associated route tables
-        if let Some(route_table_ids) = entry
-            .raw_properties
-            .get("RouteTableIds")
-            .and_then(|v| v.as_array())
-        {
-            for route_table_id in route_table_ids {
-                if let Some(rt_id) = route_table_id.as_str() {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::EC2::RouteTable"
-                            && resource.resource_id == rt_id
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: rt_id.to_string(),
-                                target_resource_type: "AWS::EC2::RouteTable".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Find associated subnets
-        if let Some(subnet_ids) = entry
-            .raw_properties
-            .get("SubnetIds")
-            .and_then(|v| v.as_array())
-        {
-            for subnet_id in subnet_ids {
-                if let Some(sub_id) = subnet_id.as_str() {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::EC2::Subnet"
-                            && resource.resource_id == sub_id
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: sub_id.to_string(),
-                                target_resource_type: "AWS::EC2::Subnet".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Find associated security groups
-        if let Some(groups) = entry
-            .raw_properties
-            .get("Groups")
-            .and_then(|v| v.as_array())
-        {
-            for group in groups {
-                if let Some(group_id) = group.get("GroupId").and_then(|v| v.as_str()) {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::EC2::SecurityGroup"
-                            && resource.resource_id == group_id
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: group_id.to_string(),
-                                target_resource_type: "AWS::EC2::SecurityGroup".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Find associated network interfaces
-        if let Some(network_interface_ids) = entry
-            .raw_properties
-            .get("NetworkInterfaceIds")
-            .and_then(|v| v.as_array())
-        {
-            for eni_id in network_interface_ids {
-                if let Some(eni_id_str) = eni_id.as_str() {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::EC2::NetworkInterface"
-                            && resource.resource_id == eni_id_str
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: eni_id_str.to_string(),
-                                target_resource_type: "AWS::EC2::NetworkInterface".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -1105,15 +1161,19 @@ impl ResourceNormalizer for EC2VPCEndpointNormalizer {
     }
 }
 
+pub struct EC2VPCEndpointNormalizer;
+
 pub struct EC2NetworkAclNormalizer;
 
-impl ResourceNormalizer for EC2NetworkAclNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let network_acl_id = raw_response
             .get("NetworkAclId")
@@ -1123,7 +1183,21 @@ impl ResourceNormalizer for EC2NetworkAclNormalizer {
 
         let display_name = extract_display_name(&raw_response, &network_acl_id);
         let status = Some("available".to_string()); // Network ACLs don't have a status field like instances
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::NetworkAcl", &network_acl_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::NetworkAcl {}: {}", network_acl_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -1139,6 +1213,9 @@ impl ResourceNormalizer for EC2NetworkAclNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -1196,15 +1273,18 @@ impl ResourceNormalizer for EC2NetworkAclNormalizer {
     }
 }
 
+
 pub struct EC2KeyPairNormalizer;
 
-impl ResourceNormalizer for EC2KeyPairNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2KeyPairNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let key_name = raw_response
             .get("KeyName")
@@ -1214,7 +1294,21 @@ impl ResourceNormalizer for EC2KeyPairNormalizer {
 
         let display_name = extract_display_name(&raw_response, &key_name);
         let status = Some("available".to_string()); // Key pairs don't have status like instances
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::KeyPair", &key_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::KeyPair {}: {}", key_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -1230,6 +1324,9 @@ impl ResourceNormalizer for EC2KeyPairNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -1250,3 +1347,5 @@ impl ResourceNormalizer for EC2KeyPairNormalizer {
         "AWS::EC2::KeyPair"
     }
 }
+
+

@@ -1,4 +1,7 @@
-use super::{aws_services::*, credentials::*, global_services::*, normalizers::*, state::*};
+use super::{
+    aws_services::*, child_resources::*, credentials::*, global_services::*, normalizers::*,
+    state::*, tag_cache::TagCache,
+};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures::future::BoxFuture;
@@ -60,6 +63,7 @@ pub struct AWSResourceClient {
     normalizer_factory: NormalizerFactory,
     credential_coordinator: Arc<CredentialCoordinator>,
     pagination_config: PaginationConfig,
+    tag_cache: Arc<TagCache>,
     // Services are now created lazily instead of pre-instantiated
 }
 
@@ -69,6 +73,7 @@ impl AWSResourceClient {
             normalizer_factory: NormalizerFactory,
             credential_coordinator,
             pagination_config: PaginationConfig::default(),
+            tag_cache: Arc::new(TagCache::new()),
         }
     }
 
@@ -92,6 +97,14 @@ impl AWSResourceClient {
 
     fn get_bedrock_service(&self) -> BedrockService {
         BedrockService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_bedrock_agent_service(&self) -> BedrockAgentService {
+        BedrockAgentService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    fn get_bedrock_agentcore_control_service(&self) -> BedrockAgentCoreControlService {
+        BedrockAgentCoreControlService::new(Arc::clone(&self.credential_coordinator))
     }
 
     fn get_s3_service(&self) -> S3Service {
@@ -226,7 +239,7 @@ impl AWSResourceClient {
         CloudTrailDataService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 1: High-value services
+    // High-value AWS services
     fn get_acm_service(&self) -> AcmService {
         AcmService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -283,7 +296,7 @@ impl AWSResourceClient {
         DataSyncService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 2: Analytics & search services
+    // Analytics & search services
     fn get_opensearch_service(&self) -> OpenSearchService {
         OpenSearchService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -296,7 +309,7 @@ impl AWSResourceClient {
         BackupService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 3: Identity & messaging services
+    // Identity & messaging services
     fn get_cognito_service(&self) -> CognitoService {
         CognitoService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -313,7 +326,7 @@ impl AWSResourceClient {
         OrganizationsService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 4: Load balancing & networking services
+    // Load balancing & networking services
     fn get_elb_service(&self) -> ELBService {
         ELBService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -326,7 +339,7 @@ impl AWSResourceClient {
         SSMService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 5: DevOps & CI/CD services
+    // DevOps & CI/CD services
     fn get_codepipeline_service(&self) -> CodePipelineService {
         CodePipelineService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -343,7 +356,7 @@ impl AWSResourceClient {
         EventBridgeService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 6: IoT & App services
+    // IoT & App services
     fn get_appsync_service(&self) -> AppSyncService {
         AppSyncService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -360,7 +373,7 @@ impl AWSResourceClient {
         AcmPcaService::new(Arc::clone(&self.credential_coordinator))
     }
 
-    // Phase 2 Batch 7: Compute & Data services
+    // Compute & Data services
     fn get_neptune_service(&self) -> NeptuneService {
         NeptuneService::new(Arc::clone(&self.credential_coordinator))
     }
@@ -416,6 +429,215 @@ impl AWSResourceClient {
     fn get_polly_service(&self) -> PollyService {
         PollyService::new(Arc::clone(&self.credential_coordinator))
     }
+
+    fn get_resource_tagging_service(&self) -> ResourceTaggingService {
+        ResourceTaggingService::new(Arc::clone(&self.credential_coordinator))
+    }
+
+    // ============================================================================
+    // Public Tag Operations
+    // ============================================================================
+
+    /// Get the tag cache for direct access
+    pub fn get_tag_cache(&self) -> Arc<TagCache> {
+        Arc::clone(&self.tag_cache)
+    }
+
+    /// Fetch tags for a specific resource using the Resource Groups Tagging API
+    ///
+    /// This method tries the universal API first, then falls back to service-specific methods
+    pub async fn fetch_tags_for_resource(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+        account: &str,
+        region: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        // Check cache first
+        if let Some(cached_tags) = self.tag_cache.get(resource_type, resource_id, account, region).await {
+            tracing::debug!(
+                "Tag cache hit for {}: {} in {}/{}",
+                resource_type,
+                resource_id,
+                account,
+                region
+            );
+            return Ok(cached_tags);
+        }
+
+        tracing::debug!(
+            "Fetching tags for {}: {} in {}/{}",
+            resource_type,
+            resource_id,
+            account,
+            region
+        );
+
+        // Determine service-specific fetching strategy based on resource type
+        let tagging_service = self.get_resource_tagging_service();
+        let tags = match resource_type {
+            "AWS::EC2::Instance"
+            | "AWS::EC2::Volume"
+            | "AWS::EC2::Snapshot"
+            | "AWS::EC2::Image"
+            | "AWS::EC2::VPC"
+            | "AWS::EC2::SecurityGroup"
+            | "AWS::EC2::Subnet"
+            | "AWS::EC2::InternetGateway"
+            | "AWS::EC2::RouteTable"
+            | "AWS::EC2::NatGateway"
+            | "AWS::EC2::NetworkInterface"
+            | "AWS::EC2::VPCEndpoint"
+            | "AWS::EC2::NetworkAcl"
+            | "AWS::EC2::KeyPair"
+            | "AWS::EC2::FlowLog"           // fl-* prefix
+            | "AWS::EC2::TransitGateway"    // tgw-* prefix
+            | "AWS::EC2::VPCPeeringConnection" // pcx-* prefix
+            | "AWS::EC2::VolumeAttachment"  // Special case: inherits from volume
+            => {
+                tracing::debug!("Fetching EC2 tags for {} resource: {}", resource_type, resource_id);
+                tagging_service.get_ec2_tags(account, region, resource_id).await?
+            }
+            "AWS::S3::Bucket" => {
+                tagging_service.get_s3_bucket_tags(account, region, resource_id).await?
+            }
+            "AWS::Lambda::Function"
+            | "AWS::Lambda::EventSourceMapping"
+            | "AWS::Lambda::LayerVersion" => {
+                tagging_service.get_lambda_tags(account, region, resource_id).await?
+            }
+            "AWS::IAM::User" => {
+                tagging_service.get_iam_user_tags(account, region, resource_id).await?
+            }
+            "AWS::IAM::Role" => {
+                tagging_service.get_iam_role_tags(account, region, resource_id).await?
+            }
+            "AWS::IAM::Policy" => {
+                // IAM policies use ARN for tagging, not name
+                tagging_service.get_iam_policy_tags(account, region, resource_id).await?
+            }
+            "AWS::IAM::ServerCertificate" => {
+                tagging_service.get_iam_server_certificate_tags(account, region, resource_id).await?
+            }
+            "AWS::Organizations::Account" | "AWS::Organizations::Root" | "AWS::Organizations::OrganizationalUnit" | "AWS::Organizations::Policy" => {
+                tagging_service.get_organizations_tags(account, region, resource_id).await?
+            }
+            "AWS::RDS::DBInstance"
+            | "AWS::RDS::DBCluster"
+            | "AWS::RDS::DBSnapshot"
+            | "AWS::RDS::DBClusterSnapshot"
+            | "AWS::RDS::OptionGroup" => {
+                tagging_service.get_rds_tags(account, region, resource_id).await?
+            }
+            "AWS::DynamoDB::Table" => {
+                tagging_service.get_dynamodb_tags(account, region, resource_id).await?
+            }
+            "AWS::SQS::Queue" => {
+                // SQS uses queue URL, constructed from queue name
+                tagging_service.get_sqs_queue_tags(account, region, resource_id).await?
+            }
+            "AWS::SNS::Topic" => {
+                tagging_service.get_sns_topic_tags(account, region, resource_id).await?
+            }
+            "AWS::KMS::Key" => {
+                // KMS accepts key ID, ARN, or alias
+                tagging_service.get_kms_key_tags(account, region, resource_id).await?
+            }
+            "AWS::CloudFront::Distribution" => {
+                // CloudFront is global, uses ARN
+                tagging_service.get_cloudfront_distribution_tags(account, region, resource_id).await?
+            }
+            "AWS::EKS::Cluster"
+            | "AWS::EKS::FargateProfile"
+            | "AWS::EKS::Addon"
+            | "AWS::EKS::IdentityProviderConfig" => {
+                tagging_service.get_eks_resource_tags(account, region, resource_id).await?
+            }
+            "AWS::ECS::Cluster"
+            | "AWS::ECS::Service"
+            | "AWS::ECS::Task"
+            | "AWS::ECS::TaskDefinition"
+            | "AWS::ECS::FargateService"
+            | "AWS::ECS::FargateTask"
+            | "AWS::ECS::CapacityProvider"
+            | "AWS::ECS::TaskSet" => {
+                tagging_service.get_ecs_resource_tags(account, region, resource_id).await?
+            }
+            // Resources that explicitly don't support tagging - return empty immediately
+            "AWS::Organizations::CreateAccountStatus"
+            | "AWS::Organizations::AwsServiceAccess"
+            | "AWS::Organizations::DelegatedAdministrator"
+            | "AWS::Organizations::Handshake"
+            | "AWS::Organizations::Organization"
+            | "AWS::BedrockAgentCore::AgentRuntime"
+            | "AWS::BedrockAgentCore::AgentRuntimeEndpoint"
+            | "AWS::BedrockAgentCore::Memory"
+            | "AWS::BedrockAgentCore::Gateway"
+            | "AWS::BedrockAgentCore::Browser"
+            | "AWS::BedrockAgentCore::CodeInterpreter"
+            | "AWS::BedrockAgentCore::ApiKeyCredentialProvider"
+            | "AWS::BedrockAgentCore::OAuth2CredentialProvider"
+            | "AWS::BedrockAgentCore::WorkloadIdentity"
+            | "AWS::BedrockAgentCore::AgentRuntimeVersion"
+            | "AWS::BedrockAgentCore::GatewayTarget"
+            | "AWS::BedrockAgentCore::MemoryRecord"
+            | "AWS::BedrockAgentCore::Event"
+            | "AWS::BedrockAgentCore::BrowserSession"
+            | "AWS::BedrockAgentCore::CodeInterpreterSession" => {
+                tracing::debug!(
+                    "Skipping tag fetch for {}: {} - resource type does not support tagging",
+                    resource_type,
+                    resource_id
+                );
+                Vec::new()
+            }
+            // Default: Try universal Resource Groups Tagging API
+            _ => {
+                // Construct ARN if we have resource_id in ARN format
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_tags_for_arn(account, region, resource_id).await?
+                } else {
+                    // If not an ARN, return empty tags (service doesn't support tagging or needs specific implementation)
+                    tracing::warn!(
+                        "Cannot fetch tags for {}: {} - not an ARN and no service-specific implementation",
+                        resource_type,
+                        resource_id
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
+        // Cache the result
+        self.tag_cache.set(resource_type, resource_id, account, region, tags.clone()).await;
+
+        Ok(tags)
+    }
+
+    /// Invalidate cached tags for a specific resource
+    pub async fn invalidate_resource_tags(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+        account: &str,
+        region: &str,
+    ) {
+        self.tag_cache.invalidate(resource_type, resource_id, account, region).await;
+    }
+
+    /// Invalidate all cached tags
+    pub async fn invalidate_all_tags(&self) {
+        self.tag_cache.invalidate_all().await;
+    }
+
+    /// Get tag cache statistics
+    pub async fn get_tag_cache_stats(&self) -> super::tag_cache::CacheStats {
+        self.tag_cache.get_stats().await
+    }
+
+    // ============================================================================
+    // Resource Query Methods
+    // ============================================================================
 
     /// Query AWS resources for all combinations of accounts, regions, and resource types in parallel
     /// Results are sent back as they arrive via the progress_sender channel
@@ -928,6 +1150,113 @@ impl AWSResourceClient {
                     .list_foundation_models(account, region)
                     .await?
             }
+            "AWS::Bedrock::InferenceProfile" => {
+                self.get_bedrock_service()
+                    .list_inference_profiles(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::Guardrail" => {
+                self.get_bedrock_service()
+                    .list_guardrails(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::ProvisionedModelThroughput" => {
+                self.get_bedrock_service()
+                    .list_provisioned_model_throughputs(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::Agent" => {
+                self.get_bedrock_agent_service()
+                    .list_agents(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::KnowledgeBase" => {
+                self.get_bedrock_agent_service()
+                    .list_knowledge_bases(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::CustomModel" => {
+                self.get_bedrock_service()
+                    .list_custom_models(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::ImportedModel" => {
+                self.get_bedrock_service()
+                    .list_imported_models(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::EvaluationJob" => {
+                self.get_bedrock_service()
+                    .list_evaluation_jobs(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::ModelInvocationJob" => {
+                self.get_bedrock_service()
+                    .list_model_invocation_jobs(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::Prompt" => {
+                self.get_bedrock_agent_service()
+                    .list_prompts(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::Flow" => {
+                self.get_bedrock_agent_service()
+                    .list_flows(account, region)
+                    .await?
+            }
+            "AWS::Bedrock::ModelCustomizationJob" => {
+                self.get_bedrock_service()
+                    .list_model_customization_jobs(account, region)
+                    .await?
+            }
+            // BedrockAgentCore - Control Plane Resources
+            "AWS::BedrockAgentCore::AgentRuntime" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_agent_runtimes(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::AgentRuntimeEndpoint" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_agent_runtime_endpoints(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::Memory" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_memories(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::Gateway" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_gateways(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::Browser" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_browsers(account, region)
+                    .await?
+            }
+            // BedrockAgentCore - Additional Control Plane Resources
+            "AWS::BedrockAgentCore::CodeInterpreter" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_code_interpreters(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::ApiKeyCredentialProvider" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_api_key_credential_providers(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::OAuth2CredentialProvider" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_oauth2_credential_providers(account, region)
+                    .await?
+            }
+            "AWS::BedrockAgentCore::WorkloadIdentity" => {
+                self.get_bedrock_agentcore_control_service()
+                    .list_workload_identities(account, region)
+                    .await?
+            }
             "AWS::S3::Bucket" => self.get_s3_service().list_buckets(account, region).await?,
             "AWS::CloudFormation::Stack" => {
                 self.get_cloudformation_service()
@@ -1129,7 +1458,7 @@ impl AWSResourceClient {
                     .list_event_data_stores(account, region)
                     .await?
             }
-            // Phase 2 Batch 1: High-value services
+            // High-value AWS services
             "AWS::CertificateManager::Certificate" => {
                 self.get_acm_service()
                     .list_certificates(account, region)
@@ -1180,7 +1509,7 @@ impl AWSResourceClient {
                     .list_analyzers(account, region)
                     .await?
             }
-            // Phase 2 Batch 2: Analytics & search services
+            // Analytics & search services
             "AWS::OpenSearchService::Domain" => {
                 self.get_opensearch_service()
                     .list_domains(account, region)
@@ -1211,7 +1540,7 @@ impl AWSResourceClient {
                     .list_backup_vaults(account, region)
                     .await?
             }
-            // Phase 2 Batch 3: Identity & messaging services
+            // Identity & messaging services
             "AWS::Cognito::UserPool" => {
                 self.get_cognito_service()
                     .list_user_pools(account, region)
@@ -1223,17 +1552,52 @@ impl AWSResourceClient {
                     .await?
             }
             "AWS::MQ::Broker" => self.get_mq_service().list_brokers(account, region).await?,
-            "AWS::Organizations::Policy" => {
+            "AWS::Organizations::Account" => {
                 self.get_organizations_service()
-                    .list_policies(account, region)
+                    .list_accounts(account, region)
                     .await?
+            }
+            "AWS::Organizations::DelegatedAdministrator" => {
+                self.get_organizations_service()
+                    .list_delegated_administrators(account, region)
+                    .await?
+            }
+            "AWS::Organizations::Handshake" => {
+                self.get_organizations_service()
+                    .list_handshakes_for_organization(account, region)
+                    .await?
+            }
+            "AWS::Organizations::CreateAccountStatus" => {
+                self.get_organizations_service()
+                    .list_create_account_status(account, region)
+                    .await?
+            }
+            "AWS::Organizations::AwsServiceAccess" => {
+                self.get_organizations_service()
+                    .list_aws_service_access_for_organization(account, region)
+                    .await?
+            }
+            "AWS::Organizations::Organization" => {
+                // Organization is a singleton resource - no list operation
+                // Users must use describe to query it
+                Vec::new()
             }
             "AWS::Organizations::OrganizationalUnit" => {
                 self.get_organizations_service()
                     .list_organizational_units(account, region)
                     .await?
             }
-            // Phase 2 Batch 4: Load balancing & networking services
+            "AWS::Organizations::Policy" => {
+                self.get_organizations_service()
+                    .list_policies(account, region)
+                    .await?
+            }
+            "AWS::Organizations::Root" => {
+                self.get_organizations_service()
+                    .list_roots(account, region)
+                    .await?
+            }
+            // Load balancing & networking services
             "AWS::ElasticLoadBalancing::LoadBalancer" => {
                 self.get_elb_service()
                     .list_load_balancers(account, region)
@@ -1259,7 +1623,7 @@ impl AWSResourceClient {
                     .list_documents(account, region)
                     .await?
             }
-            // Phase 2 Batch 5: DevOps & CI/CD services
+            // DevOps & CI/CD services
             "AWS::CodePipeline::Pipeline" => {
                 self.get_codepipeline_service()
                     .list_pipelines(account, region)
@@ -1285,7 +1649,7 @@ impl AWSResourceClient {
                     .list_rules(account, region)
                     .await?
             }
-            // Phase 2 Batch 6: IoT & App services
+            // IoT & App services
             "AWS::AppSync::GraphQLApi" => {
                 self.get_appsync_service()
                     .list_graphql_apis(account, region)
@@ -1312,7 +1676,7 @@ impl AWSResourceClient {
                     .list_scaling_policies(account, region)
                     .await?
             }
-            // Phase 2 Batch 7: Compute & Data services
+            // Compute & Data services
             "AWS::Neptune::DBCluster" => {
                 self.get_neptune_service()
                     .list_db_clusters(account, region)
@@ -1464,12 +1828,332 @@ impl AWSResourceClient {
             }
         };
 
-        // Normalize the resources
-        self.normalize_resources(raw_resources, account, region, resource_type)
+        // Normalize the parent resources (with async tag fetching)
+        let mut all_entries = self.normalize_resources(raw_resources, account, region, resource_type).await?;
+
+        // Query child resources recursively
+        let child_config = ChildResourceConfig::new();
+        if child_config.has_children(resource_type) {
+            let mut all_children = Vec::new();
+
+            for parent_entry in &all_entries {
+                match self
+                    .query_children_recursive(
+                        parent_entry,
+                        &child_config,
+                        0,  // current depth
+                        3,  // max depth (prevents infinite loops)
+                    )
+                    .await
+                {
+                    Ok(children) => {
+                        all_children.extend(children);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to query children for {} ({}): {}",
+                            parent_entry.resource_id, parent_entry.resource_type, e
+                        );
+                        // Continue despite errors - don't fail entire query
+                    }
+                }
+            }
+
+            // Add all children to the result
+            all_entries.extend(all_children);
+        }
+
+        Ok(all_entries)
     }
 
-    /// Normalize raw AWS API responses into ResourceEntry format
-    fn normalize_resources(
+    /// Query child resources recursively for a parent resource
+    fn query_children_recursive<'a>(
+        &'a self,
+        parent: &'a ResourceEntry,
+        child_config: &'a ChildResourceConfig,
+        current_depth: usize,
+        max_depth: usize,
+    ) -> BoxFuture<'a, Result<Vec<ResourceEntry>>> {
+        Box::pin(async move {
+        // Prevent infinite recursion
+        if current_depth >= max_depth {
+            warn!(
+                "Max recursion depth {} reached for resource {} (type: {})",
+                max_depth, parent.resource_id, parent.resource_type
+            );
+            return Ok(vec![]);
+        }
+
+        let mut all_descendants = Vec::new();
+
+        // Get direct children
+        match self.query_child_resources(parent, child_config).await {
+            Ok(children) => {
+                // Recursively get grandchildren for each child
+                for child in children {
+                    match self
+                        .query_children_recursive(&child, child_config, current_depth + 1, max_depth)
+                        .await
+                    {
+                        Ok(grandchildren) => {
+                            all_descendants.extend(grandchildren);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to query grandchildren for {} ({}): {}",
+                                child.resource_id, child.resource_type, e
+                            );
+                            // Continue despite errors - don't fail entire hierarchy
+                        }
+                    }
+
+                    all_descendants.push(child);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to query children for {} ({}): {}",
+                    parent.resource_id, parent.resource_type, e
+                );
+                // Continue despite errors - don't fail parent query
+            }
+        }
+
+        Ok(all_descendants)
+        })
+    }
+
+    /// Query child resources for a parent resource
+    async fn query_child_resources(
+        &self,
+        parent: &ResourceEntry,
+        child_config: &ChildResourceConfig,
+    ) -> Result<Vec<ResourceEntry>> {
+        let mut all_children = Vec::new();
+
+        // Check if this parent has children
+        if let Some(child_defs) = child_config.get_children(&parent.resource_type) {
+            for child_def in child_defs {
+                let children = match &child_def.query_method {
+                    ChildQueryMethod::SingleParent { param_name } => {
+                        self.query_child_with_single_parent(
+                            &parent.account_id,
+                            &parent.region,
+                            &child_def.child_type,
+                            param_name,
+                            &parent.resource_id,
+                            parent,
+                        )
+                        .await?
+                    }
+                    ChildQueryMethod::MultiParent { params } => {
+                        let parent_params = self.extract_parent_params(parent, params)?;
+                        self.query_child_with_multi_parent(
+                            &parent.account_id,
+                            &parent.region,
+                            &child_def.child_type,
+                            &parent_params,
+                            parent,
+                        )
+                        .await?
+                    }
+                };
+
+                all_children.extend(children);
+            }
+        }
+
+        Ok(all_children)
+    }
+
+    /// Query child resources that require a single parent ID
+    async fn query_child_with_single_parent(
+        &self,
+        account: &str,
+        region: &str,
+        child_type: &str,
+        _param_name: &str,
+        parent_id: &str,
+        parent: &ResourceEntry,
+    ) -> Result<Vec<ResourceEntry>> {
+        let raw_children = match child_type {
+            "AWS::Bedrock::DataSource" => {
+                self.get_bedrock_agent_service()
+                    .list_data_sources(account, region, parent_id)
+                    .await?
+            }
+            "AWS::Bedrock::AgentAlias" => {
+                self.get_bedrock_agent_service()
+                    .list_agent_aliases(account, region, parent_id)
+                    .await?
+            }
+            "AWS::Bedrock::FlowAlias" => {
+                self.get_bedrock_agent_service()
+                    .list_flow_aliases(account, region, parent_id)
+                    .await?
+            }
+            _ => {
+                warn!("Unsupported child resource type: {}", child_type);
+                return Ok(vec![]);
+            }
+        };
+
+        self.normalize_child_resources(
+            raw_children,
+            child_type,
+            account,
+            region,
+            Some(parent_id.to_string()),
+            Some(parent.resource_type.clone()),
+        )
+        .await
+    }
+
+    /// Query child resources that require multiple parent parameters
+    async fn query_child_with_multi_parent(
+        &self,
+        account: &str,
+        region: &str,
+        child_type: &str,
+        parent_params: &HashMap<String, String>,
+        parent: &ResourceEntry,
+    ) -> Result<Vec<ResourceEntry>> {
+        let raw_children = match child_type {
+            "AWS::Bedrock::IngestionJob" => {
+                let kb_id = parent_params
+                    .get("knowledge_base_id")
+                    .context("Missing knowledge_base_id")?;
+                let ds_id = parent_params
+                    .get("data_source_id")
+                    .context("Missing data_source_id")?;
+
+                self.get_bedrock_agent_service()
+                    .list_ingestion_jobs(account, region, kb_id, ds_id)
+                    .await?
+            }
+            "AWS::Bedrock::AgentActionGroup" => {
+                let agent_id = parent_params.get("agent_id").context("Missing agent_id")?;
+                let agent_version = parent_params
+                    .get("agent_version")
+                    .context("Missing agent_version")?;
+
+                self.get_bedrock_agent_service()
+                    .list_agent_action_groups(account, region, agent_id, agent_version)
+                    .await?
+            }
+            _ => {
+                warn!("Unsupported multi-parent child resource type: {}", child_type);
+                return Ok(vec![]);
+            }
+        };
+
+        self.normalize_child_resources(
+            raw_children,
+            child_type,
+            account,
+            region,
+            Some(parent.resource_id.clone()),
+            Some(parent.resource_type.clone()),
+        )
+        .await
+    }
+
+    /// Extract parent parameters from parent resource properties
+    fn extract_parent_params(
+        &self,
+        parent: &ResourceEntry,
+        _param_names: &[&str],
+    ) -> Result<HashMap<String, String>> {
+        let mut params = HashMap::new();
+
+        // For DataSource querying IngestionJobs, we need both kb_id and ds_id
+        if parent.resource_type == "AWS::Bedrock::DataSource" {
+            // kb_id comes from parent's parent
+            if let Some(kb_id) = &parent.parent_resource_id {
+                params.insert("knowledge_base_id".to_string(), kb_id.clone());
+            } else {
+                return Err(anyhow::anyhow!(
+                    "DataSource missing parent_resource_id for knowledge_base_id"
+                ));
+            }
+            // ds_id is the DataSource's own ID
+            params.insert("data_source_id".to_string(), parent.resource_id.clone());
+        }
+
+        // For Agent querying AgentActionGroups, we need agent_id and agent_version
+        if parent.resource_type == "AWS::Bedrock::Agent" {
+            params.insert("agent_id".to_string(), parent.resource_id.clone());
+            // Extract version from properties (default to "DRAFT" if not specified)
+            let version = parent
+                .properties
+                .get("Version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("DRAFT")
+                .to_string();
+            params.insert("agent_version".to_string(), version);
+        }
+
+        Ok(params)
+    }
+
+    /// Normalize child resources with parent tracking (async for tag fetching)
+    async fn normalize_child_resources(
+        &self,
+        raw_resources: Vec<serde_json::Value>,
+        resource_type: &str,
+        account: &str,
+        region: &str,
+        parent_id: Option<String>,
+        parent_type: Option<String>,
+    ) -> Result<Vec<ResourceEntry>> {
+        let normalizer = NormalizerFactory::create_normalizer(resource_type)
+            .context("No async normalizer available for child resource type")?;
+
+        let query_timestamp = Utc::now();
+
+        // Process all child resources concurrently for faster tag fetching
+        let futures: Vec<_> = raw_resources
+            .into_iter()
+            .map(|raw_resource| {
+                normalizer.normalize(raw_resource, account, region, query_timestamp, self)
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        let mut normalized_resources = Vec::new();
+        for result in results {
+            match result {
+                Ok(mut resource) => {
+                    // Mark as child resource and set parent info
+                    resource.is_child_resource = true;
+                    resource.parent_resource_id = parent_id.clone();
+                    resource.parent_resource_type = parent_type.clone();
+
+                    // Add bidirectional relationship
+                    if let (Some(ref parent_id_val), Some(ref parent_type_val)) =
+                        (&parent_id, &parent_type)
+                    {
+                        resource.relationships.push(ResourceRelationship {
+                            relationship_type: RelationshipType::ChildOf,
+                            target_resource_id: parent_id_val.clone(),
+                            target_resource_type: parent_type_val.clone(),
+                        });
+                    }
+
+                    normalized_resources.push(resource);
+                }
+                Err(e) => {
+                    warn!("Failed to normalize child resource: {}", e);
+                }
+            }
+        }
+
+        Ok(normalized_resources)
+    }
+
+    /// Normalize raw AWS API responses into ResourceEntry format (async for tag fetching)
+    async fn normalize_resources(
         &self,
         raw_resources: Vec<serde_json::Value>,
         account: &str,
@@ -1477,12 +2161,23 @@ impl AWSResourceClient {
         resource_type: &str,
     ) -> Result<Vec<ResourceEntry>> {
         let normalizer = NormalizerFactory::create_normalizer(resource_type)
-            .context("No normalizer available for resource type")?;
+            .context("No async normalizer available for resource type")?;
+
+        let query_timestamp = Utc::now(); // Capture when this query was executed
+
+        // Process all resources concurrently for faster tag fetching
+        let futures: Vec<_> = raw_resources
+            .into_iter()
+            .map(|raw_resource| {
+                normalizer.normalize(raw_resource, account, region, query_timestamp, self)
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
 
         let mut normalized_resources = Vec::new();
-        let query_timestamp = Utc::now(); // Capture when this query was executed
-        for raw_resource in raw_resources {
-            match normalizer.normalize(raw_resource, account, region, query_timestamp) {
+        for result in results {
+            match result {
                 Ok(resource) => normalized_resources.push(resource),
                 Err(e) => {
                     warn!("Failed to normalize resource: {}", e);
@@ -1532,7 +2227,19 @@ impl AWSResourceClient {
             "AWS::IAM::Role" | "AWS::IAM::User" | "AWS::IAM::Policy" => {
                 self.format_iam_error(root_error, display_name, account_id, region, role_info)
             }
-            "AWS::Bedrock::Model" => {
+            "AWS::Bedrock::Model"
+            | "AWS::Bedrock::InferenceProfile"
+            | "AWS::Bedrock::Guardrail"
+            | "AWS::Bedrock::ProvisionedModelThroughput"
+            | "AWS::Bedrock::Agent"
+            | "AWS::Bedrock::KnowledgeBase"
+            | "AWS::Bedrock::CustomModel"
+            | "AWS::Bedrock::ImportedModel"
+            | "AWS::Bedrock::EvaluationJob"
+            | "AWS::Bedrock::ModelInvocationJob"
+            | "AWS::Bedrock::Prompt"
+            | "AWS::Bedrock::Flow"
+            | "AWS::Bedrock::ModelCustomizationJob" => {
                 self.format_bedrock_error(root_error, display_name, account_id, region, role_info)
             }
             _ => {
@@ -1784,6 +2491,197 @@ impl AWSResourceClient {
             "AWS::Bedrock::Model" => {
                 self.get_bedrock_service()
                     .describe_foundation_model(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::InferenceProfile" => {
+                self.get_bedrock_service()
+                    .describe_inference_profile(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::Guardrail" => {
+                self.get_bedrock_service()
+                    .describe_guardrail(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::ProvisionedModelThroughput" => {
+                self.get_bedrock_service()
+                    .describe_provisioned_model_throughput(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::Agent" => {
+                self.get_bedrock_agent_service()
+                    .describe_agent(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::KnowledgeBase" => {
+                self.get_bedrock_agent_service()
+                    .describe_knowledge_base(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::CustomModel" => {
+                self.get_bedrock_service()
+                    .describe_custom_model(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::ImportedModel" => {
+                self.get_bedrock_service()
+                    .describe_imported_model(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::EvaluationJob" => {
+                self.get_bedrock_service()
+                    .describe_evaluation_job(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::ModelInvocationJob" => {
+                self.get_bedrock_service()
+                    .describe_model_invocation_job(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::Prompt" => {
+                self.get_bedrock_agent_service()
+                    .describe_prompt(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::Flow" => {
+                self.get_bedrock_agent_service()
+                    .describe_flow(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Bedrock::ModelCustomizationJob" => {
+                self.get_bedrock_service()
+                    .describe_model_customization_job(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            // BedrockAgentCore - Describe methods
+            "AWS::BedrockAgentCore::AgentRuntime" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_agent_runtime(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::AgentRuntimeEndpoint" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_agent_runtime_endpoint(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::Memory" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_memory(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::Gateway" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_gateway(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::Browser" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_browser(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            // BedrockAgentCore - Additional Describe methods
+            "AWS::BedrockAgentCore::CodeInterpreter" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_code_interpreter(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::ApiKeyCredentialProvider" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_api_key_credential_provider(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::OAuth2CredentialProvider" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_oauth2_credential_provider(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::BedrockAgentCore::WorkloadIdentity" => {
+                self.get_bedrock_agentcore_control_service()
+                    .describe_workload_identity(
                         &resource.account_id,
                         &resource.region,
                         &resource.resource_id,
@@ -2164,7 +3062,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 1: High-value services
+            // High-value AWS services
             "AWS::CertificateManager::Certificate" => {
                 self.get_acm_service()
                     .describe_certificate(
@@ -2255,7 +3153,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 2: Analytics & search services
+            // Analytics & search services
             "AWS::OpenSearchService::Domain" => {
                 self.get_opensearch_service()
                     .describe_domain(
@@ -2310,7 +3208,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 3: Identity & messaging services
+            // Identity & messaging services
             "AWS::Cognito::UserPool" => {
                 self.get_cognito_service()
                     .describe_user_pool(
@@ -2338,12 +3236,48 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            "AWS::Organizations::Policy" => {
+            "AWS::Organizations::Account" => {
                 self.get_organizations_service()
-                    .describe_policy(
+                    .describe_account(
                         &resource.account_id,
                         &resource.region,
                         &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Organizations::DelegatedAdministrator" => {
+                // DelegatedAdministrator doesn't have a describe operation - list returns full details
+                // Return the raw_properties as detailed_properties
+                Ok(resource.raw_properties.clone())
+            }
+            "AWS::Organizations::Handshake" => {
+                self.get_organizations_service()
+                    .describe_handshake(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Organizations::CreateAccountStatus" => {
+                self.get_organizations_service()
+                    .describe_create_account_status(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Organizations::AwsServiceAccess" => {
+                // AwsServiceAccess doesn't have a describe operation - list returns full details
+                // Return the raw_properties as detailed_properties
+                Ok(resource.raw_properties.clone())
+            }
+            "AWS::Organizations::Organization" => {
+                self.get_organizations_service()
+                    .describe_organization(
+                        &resource.account_id,
+                        &resource.region,
                     )
                     .await
             }
@@ -2356,7 +3290,21 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 4: Load balancing & networking services
+            "AWS::Organizations::Policy" => {
+                self.get_organizations_service()
+                    .describe_policy(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::Organizations::Root" => {
+                // Roots don't have a describe operation - list returns full details
+                // Return the raw_properties as detailed_properties
+                Ok(resource.raw_properties.clone())
+            }
+            // Load balancing & networking services
             "AWS::ElasticLoadBalancing::LoadBalancer" => {
                 self.get_elb_service()
                     .describe_load_balancer(
@@ -2402,7 +3350,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 5: DevOps & CI/CD services
+            // DevOps & CI/CD services
             "AWS::CodePipeline::Pipeline" => {
                 self.get_codepipeline_service()
                     .describe_pipeline(
@@ -2448,7 +3396,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 6: IoT & App services
+            // IoT & App services
             "AWS::AppSync::GraphQLApi" => {
                 self.get_appsync_service()
                     .describe_graphql_api(
@@ -2494,7 +3442,7 @@ impl AWSResourceClient {
                     )
                     .await
             }
-            // Phase 2 Batch 7: Compute & Data services
+            // Compute & Data services
             "AWS::Neptune::DBCluster" => {
                 self.get_neptune_service()
                     .describe_db_cluster(
@@ -2752,6 +3700,7 @@ impl Clone for AWSResourceClient {
             normalizer_factory: NormalizerFactory,
             credential_coordinator: Arc::clone(&self.credential_coordinator),
             pagination_config: self.pagination_config.clone(),
+            tag_cache: Arc::clone(&self.tag_cache),
             // Services are now created lazily instead of pre-instantiated
         }
     }

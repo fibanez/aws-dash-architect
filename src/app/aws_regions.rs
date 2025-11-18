@@ -1,6 +1,6 @@
 //! AWS Regions Data
 //!
-//! Provides AWS region codes for resource explorer and bridge tools.
+//! Provides AWS region codes for resource explorer and agent framework tools.
 
 /// All AWS region codes
 pub const AWS_REGIONS: &[&str] = &[

@@ -1,6 +1,6 @@
 # AWS Service Integration Patterns
 
-Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 45+ integrated services with parallel processing capabilities.
+Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 72 integrated services with parallel processing capabilities and hierarchical parent-child resource support.
 
 ## Core Functionality
 
@@ -243,6 +243,59 @@ pub async fn query_multiple_accounts_parallel(&self, accounts: Vec<String>, regi
 - **JSON Serialization**: Consistent data format across all AWS service responses
 - **Error Context**: Rich error information for debugging and user feedback
 - **Credential Isolation**: Each service call uses appropriate account credentials
+
+## Common Troubleshooting
+
+**Compilation Errors: SDK Field Mismatches**
+
+⚠️ **CRITICAL**: When adding a new AWS service, compilation errors in the service file do NOT mean you should disable the entire service integration!
+
+**Symptoms:**
+```
+error[E0609]: no field `resource_status` on type `&ResourceSummary`
+error[E0308]: mismatched types - expected `DateTime`, found `Option<_>`
+```
+
+**Root Cause:**
+- SDK field names differ from documentation/assumptions
+- New AWS services may have evolving SDK structures
+- Field optionality doesn't match expectations
+
+**WRONG Approach (DO NOT DO THIS):**
+```rust
+// ❌ DO NOT comment out the entire service!
+// pub mod bedrockagentcore_control;
+// fn get_bedrock_agentcore_control_service(&self) -> BedrockAgentCoreControlService { ... }
+```
+
+**CORRECT Approach:**
+1. **Normalizers are independent** - They work with JSON using safe `.get()` patterns and don't depend on the service file compiling
+2. **Fix the service file** - Use docs.rs to verify actual SDK field structures
+3. **Keep everything enabled** - Only the service file needs fixing, not the entire integration
+
+**Example Fix Process:**
+```bash
+# 1. Check docs.rs for actual SDK types
+# Visit: https://docs.rs/aws-sdk-servicename/latest/
+
+# 2. Find the actual field names
+# Instead of: resource.resource_status()
+# SDK has: resource.status()
+
+# 3. Fix field access patterns
+let status = resource.status()  // Not resource_status()
+    .map(|s| s.as_str().to_string());
+
+# 4. Handle optionality correctly
+let created_at = resource.created_at()
+    .map(|dt| dt.fmt(aws_smithy_types::date_time::Format::DateTime)
+        .unwrap_or_default());
+```
+
+**Key Lesson:**
+- Service file compilation errors are **isolated to that file only**
+- Normalizers, routing, and UI integration are **independent** and work fine
+- Fix the service file by checking actual SDK types - don't disable everything!
 
 **References:**
 - [Resource Explorer System](resource-explorer-system.md) - Service integration usage

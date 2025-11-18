@@ -1,18 +1,21 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for ECS Fargate Service
 pub struct ECSFargateServiceNormalizer;
 
-impl ResourceNormalizer for ECSFargateServiceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSFargateServiceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ServiceArn")
@@ -23,7 +26,21 @@ impl ResourceNormalizer for ECSFargateServiceNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::ECS::FargateService", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::FargateService {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -39,6 +56,9 @@ impl ResourceNormalizer for ECSFargateServiceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -86,13 +106,15 @@ impl ResourceNormalizer for ECSFargateServiceNormalizer {
 /// Normalizer for ECS Fargate Task
 pub struct ECSFargateTaskNormalizer;
 
-impl ResourceNormalizer for ECSFargateTaskNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("TaskArn")
@@ -103,7 +125,21 @@ impl ResourceNormalizer for ECSFargateTaskNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::ECS::FargateTask", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::ECS::FargateTask {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -119,6 +155,9 @@ impl ResourceNormalizer for ECSFargateTaskNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -185,13 +224,15 @@ impl ResourceNormalizer for ECSFargateTaskNormalizer {
 /// Normalizer for EKS Fargate Profile
 pub struct EKSFargateProfileNormalizer;
 
-impl ResourceNormalizer for EKSFargateProfileNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EKSFargateProfileNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -201,7 +242,21 @@ impl ResourceNormalizer for EKSFargateProfileNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EKS::FargateProfile", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EKS::FargateProfile {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -217,6 +272,9 @@ impl ResourceNormalizer for EKSFargateProfileNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -254,3 +312,4 @@ impl ResourceNormalizer for EKSFargateProfileNormalizer {
         "AWS::EKS::FargateProfile"
     }
 }
+

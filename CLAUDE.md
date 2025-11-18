@@ -2,6 +2,69 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: EMOJI/UNICODE RESTRICTIONS IN EGUI
+
+**MOST EMOJIS DO NOT WORK IN EGUI v0.32.3 - USE ASCII TEXT INSTEAD**
+
+This project uses egui v0.32.3 which has LIMITED emoji support:
+- Default font: ~1,216 **monochrome** emojis only
+- Color emojis: REQUIRE custom fonts (not installed)
+- Missing glyph = empty box character
+
+### UNSAFE Characters (DO NOT USE WITHOUT TESTING):
+- Circles: ● ○ ◉ ◯ - NOT in default font
+- Arrows: → ← ↑ ↓ - Inconsistent rendering
+- Checks: ✓ ✗ ✘ - (✔ may work, ✓ doesn't)
+- Warning: ⚠ ⚡ - NOT in default font
+- Box-drawing: └─ ├─ │ ═ ║ - NOT in default font
+- Color emojis: 📁 📂 🗂️ 🗃️ 🗑️ 💾 ✏️ ➕ 📚 📖 🏷️ - REQUIRE custom fonts
+
+### POTENTIALLY SAFE (Monochrome, but verify visually):
+- Stars: ★ ☆
+- Checkboxes: ☐ ☑
+- Checkmark: ✔ (NOT ✓)
+- Shapes: ■ ▶
+- Arrows: ➡ ⬅ ⬆ ⬇ (basic only)
+- Refresh: ↺ ↻
+- Heart: ♡
+
+### ALWAYS SAFE - Use These Instead:
+- ASCII: `*` `+` `-` `>` `<` `=` `|` `[` `]` `(` `)`
+- Words: "Active", "More", "Add", "Edit", "Delete", "Folder"
+- Prefixes: "[Active]", "(3 more)", "* Selected"
+- Simple indentation with spaces (no box-drawing)
+
+### Examples - CORRECT:
+```rust
+// Bookmarks
+if ui.button("Add Bookmark").clicked() { }
+ui.label("* Active Bookmark");  // Asterisk prefix
+
+// Folders
+ui.label("Folder: Production");
+ui.label("  Bookmark: Web Servers");  // Indentation
+
+// Status
+ui.label("OK: Success");
+ui.label("WARN: Check config");
+
+// Navigation
+ui.label("Account > Region > Resource");
+```
+
+### Examples - WRONG (DO NOT DO):
+```rust
+// WRONG - Emojis that don't render
+if ui.button("➕ Add").clicked() { }     // NO - color emoji
+ui.label("● Active");                    // NO - not in font
+ui.label("📁 Folder");                   // NO - color emoji
+ui.label("Account → Region");            // NO - unreliable
+ui.label("  ✓ Success");                 // NO - wrong checkmark
+ui.label("  ├─ Child");                  // NO - box-drawing
+```
+
+**RULE: Default to ASCII text. Only use symbols after visual testing in the actual app.**
+
 ## ARCHITECTURAL DECISION AND PROBLEM-SOLVING GUIDELINES
 
 ⚠️ **STOP AND COMMUNICATE**: When facing technical obstacles that might lead to compromises, placeholders, or changes from user requirements - STOP and communicate the situation to the user
@@ -47,7 +110,108 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Format: `cargo fmt --all`
 - Full check: `./check.sh` (runs all checks in sequence with chunked tests)
 - Single test: `cargo test <test_name>` (use test scripts for memory-monitored execution)
-- The application log files is located in $HOME/.local/share/awsdash/logs/awsdash.log - this file can be used to troubleshoot or debug errors
+
+### Application Logs
+
+**Main Application Log**:
+- Location: `$HOME/.local/share/awsdash/logs/awsdash.log`
+- Purpose: General application events, initialization, errors
+- Usage: Troubleshoot application startup, configuration issues
+
+**Per-Agent Logs** (Agent Framework):
+- Location: `$HOME/.local/share/awsdash/logs/agents/agent-{uuid}.log`
+- Purpose: Detailed per-agent conversation and activity tracking
+- Each agent instance creates its own dedicated log file with:
+  - Conversation messages (user, assistant, system)
+  - Model interactions (requests, responses, token usage)
+  - Tool executions (start, success, failure with timing)
+  - Sub-task agent creation and progress
+  - Agent lifecycle events (creation, rename, termination)
+- Usage: Debug agent behavior, review conversations, analyze tool usage
+- Find agent log path: Look for "Agent log file:" in agent UI or check logs directory
+
+**How to Monitor Agent Logs**:
+```bash
+# List all agent logs
+ls -lht ~/.local/share/awsdash/logs/agents/
+
+# Tail the most recent agent log
+tail -f $(ls -t ~/.local/share/awsdash/logs/agents/*.log | head -1)
+
+# Search for specific patterns across all agent logs
+grep -r "invoke_skill" ~/.local/share/awsdash/logs/agents/
+
+# Find logs for a specific agent by name (from log header)
+grep -l "Agent Name: MyAgent" ~/.local/share/awsdash/logs/agents/*.log
+```
+
+**Stood Debug Traces** (Agent Framework):
+- Location: Same as main application log: `$HOME/.local/share/awsdash/logs/awsdash.log`
+- Purpose: Comprehensive debug logging for the stood agent framework library
+- The tracing subscriber is configured with `stood=trace` to capture all internal operations
+- Each trace entry contains:
+  - Agent lifecycle events (initialization, execution, completion)
+  - Tool execution traces (start, complete, error with full inputs/outputs)
+  - Model interactions (requests, responses, streaming)
+  - Performance metrics (execution timing, cycle counts)
+  - Internal stood library operations for troubleshooting
+- Control verbosity via `RUST_LOG` environment variable (e.g., `RUST_LOG=stood=trace`)
+- Usage: Troubleshoot orchestration agent issues, analyze execution flow, debug silent failures
+
+**OTLP Telemetry Exports** (OpenTelemetry):
+- Endpoint: `http://localhost:4320` (configurable in orchestration_agent.rs)
+- Processing mode: Simple processing (real-time export) by default for debugging
+- Can be toggled with `STOOD_SIMPLE_TELEMETRY=false` for batch mode
+- Telemetry includes: Service attributes, agent type, session IDs, execution spans
+- Debug tracing enabled to capture detailed span operations
+
+**Environment Variables for Debug Logging**:
+```bash
+# Control Rust/stood tracing verbosity (MOST IMPORTANT for debugging)
+export RUST_LOG=stood=trace,awsdash=trace  # Full trace-level logging
+export RUST_LOG=stood=debug,awsdash=debug  # Debug-level (less verbose)
+export RUST_LOG=stood=info,awsdash=info    # Info-level (minimal)
+
+# Use simple (immediate) telemetry export instead of batching
+export STOOD_SIMPLE_TELEMETRY=true   # Real-time telemetry (default)
+export STOOD_SIMPLE_TELEMETRY=false  # Batch mode (production)
+```
+
+**Troubleshooting with Stood Traces**:
+```bash
+# Tail the main application log (contains both app and stood traces)
+tail -f ~/.local/share/awsdash/logs/awsdash.log
+
+# Filter for only stood library traces
+tail -f ~/.local/share/awsdash/logs/awsdash.log | grep 'stood::'
+
+# Search for agent execution errors
+grep -i 'error' ~/.local/share/awsdash/logs/awsdash.log | grep 'stood'
+
+# Find agent lifecycle events
+grep 'Agent.*created\|Agent.*execute\|Agent.*response' ~/.local/share/awsdash/logs/awsdash.log
+
+# Track tool executions
+grep 'execute_javascript' ~/.local/share/awsdash/logs/awsdash.log
+
+# Find empty or failed responses
+grep 'empty response\|response.*0 chars\|failed' ~/.local/share/awsdash/logs/awsdash.log
+
+# Check model interactions
+grep 'model.*request\|model.*response' ~/.local/share/awsdash/logs/awsdash.log
+
+# Monitor in real-time with filtering
+tail -f ~/.local/share/awsdash/logs/awsdash.log | grep -E '(stood|Agent|Tool|execute_javascript)'
+```
+
+**When to Use Stood Debug Logs**:
+- Orchestration agent stops responding with no visible errors
+- Tools execute but agent doesn't respond
+- Investigating performance issues or timeouts
+- Debugging infinite loops or excessive cycles
+- Understanding complete tool execution flow
+- Analyzing model interactions and token usage
+
 - When creating tests don't create mock tests.  All tests are either unit test, non-mock integration tests, or e2e test with no mocks
 
 ## Chunked Testing Strategy
@@ -134,21 +298,33 @@ VERBOSE=false ./scripts/test-chunks.sh ui   # Same as Level 0
 - Naming: Use clear, descriptive variable and function names
 - Performance: Use caching for expensive operations, profile with `Instant`
 - Security: Never log or expose sensitive information
+- **UI Text**: Do NOT use emojis in UI text or user-facing strings - egui does not support emoji rendering
 
-## Graph Visualization Guidelines
+## Comment Guidelines: NO Task Tracking References
 
-- **NO GRID BACKGROUND** in CloudFormation Scene Graph window - clean background only
+**NEVER include Phase/Milestone/Task references in comments**
 
-## Custom File Selection
+Do NOT use: "Phase 1", "M2.T4", "Task 1", "T1.2", "R3.2", "Sub-Milestone 4.2", "Sprint 3"
 
-The application uses a custom fuzzy-search file picker instead of native file dialogs:
-- The current directory's contents are displayed with folders first
-- Type to filter items with fuzzy matching
-- Press Ctrl-Y to select a folder and navigate into it
-- Press Left Arrow (←) to go up one level in the directory
-- Press Enter to accept the current path
-- Press Esc to cancel selection
-- Press Ctrl+N to create a new folder
+```rust
+// WRONG
+// Phase 2 Batch 1: High-value services
+// removed in Phase 1.2
+// Property Extraction (M1.T4)
+// Will be implemented in M2.T4
+#[allow(dead_code)] // Milestone 2
+tracing::debug!("R3.2 TESTING - activated");
+
+// CORRECT
+// High-value AWS services
+// removed
+// Property Extraction
+// Future enhancement: tag hierarchy
+#[allow(dead_code)] // Reserved for future expansion
+tracing::debug!("Hint mode activated: {} elements", count);
+```
+
+Use instead: "Future enhancement", "removed", "TODO", descriptive names without version numbers
 
 ## Keyboard Navigation System
 
@@ -200,14 +376,9 @@ This project uses a modular technical documentation system organized in Markdown
 **Core Systems**:
 - `window-focus-system.md` - Window focus trait system overview
 - `ui-testing-framework.md` - Automated UI testing with egui_kittest
-- `cloudformation-system.md` - Template parsing and visualization
-- `cloudformation-manager.md` - Comprehensive CloudFormation template management system
-- `project-management.md` - Project structure and resource tracking
 
 **Development Guides**:
 - `adding-new-windows.md` - Complete guide for adding focusable windows
-- `cloudformation-manager-development.md` - Extending CloudFormation Manager functionality
-- `cloudformation-manager-testing.md` - CloudFormation Manager testing strategies
 - `ui-component-testing.md` - Writing comprehensive UI tests
 - `build-and-test.md` - Development workflow and commands
 
@@ -231,9 +402,6 @@ This project uses a modular technical documentation system organized in Markdown
 - Focus on modular, reusable documentation that can be extended
 
 ### Legacy Documentation Files
-
-The following files contain historical implementation tracking:
-- **TODOS/IMPLEMENTATION_COMPLETE.md** - Completed work archive (legacy)
 
 **When Working on New Features**:
 1. Check `docs/technical/README.md` for existing system documentation

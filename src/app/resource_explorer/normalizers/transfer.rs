@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for AWS Transfer Family Resources
 pub struct TransferResourceNormalizer;
 
-impl ResourceNormalizer for TransferResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for TransferResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
             .or_else(|| raw_response.get("ServerId"))
@@ -26,7 +30,8 @@ impl ResourceNormalizer for TransferResourceNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::Transfer::Server".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -39,147 +44,32 @@ impl ResourceNormalizer for TransferResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-        
-        // Transfer Family servers relate to VPCs, subnets, security groups, and S3/EFS storage
-        for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::EC2::VPC" => {
-                    // Transfer servers can be deployed in VPCs
-                    if let Some(endpoint_details) = entry.raw_properties.get("EndpointDetails") {
-                        if let Some(vpc_id) = endpoint_details.get("VpcId").and_then(|v| v.as_str()) {
-                            if vpc_id == resource.resource_id {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::EC2::Subnet" => {
-                    // Transfer servers use subnets for VPC endpoints
-                    if let Some(endpoint_details) = entry.raw_properties.get("EndpointDetails") {
-                        if let Some(subnet_ids) = endpoint_details.get("SubnetIds") {
-                            if let Some(subnets) = subnet_ids.as_array() {
-                                for subnet in subnets {
-                                    if let Some(subnet_id) = subnet.as_str() {
-                                        if subnet_id == resource.resource_id {
-                                            relationships.push(ResourceRelationship {
-                                                relationship_type: RelationshipType::Uses,
-                                                target_resource_id: resource.resource_id.clone(),
-                                                target_resource_type: resource.resource_type.clone(),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "AWS::EC2::SecurityGroup" => {
-                    // Transfer servers use security groups for network access control
-                    if let Some(endpoint_details) = entry.raw_properties.get("EndpointDetails") {
-                        if let Some(security_group_ids) = endpoint_details.get("SecurityGroupIds") {
-                            if let Some(groups) = security_group_ids.as_array() {
-                                for group in groups {
-                                    if let Some(group_id) = group.as_str() {
-                                        if group_id == resource.resource_id {
-                                            relationships.push(ResourceRelationship {
-                                                relationship_type: RelationshipType::Uses,
-                                                target_resource_id: resource.resource_id.clone(),
-                                                target_resource_type: resource.resource_type.clone(),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "AWS::S3::Bucket" => {
-                    // Transfer servers often use S3 buckets as storage backends
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::EFS::FileSystem" => {
-                    // Transfer servers can use EFS for file storage
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::IAM::Role" => {
-                    // Transfer servers use IAM roles for authentication and access
-                    if let Some(logging_role) = entry.raw_properties.get("LoggingRole").and_then(|v| v.as_str()) {
-                        if logging_role.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                    
-                    if let Some(identity_provider_details) = entry.raw_properties.get("IdentityProviderDetails") {
-                        if let Some(invocation_role) = identity_provider_details.get("InvocationRole").and_then(|v| v.as_str()) {
-                            if invocation_role.contains(&resource.resource_id) {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::CertificateManager::Certificate" => {
-                    // Transfer servers can use ACM certificates for TLS
-                    if let Some(certificate) = entry.raw_properties.get("Certificate").and_then(|v| v.as_str()) {
-                        if certificate.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                "AWS::DirectoryService::Directory" => {
-                    // Transfer servers can integrate with AWS Directory Service
-                    if let Some(identity_provider_details) = entry.raw_properties.get("IdentityProviderDetails") {
-                        if let Some(directory_id) = identity_provider_details.get("DirectoryId").and_then(|v| v.as_str()) {
-                            if directory_id == resource.resource_id {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -190,13 +80,15 @@ impl ResourceNormalizer for TransferResourceNormalizer {
 /// Normalizer for AWS Transfer Family User Resources
 pub struct TransferUserResourceNormalizer;
 
-impl ResourceNormalizer for TransferUserResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for TransferUserResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -212,7 +104,21 @@ impl ResourceNormalizer for TransferUserResourceNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Transfer::User", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Transfer::User {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -228,6 +134,9 @@ impl ResourceNormalizer for TransferUserResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -279,3 +188,5 @@ impl ResourceNormalizer for TransferUserResourceNormalizer {
         "AWS::Transfer::User"
     }
 }
+
+

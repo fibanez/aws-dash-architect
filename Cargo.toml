@@ -19,8 +19,12 @@ path = "src/main.rs"
 
 [dependencies]
 # AI Agent framework
-stood = { git = "https://github.com/fibanez/stood.git" }
+# stood = { git = "https://github.com/fibanez/stood.git" }
+stood = { path = "./stood" }  # Local copy with extended tracing for debugging
 async-trait = "0.1"
+
+# JavaScript execution (V8 engine)
+v8 = "142.0.0"
 
 # UI framework
 egui = "=0.32.3"  # Pinned to 0.32.3 for compatibility with egui_code_editor
@@ -36,6 +40,7 @@ catppuccin-egui = { version = "5.6.0", default-features = false, features = ["eg
 egui_extras = { version = "=0.32.3", features = ["image", "svg"] }
 egui_code_editor = "0.2.17"
 egui_json_tree = "0.12"
+egui_dnd = "0.13"  # Drag-and-drop for tag hierarchy builder
 image = "0.25.4"
 
 
@@ -47,13 +52,15 @@ toml = "0.8"
 anyhow = "1.0"
 log = "0.4.27"
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "std"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "std", "registry"] }
+console-subscriber = "0.5"
 simple-logging = "2.0.2"
 once_cell = "1.20"
 
 # File and directory handling
 directories = "5.0"
 dirs = "5.0"
+walkdir = "2.4"
 zip = "0.6.6"
 
 # AWS support
@@ -64,9 +71,13 @@ aws-types = "1.3"
 aws-credential-types = { version = "1.2", features = ["hardcoded-credentials"] }
 aws-sdk-bedrock = "1.72"
 aws-sdk-bedrockruntime = "1.72"
+aws-sdk-bedrockagent = "1.72"
+aws-sdk-bedrockagentcorecontrol = "1.17"
+aws-sdk-bedrockagentcore = "1.0"
 aws-sdk-organizations = "1.67"
 aws-sdk-iam = "1.67"
 aws-sdk-ec2 = "1.67"
+aws-sdk-resourcegroupstagging = "1.86"
 aws-sdk-s3 = "1.67"
 aws-sdk-cloudformation = "1.67"
 aws-sdk-rds = "1.67"
@@ -141,12 +152,13 @@ open = "5.0.0"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "macros", "tracing"] }
 tokio-util = "0.7"
 futures = "0.3"
 uuid = { version = "1.4", features = ["v4", "serde"] }
 rand = "0.8.5"
 regex = "1.7"
+memory-stats = "1.0"
 lazy_static = "1.4.0"
 fuzzy-matcher = "0.3"
 random_color = "0.7"

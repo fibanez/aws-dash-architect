@@ -123,16 +123,16 @@ management, validation, and resource lookup integration.
 - `src/app/cloudformation_manager/secrets_manager.rs` - Secrets integration
 - `src/app/cloudformation_manager/resource_lookup.rs` - Existing resource discovery
 
-### BRIDGE
+### AGENT FRAMEWORK
 **AI agent system**: Task agents for AWS operations, tool registry, natural
 language to AWS operation translation, and agent-tool communication.
 
 **Key Files**:
-- `src/app/bridge/agents/task_agent.rs` - Specialized AWS task agent
-- `src/app/bridge/tools_registry.rs` - Tool registration and discovery
-- `src/app/bridge/tools/*.rs` - 12 AWS operation tools
-- `src/app/bridge/model_config.rs` - Model configuration
-- `src/app/bridge/debug_logger.rs` - AI operation logging
+- `src/app/agent_framework/agents/task_agent.rs` - Specialized AWS task agent
+- `src/app/agent_framework/tools_registry.rs` - Tool registration and discovery
+- `src/app/agent_framework/tools/*.rs` - 12 AWS operation tools
+- `src/app/agent_framework/model_config.rs` - Model configuration
+- `src/app/agent_framework/debug_logger.rs` - AI operation logging
 
 ### GUARD
 **Compliance validation system**: CloudFormation Guard integration, rule

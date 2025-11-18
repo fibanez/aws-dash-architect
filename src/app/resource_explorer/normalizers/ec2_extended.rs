@@ -1,18 +1,21 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for EC2 Transit Gateway
 pub struct EC2TransitGatewayNormalizer;
 
-impl ResourceNormalizer for EC2TransitGatewayNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("TransitGatewayId")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for EC2TransitGatewayNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::TransitGateway", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::TransitGateway {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -38,6 +55,9 @@ impl ResourceNormalizer for EC2TransitGatewayNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -74,13 +94,15 @@ impl ResourceNormalizer for EC2TransitGatewayNormalizer {
 /// Normalizer for EC2 VPC Peering Connection
 pub struct EC2VPCPeeringConnectionNormalizer;
 
-impl ResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("VpcPeeringConnectionId")
@@ -90,7 +112,21 @@ impl ResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::VPCPeeringConnection", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::VPCPeeringConnection {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -106,6 +142,9 @@ impl ResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -162,13 +201,15 @@ impl ResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
 /// Normalizer for EC2 VPC Flow Log
 pub struct EC2FlowLogNormalizer;
 
-impl ResourceNormalizer for EC2FlowLogNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("FlowLogId")
@@ -178,7 +219,21 @@ impl ResourceNormalizer for EC2FlowLogNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::FlowLog", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::FlowLog {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -194,6 +249,9 @@ impl ResourceNormalizer for EC2FlowLogNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -235,13 +293,15 @@ impl ResourceNormalizer for EC2FlowLogNormalizer {
 /// Normalizer for EC2 EBS Volume Attachment
 pub struct EC2VolumeAttachmentNormalizer;
 
-impl ResourceNormalizer for EC2VolumeAttachmentNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("AttachmentId")
@@ -251,7 +311,21 @@ impl ResourceNormalizer for EC2VolumeAttachmentNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::EC2::VolumeAttachment", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::EC2::VolumeAttachment {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -267,6 +341,9 @@ impl ResourceNormalizer for EC2VolumeAttachmentNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -324,3 +401,4 @@ impl ResourceNormalizer for EC2VolumeAttachmentNormalizer {
         "AWS::EC2::VolumeAttachment"
     }
 }
+

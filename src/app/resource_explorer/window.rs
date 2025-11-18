@@ -1,11 +1,25 @@
-use super::{aws_client::*, colors::*, dialogs::*, state::*, tree::*};
+use super::{aws_client::*, bookmarks::*, colors::*, dialogs::*, state::*, tree::*, widgets::*};
+use crate::app::agent_framework::tools_registry::set_global_aws_client;
 use crate::app::aws_identity::AwsIdentityCenter;
-use crate::app::bridge::set_global_aws_client;
 use egui::{Color32, Context, Ui, Window};
+use egui_dnd::dnd;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::warn;
+
+/// Drag-drop payload that supports both bookmarks and folders
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+enum DragData {
+    Bookmark {
+        id: String,
+        source_folder: Option<String>,
+    },
+    Folder {
+        id: String,
+        parent_id: Option<String>,
+    },
+}
 
 pub struct ResourceExplorerWindow {
     state: Arc<RwLock<ResourceExplorerState>>,
@@ -14,14 +28,56 @@ pub struct ResourceExplorerWindow {
     fuzzy_dialog: FuzzySearchDialog,
     tree_renderer: TreeRenderer,
     aws_client: Option<Arc<AWSResourceClient>>,
-    refresh_selection: HashMap<String, bool>, // Track which combinations to refresh
+    refresh_selection: HashMap<String, bool>, // Track which combinations to refresh (display name -> selected)
+    refresh_display_to_cache: HashMap<String, String>, // Map display name to cache key
     show_refresh_dialog: bool,                // Local dialog state to avoid borrow conflicts
+    show_filter_builder: bool,                // Local filter builder dialog state
+    filter_builder_working_group: Option<TagFilterGroup>, // In-progress filter group (persists while dialog is open)
+    show_hierarchy_builder: bool,                         // Local hierarchy builder dialog state
+    hierarchy_builder_widget: Option<TagHierarchyBuilderWidget>, // Widget instance (persists for state continuity)
+    show_property_filter_builder: bool, // Local property filter builder dialog state
+    property_filter_builder_working_group:
+        Option<crate::app::resource_explorer::PropertyFilterGroup>, // In-progress property filter group
+    show_property_hierarchy_builder: bool, // Local property hierarchy builder dialog state
+    property_hierarchy_builder_widget:
+        Option<crate::app::resource_explorer::widgets::PropertyHierarchyBuilderWidget>, // Widget instance (persists for state continuity)
     aws_identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>, // Access to real AWS accounts
     failed_detail_requests: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>, // Track failed requests
+    frame_count: u64, // Frame counter for debouncing logs
+
+    // Bookmark system (M5)
+    bookmark_manager: BookmarkManager,
+    show_bookmark_dialog: bool,
+    show_bookmark_manager: bool,
+    bookmark_dialog_name: String,
+    bookmark_dialog_description: String,
+    bookmark_dialog_folder_id: Option<String>, // Folder to create bookmark in (None = Top Folder)
+    show_bookmark_edit_dialog: bool,
+    editing_bookmark_id: Option<String>,
+    bookmark_edit_name: String,
+    bookmark_edit_description: String,
+    current_folder_id: Option<String>, // Current folder being viewed in bookmark bar (None = Top Folder)
+
+    // Folder management
+    show_folder_dialog: bool,
+    folder_dialog_name: String,
+    folder_dialog_parent_id: Option<String>,
+    editing_folder_id: Option<String>,
+    expanded_folders: std::collections::HashSet<String>, // Track expanded folders in tree view
+
+    // Copy/paste clipboard
+    bookmark_clipboard: Option<String>, // Bookmark ID in clipboard
+    bookmark_clipboard_is_cut: bool,    // True if cut operation, false if copy
+
+    // Pending actions to communicate with main app
+    pending_actions: Arc<Mutex<Vec<super::ResourceExplorerAction>>>,
 }
 
 impl ResourceExplorerWindow {
-    pub fn new(state: Arc<RwLock<ResourceExplorerState>>) -> Self {
+    pub fn new(
+        state: Arc<RwLock<ResourceExplorerState>>,
+        pending_actions: Arc<Mutex<Vec<super::ResourceExplorerAction>>>,
+    ) -> Self {
         Self {
             state,
             is_open: false,
@@ -30,11 +86,40 @@ impl ResourceExplorerWindow {
             tree_renderer: TreeRenderer::new(),
             aws_client: None,
             refresh_selection: HashMap::new(),
+            refresh_display_to_cache: HashMap::new(),
             show_refresh_dialog: false,
+            show_filter_builder: false,
+            filter_builder_working_group: None,
+            show_hierarchy_builder: false,
+            show_property_filter_builder: false,
+            property_filter_builder_working_group: None,
+            show_property_hierarchy_builder: false,
+            property_hierarchy_builder_widget: None,
+            hierarchy_builder_widget: None,
             aws_identity_center: None,
             failed_detail_requests: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashSet::new(),
             )),
+            frame_count: 0,
+            bookmark_manager: BookmarkManager::new().unwrap_or_default(),
+            show_bookmark_dialog: false,
+            show_bookmark_manager: false,
+            bookmark_dialog_name: String::new(),
+            bookmark_dialog_description: String::new(),
+            bookmark_dialog_folder_id: None,
+            show_bookmark_edit_dialog: false,
+            editing_bookmark_id: None,
+            bookmark_edit_name: String::new(),
+            bookmark_edit_description: String::new(),
+            current_folder_id: None,
+            show_folder_dialog: false,
+            folder_dialog_name: String::new(),
+            folder_dialog_parent_id: None,
+            editing_folder_id: None,
+            expanded_folders: std::collections::HashSet::new(),
+            bookmark_clipboard: None,
+            bookmark_clipboard_is_cut: false,
+            pending_actions,
         }
     }
 
@@ -66,7 +151,13 @@ impl ResourceExplorerWindow {
 
                 // Set global AWS client for bridge tools
                 set_global_aws_client(Some(aws_client));
-                tracing::info!("🔧 AWS client created and set as global client for bridge tools");
+
+                // Debounced logging - only log every 5 seconds (300 frames at 60fps)
+                if self.frame_count % 300 == 0 {
+                    tracing::debug!(
+                        "🔧 AWS client created and set as global client for bridge tools"
+                    );
+                }
             }
         } else {
             // Clear AWS client if identity center is removed
@@ -74,7 +165,11 @@ impl ResourceExplorerWindow {
 
             // Clear global AWS client for bridge tools
             set_global_aws_client(None);
-            tracing::info!("🔧 AWS client cleared from global bridge tools");
+
+            // Debounced logging - only log every 5 seconds (300 frames at 60fps)
+            if self.frame_count % 300 == 0 {
+                tracing::debug!("🔧 AWS client cleared from global bridge tools");
+            }
         }
     }
 
@@ -87,6 +182,9 @@ impl ResourceExplorerWindow {
         if !self.is_open {
             return false;
         }
+
+        // Increment frame counter for debouncing
+        self.frame_count += 1;
 
         // Request continuous repaints if we have active loading tasks to show spinner animation
         if let Ok(state) = self.state.try_read() {
@@ -115,19 +213,122 @@ impl ResourceExplorerWindow {
                     .ctx()
                     .memory(|mem| mem.focused().map(|id| id == ui.id()).unwrap_or(false));
 
-                if let Ok(mut state) = self.state.try_write() {
-                    Self::render_toolbar_static(ui, &mut state);
-                    ui.separator();
-                    self.render_active_tags_static(ui, &mut state);
-                    ui.separator();
-                    Self::render_search_bar_static(ui, &mut state);
-                    ui.separator();
-                    Self::render_grouping_controls_static(ui, &mut state);
-                    ui.separator();
-                    Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
-                } else {
-                    ui.label("Loading...");
-                }
+                // Bottom panel for memory usage (prevents window from growing)
+                egui::TopBottomPanel::bottom("explorer_memory_bar")
+                    .show_separator_line(false)
+                    .show_inside(ui, |ui| {
+                        if let Ok(state) = self.state.try_read() {
+                            let cache_count = state.get_cache_resource_count();
+                            let active_count = state.resources.len();
+
+                            // Get actual process memory usage
+                            if let Some(usage) = memory_stats::memory_stats() {
+                                let physical_mb = usage.physical_mem as f64 / (1024.0 * 1024.0);
+                                let virtual_mb = usage.virtual_mem as f64 / (1024.0 * 1024.0);
+
+                                ui.label(egui::RichText::new(format!(
+                                    "App Memory: {:.1} MB physical, {:.1} MB virtual | {} active resources, {} cached resources",
+                                    physical_mb,
+                                    virtual_mb,
+                                    active_count,
+                                    cache_count
+                                )).small());
+                            } else {
+                                // Fallback if memory stats unavailable
+                                ui.label(egui::RichText::new(format!(
+                                    "Resources: {} active, {} cached",
+                                    active_count,
+                                    cache_count
+                                )).small());
+                            }
+                        }
+                    });
+
+                // Main content area
+                egui::CentralPanel::default()
+                    .show_inside(ui, |ui| {
+                        // Store bookmark bar actions to apply after rendering
+                        let (clicked_bookmark_id, show_add, show_manage, reorder_action, navigate_to_folder, navigate_up) = if let Ok(state) = self.state.try_read() {
+                            self.render_bookmark_bar(ui, &state)
+                        } else {
+                            (None, false, false, None, None, false)
+                        };
+
+                        // Handle folder navigation
+                        if let Some(folder_id) = navigate_to_folder {
+                            self.current_folder_id = folder_id;
+                        } else if navigate_up {
+                            // Navigate to parent folder
+                            if let Some(current_id) = &self.current_folder_id {
+                                if let Some(current_folder) = self.bookmark_manager.get_folder(current_id) {
+                                    self.current_folder_id = current_folder.parent_id.clone();
+                                }
+                            }
+                        }
+
+                        // Apply bookmark bar actions
+                        if let Some(bookmark_id) = clicked_bookmark_id {
+                            // Find the bookmark (read-only)
+                            if let Some(bookmark) = self.bookmark_manager.get_bookmarks()
+                                .iter()
+                                .find(|b| b.id == bookmark_id) {
+
+                                // Clone the bookmark to avoid borrow conflicts
+                                let bookmark_clone = bookmark.clone();
+
+                                // Apply the bookmark to state (reconstructs full selections)
+                                if let Ok(mut state) = self.state.try_write() {
+                                    self.apply_bookmark_to_state(&bookmark_clone, &mut state, ctx);
+                                }
+
+                                // Update access tracking (separate borrow)
+                                if let Some(bookmark_mut) = self.bookmark_manager.get_bookmark_mut(&bookmark_id) {
+                                    bookmark_mut.access_count += 1;
+                                    bookmark_mut.last_accessed = Some(chrono::Utc::now());
+                                    bookmark_mut.modified_at = chrono::Utc::now();
+
+                                    // Save updated bookmark with access tracking
+                                    if let Err(e) = self.bookmark_manager.save() {
+                                        tracing::error!("Failed to save bookmark access tracking: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        if show_add {
+                            self.show_bookmark_dialog = true;
+                            tracing::info!("Add bookmark clicked");
+                        }
+                        if show_manage {
+                            self.show_bookmark_manager = true;
+                            tracing::info!("Manage bookmarks clicked");
+                        }
+
+                        // Apply reorder action from bookmark bar drag-and-drop
+                        if let Some((from_index, to_index)) = reorder_action {
+                            self.bookmark_manager.reorder(from_index, to_index);
+
+                            // Save to disk
+                            if let Err(e) = self.bookmark_manager.save() {
+                                tracing::error!("Failed to save bookmark reorder: {}", e);
+                            }
+                        }
+
+                        ui.separator();
+
+                        if let Ok(mut state) = self.state.try_write() {
+                            Self::render_toolbar_static(ui, &mut state);
+                            ui.separator();
+                            self.render_active_tags_static(ui, &mut state);
+                            ui.add_space(10.0);
+                            Self::render_search_bar_static(ui, &mut state);
+                            Self::render_grouping_controls_static(ui, &mut state);
+                            Self::render_tag_filter_controls_static(ui, &mut state);
+                            ui.separator();
+                            Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
+                        } else {
+                            ui.label("Loading...");
+                        }
+                    });
             });
 
         // Update is_open from the window response
@@ -150,6 +351,28 @@ impl ResourceExplorerWindow {
 
             if let Ok(state) = self.state.try_read() {
                 self.process_pending_detail_requests(&state, ctx, requests);
+            }
+        }
+
+        // Process any pending tag badge clicks from the tree renderer
+        let pending_tag_clicks = if !self.tree_renderer.pending_tag_clicks.is_empty() {
+            Some(self.tree_renderer.pending_tag_clicks.clone())
+        } else {
+            None
+        };
+
+        if let Some(clicks) = pending_tag_clicks {
+            self.tree_renderer.pending_tag_clicks.clear();
+
+            if let Ok(mut state) = self.state.try_write() {
+                self.process_tag_badge_clicks(&mut state, clicks);
+            }
+        }
+
+        // Process any pending explorer actions from the tree renderer (e.g., open CloudWatch Logs)
+        if !self.tree_renderer.pending_explorer_actions.is_empty() {
+            if let Ok(mut actions) = self.pending_actions.lock() {
+                actions.extend(self.tree_renderer.pending_explorer_actions.drain(..));
             }
         }
 
@@ -259,10 +482,51 @@ impl ResourceExplorerWindow {
             if state.show_refresh_dialog && !self.show_refresh_dialog {
                 self.show_refresh_dialog = true;
             }
+            if state.show_filter_builder && !self.show_filter_builder {
+                self.show_filter_builder = true;
+            }
+            if state.show_property_filter_builder && !self.show_property_filter_builder {
+                self.show_property_filter_builder = true;
+            }
+            if state.show_tag_hierarchy_builder && !self.show_hierarchy_builder {
+                self.show_hierarchy_builder = true;
+            }
+            if state.show_property_hierarchy_builder && !self.show_property_hierarchy_builder {
+                self.show_property_hierarchy_builder = true;
+            }
         }
 
         if self.show_refresh_dialog {
             self.render_refresh_dialog_standalone(ctx);
+        }
+
+        if self.show_filter_builder {
+            self.render_filter_builder_dialog(ctx);
+        }
+
+        if self.show_property_filter_builder {
+            self.render_property_filter_builder_dialog(ctx);
+        }
+
+        if self.show_hierarchy_builder {
+            self.render_hierarchy_builder_dialog(ctx);
+        }
+
+        if self.show_property_hierarchy_builder {
+            self.render_property_hierarchy_builder_dialog(ctx);
+        }
+
+        // Bookmark dialogs
+        if self.show_bookmark_dialog {
+            self.render_bookmark_creation_dialog(ctx);
+        }
+
+        if self.show_bookmark_manager {
+            self.render_bookmark_manager_dialog(ctx);
+        }
+
+        if self.show_bookmark_edit_dialog {
+            self.render_bookmark_edit_dialog(ctx);
         }
 
         response.is_some()
@@ -392,19 +656,254 @@ impl ResourceExplorerWindow {
         ui.horizontal(|ui| {
             ui.label("Group by:");
 
-            // Primary grouping dropdown
+            // Primary grouping dropdown with tag-based options
             egui::ComboBox::from_label("")
                 .selected_text(state.primary_grouping.display_name())
                 .show_ui(ui, |ui| {
-                    for mode in GroupingMode::all_modes() {
+                    // Section 1: Built-in groupings
+                    ui.label(egui::RichText::new("Built-in").small().weak());
+                    for mode in GroupingMode::default_modes() {
                         ui.selectable_value(
                             &mut state.primary_grouping,
                             mode.clone(),
                             mode.display_name(),
                         );
                     }
+
+                    // Separator
+                    ui.separator();
+
+                    // Section 2: Tag-based groupings (dynamic)
+                    let tag_keys = state.tag_discovery.get_tag_keys_by_popularity();
+                    if !tag_keys.is_empty() {
+                        ui.label(egui::RichText::new("Tag Groupings").small().weak());
+
+                        for (tag_key, resource_count) in tag_keys.iter().take(20) {
+                            // Only show tags with multiple values (can meaningfully group)
+                            if let Some(metadata) = state.tag_discovery.get_tag_metadata(tag_key) {
+                                if !metadata.has_multiple_values() {
+                                    continue; // Skip tags with only 1 value
+                                }
+
+                                // Apply minimum resource count filter
+                                if *resource_count < state.min_tag_resources_for_grouping {
+                                    continue;
+                                }
+
+                                let value_count = metadata.value_count();
+                                let label = format!("Tag: {} ({} resources, {} values)",
+                                    tag_key, resource_count, value_count);
+
+                                let mode = GroupingMode::ByTag(tag_key.clone());
+                                let response = ui.selectable_value(
+                                    &mut state.primary_grouping,
+                                    mode,
+                                    label,
+                                );
+
+                                // Add tooltip with value distribution preview
+                                if response.hovered() {
+                                    let values = metadata.get_sorted_values();
+                                    let preview = values.iter()
+                                        .take(5)
+                                        .map(|v| v.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    let more = if values.len() > 5 {
+                                        format!(" ...and {} more", values.len() - 5)
+                                    } else {
+                                        String::new()
+                                    };
+                                    response.on_hover_text(format!("Values: {}{}", preview, more));
+                                }
+                            }
+                        }
+
+                        ui.separator();
+                    }
+
+                    // Section 3: Tag Hierarchy option (future enhancement)
+                    ui.label(egui::RichText::new("Advanced").small().weak());
+                    if ui.button("Tag Hierarchy...").clicked() {
+                        tracing::info!("Tag Hierarchy builder clicked (future enhancement)");
+                        state.show_tag_hierarchy_builder = true;
+                    }
+                    if ui.button("Property Hierarchy...").clicked() {
+                        tracing::info!("Property Hierarchy builder clicked");
+                        state.show_property_hierarchy_builder = true;
+                    }
                 });
+
+            ui.add_space(10.0);
+
+            // Minimum resource count control for tag grouping
+            ui.label("Min resources:");
+            let drag_response = ui.add(
+                egui::DragValue::new(&mut state.min_tag_resources_for_grouping)
+                    .speed(1.0)
+                    .range(1..=100)
+            );
+            if drag_response.hovered() {
+                drag_response.on_hover_text("Minimum number of resources for tags to appear in GroupBy dropdown. Drag to adjust or click to type.");
+            }
         });
+    }
+
+    /// Apply all tag filters to a resource (presence/absence + advanced filters)
+    fn apply_tag_filters(resource: &ResourceEntry, state: &ResourceExplorerState) -> bool {
+        // First, apply presence/absence filters
+        let presence_filter_active = state.show_only_tagged || state.show_only_untagged;
+
+        if presence_filter_active {
+            let has_tags = !resource.tags.is_empty();
+
+            // Show only tagged: pass resources with tags
+            if state.show_only_tagged && !has_tags {
+                return false;
+            }
+
+            // Show only untagged: pass resources without tags
+            if state.show_only_untagged && has_tags {
+                return false;
+            }
+        }
+
+        // Then, apply advanced filter group
+        // Empty filter groups match everything (no filtering)
+        if !state.tag_filter_group.is_empty() && !state.tag_filter_group.matches(resource) {
+            return false;
+        }
+
+        true
+    }
+
+    /// Apply property filters to a resource
+    fn apply_property_filters(resource: &ResourceEntry, state: &ResourceExplorerState) -> bool {
+        // Empty filter groups match everything (no filtering)
+        if state.property_filter_group.is_empty() {
+            return true;
+        }
+
+        // Apply the property filter group
+        let matches = state
+            .property_filter_group
+            .matches(&resource.resource_id, &state.property_catalog);
+
+        tracing::debug!(
+            "Property filter for resource {}: matches={}",
+            resource.resource_id,
+            matches
+        );
+
+        matches
+    }
+
+    fn render_tag_filter_controls_static(ui: &mut Ui, state: &mut ResourceExplorerState) {
+        // Calculate total filter count (tag presence + tag advanced + property)
+        let presence_count = state.tag_presence_filter_count();
+        let advanced_count = state.tag_filter_group.filter_count();
+        let property_filter_count = state.property_filter_group.total_filter_count();
+        let total_filter_count = presence_count + advanced_count + property_filter_count;
+
+        let header_text = if total_filter_count > 0 {
+            format!("Tag Filters ({})", total_filter_count)
+        } else {
+            "Tag Filters".to_string()
+        };
+
+        egui::CollapsingHeader::new(header_text)
+            .default_open(false)
+            .show(ui, |ui| {
+                // Show only tagged checkbox
+                ui.horizontal(|ui| {
+                    let mut show_tagged = state.show_only_tagged;
+                    if ui
+                        .checkbox(&mut show_tagged, "Show only tagged resources")
+                        .changed()
+                    {
+                        state.show_only_tagged = show_tagged;
+                        // Ensure mutual exclusivity
+                        if show_tagged {
+                            state.show_only_untagged = false;
+                        }
+                        tracing::info!(
+                            "Tag filter changed: show_only_tagged={}",
+                            state.show_only_tagged
+                        );
+                    }
+
+                    if state.show_only_tagged {
+                        ui.label("(resources with any tags)");
+                    }
+                });
+
+                // Show only untagged checkbox
+                ui.horizontal(|ui| {
+                    let mut show_untagged = state.show_only_untagged;
+                    if ui
+                        .checkbox(&mut show_untagged, "Show only untagged resources")
+                        .changed()
+                    {
+                        state.show_only_untagged = show_untagged;
+                        // Ensure mutual exclusivity
+                        if show_untagged {
+                            state.show_only_tagged = false;
+                        }
+                        tracing::info!(
+                            "Tag filter changed: show_only_untagged={}",
+                            state.show_only_untagged
+                        );
+                    }
+
+                    if state.show_only_untagged {
+                        ui.label("(resources with no tags)");
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                // All filter buttons on the same line
+                ui.horizontal(|ui| {
+                    // Tag Filters button
+                    if ui.button("Tag Filters...").clicked() {
+                        state.show_filter_builder = true;
+                    }
+                    if advanced_count > 0 {
+                        ui.label(format!("({} active)", advanced_count));
+                    }
+
+                    ui.add_space(8.0);
+
+                    // Property Filters button
+                    if ui.button("Property Filters...").clicked() {
+                        state.show_property_filter_builder = true;
+                    }
+                    if property_filter_count > 0 {
+                        ui.label(format!("({} active)", property_filter_count));
+                    }
+
+                    ui.add_space(8.0);
+
+                    // Clear Filters button (always show, enable only when filters are active)
+                    let clear_button = egui::Button::new("Clear Filters");
+                    if total_filter_count > 0 {
+                        if ui.button("Clear Filters").clicked() {
+                            // Clear all tag filters
+                            state.show_only_tagged = false;
+                            state.show_only_untagged = false;
+                            state.tag_filter_group = TagFilterGroup::new();
+
+                            // Clear all property filters
+                            state.property_filter_group =
+                                crate::app::resource_explorer::PropertyFilterGroup::new();
+
+                            tracing::info!("Cleared all filters (tags and properties)");
+                        }
+                    } else {
+                        ui.add_enabled(false, clear_button);
+                    }
+                });
+            });
     }
 
     fn render_tree_view_static(
@@ -425,13 +924,50 @@ impl ResourceExplorerWindow {
                         ui.label("No resources found for the current selection");
                     });
                 } else if !state.resources.is_empty() {
-                    // Use cached tree rendering to prevent unnecessary rebuilds
-                    tree_renderer.render_tree_cached(
-                        ui,
-                        &state.resources,
-                        state.primary_grouping.clone(),
-                        &state.search_filter,
-                    );
+                    // Apply all filters (tag + property) before rendering
+                    let filtered_resources: Vec<_> = state
+                        .resources
+                        .iter()
+                        .filter(|resource| {
+                            Self::apply_tag_filters(resource, state)
+                                && Self::apply_property_filters(resource, state)
+                        })
+                        .cloned()
+                        .collect();
+
+                    // Show filter stats if filters are active
+                    let tag_filter_count =
+                        state.tag_presence_filter_count() + state.tag_filter_group.filter_count();
+                    let property_filter_count = state.property_filter_group.total_filter_count();
+                    let total_filter_count = tag_filter_count + property_filter_count;
+                    if total_filter_count > 0 {
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "Showing {} of {} resources ({}  filter{})",
+                                filtered_resources.len(),
+                                state.resources.len(),
+                                total_filter_count,
+                                if total_filter_count == 1 { "" } else { "s" }
+                            ));
+                        });
+                        ui.separator();
+                    }
+
+                    if filtered_resources.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label("No resources match the active tag filters");
+                        });
+                    } else {
+                        // Use cached tree rendering to prevent unnecessary rebuilds
+                        tree_renderer.render_tree_cached(
+                            ui,
+                            &filtered_resources,
+                            state.primary_grouping.clone(),
+                            &state.search_filter,
+                            &state.badge_selector,
+                            &state.tag_popularity,
+                        );
+                    }
                 } else if state.is_loading() {
                     ui.centered_and_justified(|ui| {
                         ui.spinner();
@@ -446,11 +982,14 @@ impl ResourceExplorerWindow {
             return;
         }
 
-        let combinations = if let Ok(state) = self.state.try_read() {
+        let (combinations, display_to_cache) = if let Ok(state) = self.state.try_read() {
             self.generate_refresh_combinations(&state)
         } else {
-            Vec::new()
+            (Vec::new(), HashMap::new())
         };
+
+        // Store the mapping for later use when refreshing
+        self.refresh_display_to_cache = display_to_cache;
 
         let response = Window::new("Refresh AWS Resources")
             .default_size([500.0, 400.0])
@@ -526,6 +1065,7 @@ impl ResourceExplorerWindow {
                 if cancel_clicked {
                     self.show_refresh_dialog = false;
                     self.refresh_selection.clear();
+                    self.refresh_display_to_cache.clear();
                     // Also clear the state flag
                     if let Ok(mut state) = self.state.try_write() {
                         state.show_refresh_dialog = false;
@@ -535,6 +1075,7 @@ impl ResourceExplorerWindow {
                     self.trigger_selective_refresh(ctx);
                     self.show_refresh_dialog = false;
                     self.refresh_selection.clear();
+                    self.refresh_display_to_cache.clear();
                     // Also clear the state flag
                     if let Ok(mut state) = self.state.try_write() {
                         state.show_refresh_dialog = false;
@@ -544,21 +1085,1651 @@ impl ResourceExplorerWindow {
         }
     }
 
-    fn generate_refresh_combinations(&self, state: &ResourceExplorerState) -> Vec<String> {
-        let mut combinations = Vec::new();
+    fn render_filter_builder_dialog(&mut self, ctx: &Context) {
+        if !self.show_filter_builder {
+            return;
+        }
 
-        for account in &state.query_scope.accounts {
-            for region in &state.query_scope.regions {
-                for resource_type in &state.query_scope.resource_types {
-                    combinations.push(format!(
-                        "{}/{}/{}",
-                        account.display_name, region.display_name, resource_type.display_name
-                    ));
+        // Initialize working group from state on first open
+        if self.filter_builder_working_group.is_none() {
+            if let Ok(state) = self.state.try_read() {
+                self.filter_builder_working_group = Some(state.tag_filter_group.clone());
+            } else {
+                return;
+            }
+        }
+
+        // Get tag discovery from state
+        let tag_discovery = if let Ok(state) = self.state.try_read() {
+            state.tag_discovery.clone()
+        } else {
+            return;
+        };
+
+        // Take the working group (we'll put it back after rendering)
+        let working_group = self.filter_builder_working_group.take().unwrap();
+
+        // Create the widget with the working group
+        let mut widget = TagFilterBuilderWidget::new(working_group, tag_discovery);
+
+        let response = Window::new("Advanced Tag Filter Builder")
+            .open(&mut self.show_filter_builder)
+            .default_size([700.0, 500.0])
+            .resizable(true)
+            .vscroll(true) // Let the Window itself handle scrolling
+            .show(ctx, |ui| {
+                // Render the widget directly (no ScrollArea to avoid clipping ComboBox popups)
+                let updated_filter_group = widget.show(ui);
+
+                ui.separator();
+
+                let buttons_response = ui.horizontal(|ui| {
+                    let cancel_clicked = ui.button("Cancel").clicked();
+                    let apply_clicked = ui.button("Apply Filters").clicked();
+                    (cancel_clicked, apply_clicked)
+                });
+
+                (updated_filter_group, buttons_response.inner)
+            });
+
+        if let Some(inner_response) = response {
+            if let Some((updated_filter_group, (cancel_clicked, apply_clicked))) =
+                inner_response.inner
+            {
+                // Check if X button was clicked (window open state changed to false)
+                let x_clicked = !self.show_filter_builder;
+
+                if cancel_clicked || x_clicked {
+                    // Clear working group and close dialog (Cancel or X button)
+                    self.filter_builder_working_group = None;
+                    self.show_filter_builder = false;
+                    // Clear the state flag
+                    if let Ok(mut state) = self.state.try_write() {
+                        state.show_filter_builder = false;
+                    }
+                } else if apply_clicked {
+                    // Apply changes to state and close dialog
+                    if let Ok(mut state) = self.state.try_write() {
+                        // Log the filter expression for visibility
+                        let filter_expr = TagFilterBuilderWidget::format_filter_expression(
+                            &updated_filter_group,
+                            0,
+                        );
+                        tracing::info!("Applying tag filter: {}", filter_expr);
+
+                        state.tag_filter_group = updated_filter_group.clone();
+                        state.show_filter_builder = false;
+                    }
+
+                    // Clear working group and close dialog
+                    self.filter_builder_working_group = None;
+                    self.show_filter_builder = false;
+                } else {
+                    // Neither button clicked - save working group for next frame
+                    self.filter_builder_working_group = Some(updated_filter_group);
+                }
+            }
+        } else {
+            // Window was not shown - clear working group
+            self.filter_builder_working_group = None;
+            self.show_filter_builder = false;
+            if let Ok(mut state) = self.state.try_write() {
+                state.show_filter_builder = false;
+            }
+        }
+    }
+
+    fn render_property_filter_builder_dialog(&mut self, ctx: &Context) {
+        if !self.show_property_filter_builder {
+            return;
+        }
+
+        // Initialize working group from state on first open
+        if self.property_filter_builder_working_group.is_none() {
+            if let Ok(state) = self.state.try_read() {
+                self.property_filter_builder_working_group =
+                    Some(state.property_filter_group.clone());
+            } else {
+                return;
+            }
+        }
+
+        // Get property catalog from state
+        let property_catalog = if let Ok(state) = self.state.try_read() {
+            state.property_catalog.clone()
+        } else {
+            return;
+        };
+
+        // Take the working group (we'll put it back after rendering)
+        let working_group = self.property_filter_builder_working_group.take().unwrap();
+
+        // Create the widget with the working group
+        let mut widget = crate::app::resource_explorer::widgets::PropertyFilterBuilderWidget::new(
+            working_group,
+            property_catalog,
+        );
+
+        let response = Window::new("Property Filter Builder")
+            .open(&mut self.show_property_filter_builder)
+            .default_size([800.0, 600.0])
+            .resizable(true)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                // Render the widget
+                let updated_filter_group = widget.show(ui);
+
+                ui.separator();
+
+                let buttons_response = ui.horizontal(|ui| {
+                    let cancel_clicked = ui.button("Cancel").clicked();
+                    let apply_clicked = ui.button("Apply Filters").clicked();
+                    (cancel_clicked, apply_clicked)
+                });
+
+                (updated_filter_group, buttons_response.inner)
+            });
+
+        if let Some(inner_response) = response {
+            if let Some((updated_filter_group, (cancel_clicked, apply_clicked))) =
+                inner_response.inner
+            {
+                // Check if X button was clicked
+                let x_clicked = !self.show_property_filter_builder;
+
+                if cancel_clicked || x_clicked {
+                    // Clear working group and close dialog
+                    self.property_filter_builder_working_group = None;
+                    self.show_property_filter_builder = false;
+                    // Clear the state flag
+                    if let Ok(mut state) = self.state.try_write() {
+                        state.show_property_filter_builder = false;
+                    }
+                } else if apply_clicked {
+                    // Apply changes to state and close dialog
+                    if let Ok(mut state) = self.state.try_write() {
+                        tracing::info!(
+                            "Applying property filter: {}",
+                            updated_filter_group.description()
+                        );
+
+                        state.property_filter_group = updated_filter_group.clone();
+                        state.show_property_filter_builder = false;
+                    }
+
+                    // Clear working group and close dialog
+                    self.property_filter_builder_working_group = None;
+                    self.show_property_filter_builder = false;
+                } else {
+                    // Neither button clicked - save working group for next frame
+                    self.property_filter_builder_working_group = Some(updated_filter_group);
+                }
+            }
+        } else {
+            // Window was not shown - clear working group
+            self.property_filter_builder_working_group = None;
+            self.show_property_filter_builder = false;
+            if let Ok(mut state) = self.state.try_write() {
+                state.show_property_filter_builder = false;
+            }
+        }
+    }
+
+    fn render_hierarchy_builder_dialog(&mut self, ctx: &Context) {
+        if !self.show_hierarchy_builder {
+            return;
+        }
+
+        // Initialize widget once when dialog opens
+        if self.hierarchy_builder_widget.is_none() {
+            if let Ok(state) = self.state.try_read() {
+                // Extract tag keys from current grouping mode if it's a hierarchy
+                let initial_hierarchy = match &state.primary_grouping {
+                    GroupingMode::ByTagHierarchy(keys) => keys.clone(),
+                    _ => Vec::new(),
+                };
+
+                let tag_discovery = state.tag_discovery.clone();
+
+                // Create widget instance - this will persist across frames
+                self.hierarchy_builder_widget = Some(TagHierarchyBuilderWidget::new(
+                    tag_discovery,
+                    initial_hierarchy,
+                ));
+
+                tracing::info!("Tag hierarchy builder widget created");
+            } else {
+                return;
+            }
+        }
+
+        // Get mutable reference to the persistent widget
+        let widget = if let Some(widget) = &mut self.hierarchy_builder_widget {
+            widget
+        } else {
+            return;
+        };
+
+        let response = Window::new("Configure Tag Hierarchy")
+            .open(&mut self.show_hierarchy_builder)
+            .default_size([900.0, 600.0])
+            .resizable(true)
+            .vscroll(false) // Widget handles its own scrolling
+            .show(ctx, |ui| {
+                // Render the persistent widget - it maintains state across frames
+                widget.show(ui)
+            });
+
+        if let Some(inner_response) = response {
+            if let Some((updated_hierarchy, apply_clicked, cancel_clicked)) = inner_response.inner {
+                // Check if X button was clicked (window open state changed to false)
+                let x_clicked = !self.show_hierarchy_builder;
+
+                if cancel_clicked || x_clicked {
+                    // Destroy widget and close dialog (Cancel or X button)
+                    self.hierarchy_builder_widget = None;
+                    self.show_hierarchy_builder = false;
+                    tracing::info!("Tag hierarchy builder cancelled, widget destroyed");
+
+                    // Clear the state flag
+                    if let Ok(mut state) = self.state.try_write() {
+                        state.show_tag_hierarchy_builder = false;
+                    }
+                } else if apply_clicked {
+                    // Apply changes to state and close dialog
+                    if let Ok(mut state) = self.state.try_write() {
+                        // Log the hierarchy for visibility
+                        let hierarchy_text = updated_hierarchy.join(" > ");
+                        tracing::info!("Applying tag hierarchy: {}", hierarchy_text);
+
+                        // Set the new grouping mode
+                        state.primary_grouping =
+                            GroupingMode::ByTagHierarchy(updated_hierarchy.clone());
+                        state.show_tag_hierarchy_builder = false;
+                    }
+
+                    // Destroy widget and close dialog
+                    self.hierarchy_builder_widget = None;
+                    self.show_hierarchy_builder = false;
+                    tracing::info!("Tag hierarchy applied, widget destroyed");
+                }
+                // If neither button clicked, widget persists with its current state
+            }
+        } else {
+            // Window was not shown - destroy widget
+            self.hierarchy_builder_widget = None;
+            self.show_hierarchy_builder = false;
+            tracing::info!("Tag hierarchy builder closed, widget destroyed");
+
+            if let Ok(mut state) = self.state.try_write() {
+                state.show_tag_hierarchy_builder = false;
+            }
+        }
+    }
+
+    fn render_property_hierarchy_builder_dialog(&mut self, ctx: &Context) {
+        if !self.show_property_hierarchy_builder {
+            return;
+        }
+
+        // Initialize widget once when dialog opens
+        if self.property_hierarchy_builder_widget.is_none() {
+            if let Ok(state) = self.state.try_read() {
+                // Extract property paths from current grouping mode if it's a hierarchy
+                let initial_hierarchy = match &state.primary_grouping {
+                    GroupingMode::ByPropertyHierarchy(paths) => paths.clone(),
+                    _ => Vec::new(),
+                };
+
+                let property_catalog = state.property_catalog.clone();
+
+                // Create widget instance - this will persist across frames
+                self.property_hierarchy_builder_widget = Some(PropertyHierarchyBuilderWidget::new(
+                    property_catalog,
+                    initial_hierarchy,
+                ));
+
+                tracing::info!("Property hierarchy builder widget created");
+            } else {
+                return;
+            }
+        }
+
+        // Get mutable reference to the persistent widget
+        let widget = if let Some(widget) = &mut self.property_hierarchy_builder_widget {
+            widget
+        } else {
+            return;
+        };
+
+        let response = Window::new("Configure Property Hierarchy")
+            .open(&mut self.show_property_hierarchy_builder)
+            .default_size([900.0, 600.0])
+            .resizable(true)
+            .vscroll(false) // Widget handles its own scrolling
+            .show(ctx, |ui| {
+                // Render the persistent widget - it maintains state across frames
+                widget.show(ui)
+            });
+
+        if let Some(inner_response) = response {
+            if let Some((updated_hierarchy, apply_clicked, cancel_clicked)) = inner_response.inner {
+                // Check if X button was clicked (window open state changed to false)
+                let x_clicked = !self.show_property_hierarchy_builder;
+
+                if cancel_clicked || x_clicked {
+                    // Destroy widget and close dialog (Cancel or X button)
+                    self.property_hierarchy_builder_widget = None;
+                    self.show_property_hierarchy_builder = false;
+                    tracing::info!("Property hierarchy builder cancelled, widget destroyed");
+
+                    // Clear the state flag
+                    if let Ok(mut state) = self.state.try_write() {
+                        state.show_property_hierarchy_builder = false;
+                    }
+                } else if apply_clicked {
+                    // Apply changes to state and close dialog
+                    if let Ok(mut state) = self.state.try_write() {
+                        // Log the hierarchy for visibility
+                        let hierarchy_text = updated_hierarchy.join(" > ");
+                        tracing::info!("Applying property hierarchy: {}", hierarchy_text);
+
+                        // Set the new grouping mode
+                        state.primary_grouping =
+                            GroupingMode::ByPropertyHierarchy(updated_hierarchy.clone());
+                        state.show_property_hierarchy_builder = false;
+                    }
+
+                    // Destroy widget and close dialog
+                    self.property_hierarchy_builder_widget = None;
+                    self.show_property_hierarchy_builder = false;
+                    tracing::info!("Property hierarchy applied, widget destroyed");
+                }
+                // If neither button clicked, widget persists with its current state
+            }
+        } else {
+            // Window was not shown - destroy widget
+            self.property_hierarchy_builder_widget = None;
+            self.show_property_hierarchy_builder = false;
+            tracing::info!("Property hierarchy builder closed, widget destroyed");
+
+            if let Ok(mut state) = self.state.try_write() {
+                state.show_property_hierarchy_builder = false;
+            }
+        }
+    }
+
+    /// Render the bookmark bar with quick access to saved configurations
+    /// Returns: (clicked_bookmark_id, show_add_dialog, show_manage_dialog, reorder_action, navigate_to_folder, navigate_up)
+    fn render_bookmark_bar(
+        &self,
+        ui: &mut Ui,
+        state: &ResourceExplorerState,
+    ) -> (
+        Option<String>,
+        bool,
+        bool,
+        Option<(usize, usize)>,
+        Option<Option<String>>,
+        bool,
+    ) {
+        let mut clicked_bookmark_id: Option<String> = None;
+        let mut show_add_dialog = false;
+        let mut show_manage_dialog = false;
+        let mut reorder_action: Option<(usize, usize)> = None;
+        let mut navigate_to_folder: Option<Option<String>> = None;
+        let mut navigate_up = false;
+
+        // Render breadcrumb navigation if in a folder
+        if self.current_folder_id.is_some() {
+            ui.horizontal(|ui| {
+                ui.label("Location:");
+                ui.add_space(4.0);
+
+                // "All" (Top Folder) button
+                if ui.button("All").clicked() {
+                    navigate_to_folder = Some(None);
+                }
+
+                // Get folder path
+                let folder_path = self
+                    .bookmark_manager
+                    .get_folder_path(self.current_folder_id.as_ref());
+
+                for folder in folder_path {
+                    ui.label(">");
+                    if ui.button(&folder.name).clicked() {
+                        navigate_to_folder = Some(Some(folder.id.clone()));
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("Bookmarks:");
+            ui.add_space(8.0);
+
+            // Get bookmarks in current folder - clone to avoid borrow issues
+            let bookmarks: Vec<Bookmark> = self
+                .bookmark_manager
+                .get_bookmarks_in_folder(self.current_folder_id.as_ref())
+                .iter()
+                .map(|b| (*b).clone())
+                .collect();
+
+            // Calculate available width for bookmarks
+            let available_width = ui.available_width();
+            // Reserve space for "+ Add" (~60px) + "Manage" (~80px) + overflow button (~100px) + padding (~50px)
+            let reserved_width = 290.0;
+            let bookmark_area_width = available_width - reserved_width;
+
+            // Estimate bookmark button width (~150px per bookmark including padding)
+            let estimated_bookmark_width = 150.0;
+            let max_visible =
+                ((bookmark_area_width / estimated_bookmark_width).floor() as usize).max(1);
+
+            // Show calculated number of bookmarks
+            let visible_count = max_visible.min(bookmarks.len());
+            let mut visible_bookmarks: Vec<Bookmark> =
+                bookmarks.iter().take(visible_count).cloned().collect();
+            let overflow_bookmarks: Vec<Bookmark> =
+                bookmarks.iter().skip(visible_count).cloned().collect();
+
+            // Render visible bookmarks with drag-and-drop support
+            let dnd_response = dnd(ui, "bookmark_bar_dnd").show_vec(
+                &mut visible_bookmarks,
+                |ui, bookmark, handle, _state| {
+                    // Drag handle - ASCII text only (NO EMOJIS)
+                    handle.ui(ui, |ui| {
+                        ui.label(":: ");
+                    });
+
+                    // Check if this bookmark matches current state
+                    let is_active = bookmark.matches_state(state);
+
+                    // Style active bookmark differently
+                    let button_text = if is_active {
+                        format!("* {}", bookmark.name)
+                    } else {
+                        bookmark.name.clone()
+                    };
+
+                    let button = if is_active {
+                        egui::Button::new(&button_text).fill(ui.visuals().selection.bg_fill)
+                    } else {
+                        egui::Button::new(&button_text)
+                    };
+
+                    let response = ui.add(button);
+
+                    if response.clicked() {
+                        clicked_bookmark_id = Some(bookmark.id.clone());
+                    }
+
+                    // Show tooltip with bookmark details
+                    response.on_hover_ui(|ui| {
+                        ui.label(format!("Bookmark: {}", bookmark.name));
+                        if let Some(desc) = &bookmark.description {
+                            ui.label(format!("Description: {}", desc));
+                        }
+                        ui.separator();
+                        ui.label(format!("Accounts: {}", bookmark.account_ids.len()));
+                        ui.label(format!("Regions: {}", bookmark.region_codes.len()));
+                        ui.label(format!(
+                            "Resource Types: {}",
+                            bookmark.resource_type_ids.len()
+                        ));
+                        ui.label(format!("Grouping: {:?}", bookmark.grouping));
+                        ui.separator();
+                        ui.label(format!("Used {} times", bookmark.access_count));
+                    });
+                },
+            );
+
+            // Store reorder action to apply after ui.horizontal completes
+            if let Some(update) = dnd_response.final_update() {
+                reorder_action = Some((update.from, update.to));
+            }
+
+            // Render folders in current directory as dropdown menus
+            let folders = self
+                .bookmark_manager
+                .get_subfolders(self.current_folder_id.as_ref());
+            for folder in folders {
+                ui.add_space(4.0);
+
+                ui.menu_button(format!("\u{1F5C1} {}", folder.name), |ui| {
+                    // Render folder contents recursively
+                    self.render_folder_menu(ui, &folder.id, &mut clicked_bookmark_id);
+                });
+            }
+
+            // Show "Up" button if in a folder
+            if self.current_folder_id.is_some() {
+                ui.add_space(4.0);
+                if ui.button("Up").clicked() {
+                    navigate_up = true;
+                }
+            }
+
+            // Show overflow menu if there are more bookmarks
+            if !overflow_bookmarks.is_empty() {
+                ui.add_space(4.0);
+                ui.menu_button(format!("{} more", overflow_bookmarks.len()), |ui| {
+                    for bookmark in &overflow_bookmarks {
+                        let is_active = bookmark.matches_state(state);
+                        let button_text = if is_active {
+                            format!("* {}", bookmark.name)
+                        } else {
+                            bookmark.name.clone()
+                        };
+
+                        if ui.button(button_text).clicked() {
+                            clicked_bookmark_id = Some(bookmark.id.clone());
+                            ui.close();
+                        }
+                    }
+                });
+            }
+
+            // Add bookmark button (Ctrl+D)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("+ Add").clicked() {
+                    show_add_dialog = true;
+                }
+
+                // Manage bookmarks button
+                if ui.button("Manage").clicked() {
+                    show_manage_dialog = true;
+                }
+            });
+        });
+
+        (
+            clicked_bookmark_id,
+            show_add_dialog,
+            show_manage_dialog,
+            reorder_action,
+            navigate_to_folder,
+            navigate_up,
+        )
+    }
+
+    /// Render bookmark creation dialog
+    fn render_bookmark_creation_dialog(&mut self, ctx: &Context) {
+        if !self.show_bookmark_dialog {
+            return;
+        }
+
+        let mut should_create = false;
+
+        let response = Window::new("Create Bookmark")
+            .default_size([500.0, 200.0])
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label("Save current Explorer configuration as a bookmark");
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.bookmark_dialog_name);
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Description:");
+                        ui.text_edit_singleline(&mut self.bookmark_dialog_description);
+                    });
+
+                    ui.add_space(10.0);
+
+                    // Folder selector
+                    ui.horizontal(|ui| {
+                        ui.label("Folder:");
+                        let current_folder_name =
+                            if let Some(folder_id) = &self.bookmark_dialog_folder_id {
+                                self.bookmark_manager
+                                    .get_folder(folder_id)
+                                    .map(|f| f.name.clone())
+                                    .unwrap_or_else(|| "Top Folder".to_string())
+                            } else {
+                                "Top Folder".to_string()
+                            };
+
+                        egui::ComboBox::from_label("")
+                            .selected_text(current_folder_name)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        self.bookmark_dialog_folder_id.is_none(),
+                                        "Top Folder",
+                                    )
+                                    .clicked()
+                                {
+                                    self.bookmark_dialog_folder_id = None;
+                                }
+
+                                // Show all folders as options
+                                for folder in self.bookmark_manager.get_all_folders().iter() {
+                                    let is_selected =
+                                        self.bookmark_dialog_folder_id.as_ref() == Some(&folder.id);
+                                    if ui.selectable_label(is_selected, &folder.name).clicked() {
+                                        self.bookmark_dialog_folder_id = Some(folder.id.clone());
+                                    }
+                                }
+                            });
+                    });
+
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Create").clicked() {
+                            should_create = true;
+                        }
+
+                        if ui.button("Cancel").clicked() {
+                            self.show_bookmark_dialog = false;
+                            self.bookmark_dialog_name.clear();
+                            self.bookmark_dialog_description.clear();
+                            self.bookmark_dialog_folder_id = None;
+                        }
+                    });
+                });
+            });
+
+        // Handle bookmark creation
+        if should_create && !self.bookmark_dialog_name.is_empty() {
+            if let Ok(state) = self.state.try_read() {
+                let mut bookmark = Bookmark::new(self.bookmark_dialog_name.clone(), &*state);
+                if !self.bookmark_dialog_description.is_empty() {
+                    bookmark.description = Some(self.bookmark_dialog_description.clone());
+                }
+                // Set the folder_id
+                bookmark.folder_id = self.bookmark_dialog_folder_id.clone();
+
+                self.bookmark_manager.add_bookmark(bookmark);
+
+                let folder_name = if let Some(folder_id) = &self.bookmark_dialog_folder_id {
+                    self.bookmark_manager
+                        .get_folder(folder_id)
+                        .map(|f| format!(" in folder '{}'", f.name))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                tracing::info!(
+                    "Created bookmark: {}{}",
+                    self.bookmark_dialog_name,
+                    folder_name
+                );
+
+                // Save bookmarks to disk
+                if let Err(e) = self.bookmark_manager.save() {
+                    tracing::error!("Failed to save bookmarks: {}", e);
+                }
+            }
+
+            self.show_bookmark_dialog = false;
+            self.bookmark_dialog_name.clear();
+            self.bookmark_dialog_description.clear();
+            self.bookmark_dialog_folder_id = None;
+        }
+
+        // Handle window close via X button
+        if response.is_none() {
+            self.show_bookmark_dialog = false;
+            self.bookmark_dialog_name.clear();
+            self.bookmark_dialog_description.clear();
+            self.bookmark_dialog_folder_id = None;
+        }
+    }
+
+    /// Render the edit bookmark dialog
+    fn render_bookmark_edit_dialog(&mut self, ctx: &Context) {
+        if !self.show_bookmark_edit_dialog {
+            return;
+        }
+
+        let mut should_save = false;
+
+        let response = Window::new("Edit Bookmark")
+            .default_size([500.0, 200.0])
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label("Edit bookmark name and description");
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.bookmark_edit_name);
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Description:");
+                        ui.text_edit_singleline(&mut self.bookmark_edit_description);
+                    });
+
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            should_save = true;
+                        }
+
+                        if ui.button("Cancel").clicked() {
+                            self.show_bookmark_edit_dialog = false;
+                            self.editing_bookmark_id = None;
+                            self.bookmark_edit_name.clear();
+                            self.bookmark_edit_description.clear();
+                        }
+                    });
+                });
+            });
+
+        // Handle bookmark update
+        if should_save && !self.bookmark_edit_name.is_empty() {
+            if let Some(bookmark_id) = &self.editing_bookmark_id {
+                if let Some(bookmark) = self.bookmark_manager.get_bookmark_mut(bookmark_id) {
+                    bookmark.name = self.bookmark_edit_name.clone();
+                    bookmark.description = if self.bookmark_edit_description.is_empty() {
+                        None
+                    } else {
+                        Some(self.bookmark_edit_description.clone())
+                    };
+                    bookmark.modified_at = chrono::Utc::now();
+
+                    tracing::info!("Updated bookmark: {}", bookmark.name);
+
+                    // Save bookmarks to disk
+                    if let Err(e) = self.bookmark_manager.save() {
+                        tracing::error!("Failed to save bookmarks: {}", e);
+                    }
+                }
+            }
+
+            self.show_bookmark_edit_dialog = false;
+            self.editing_bookmark_id = None;
+            self.bookmark_edit_name.clear();
+            self.bookmark_edit_description.clear();
+        }
+
+        // Handle window close via X button
+        if response.is_none() {
+            self.show_bookmark_edit_dialog = false;
+            self.editing_bookmark_id = None;
+            self.bookmark_edit_name.clear();
+            self.bookmark_edit_description.clear();
+        }
+    }
+
+    /// Apply a bookmark to the current state, reconstructing full selections from IDs
+    fn apply_bookmark_to_state(
+        &self,
+        bookmark: &Bookmark,
+        state: &mut ResourceExplorerState,
+        ctx: &Context,
+    ) {
+        tracing::info!("Applying bookmark '{}' to Explorer state", bookmark.name);
+
+        // Clear existing query scope
+        state.query_scope.accounts.clear();
+        state.query_scope.regions.clear();
+        state.query_scope.resource_types.clear();
+
+        // Rebuild AccountSelection objects from stored account IDs
+        let available_accounts = self.get_available_accounts();
+        for account_id in &bookmark.account_ids {
+            if let Some(aws_account) = available_accounts
+                .iter()
+                .find(|a| &a.account_id == account_id)
+            {
+                let account_sel =
+                    AccountSelection::new(account_id.clone(), aws_account.account_name.clone());
+                state.add_account(account_sel);
+                tracing::debug!(
+                    "  OK: Restored account: {} ({})",
+                    aws_account.account_name,
+                    account_id
+                );
+            } else {
+                tracing::warn!(
+                    "  WARN: Account {} not found in available accounts, skipping",
+                    account_id
+                );
+            }
+        }
+
+        // Rebuild RegionSelection objects from stored region codes
+        for region_code in &bookmark.region_codes {
+            let display_name = Self::format_region_display_name(region_code);
+            let region_sel = RegionSelection::new(region_code.clone(), display_name.clone());
+            state.add_region(region_sel);
+            tracing::debug!("  OK: Restored region: {} ({})", display_name, region_code);
+        }
+
+        // Rebuild ResourceTypeSelection objects from stored resource type IDs
+        let available_types = get_default_resource_types();
+        for resource_type_id in &bookmark.resource_type_ids {
+            if let Some(res_type) = available_types
+                .iter()
+                .find(|rt| &rt.resource_type == resource_type_id)
+            {
+                state.add_resource_type(res_type.clone());
+                tracing::debug!(
+                    "  OK: Restored resource type: {} ({})",
+                    res_type.display_name,
+                    resource_type_id
+                );
+            } else {
+                tracing::warn!(
+                    "  WARN: Resource type {} not found in available types, skipping",
+                    resource_type_id
+                );
+            }
+        }
+
+        // Apply other state components
+        state.primary_grouping = bookmark.grouping.clone();
+        state.tag_filter_group = bookmark.tag_filters.clone();
+        state.search_filter = bookmark.search_filter.clone();
+
+        tracing::info!(
+            "  → Restored: {} accounts, {} regions, {} resource types, grouping: {:?}",
+            state.query_scope.accounts.len(),
+            state.query_scope.regions.len(),
+            state.query_scope.resource_types.len(),
+            state.primary_grouping
+        );
+
+        // Trigger query with restored scope if we have all required elements
+        self.trigger_query_if_ready(state, ctx);
+    }
+
+    /// Format region code into human-readable display name
+    fn format_region_display_name(region_code: &str) -> String {
+        // Special case for global
+        if region_code == "Global" || region_code == "global" {
+            return "Global".to_string();
+        }
+
+        // Parse AWS region code format: us-east-1 → US East (N. Virginia)
+        let parts: Vec<&str> = region_code.split('-').collect();
+        if parts.len() >= 2 {
+            let geo = match parts[0] {
+                "us" => "US",
+                "eu" => "EU",
+                "ap" => "Asia Pacific",
+                "ca" => "Canada",
+                "sa" => "South America",
+                "af" => "Africa",
+                "me" => "Middle East",
+                _ => parts[0],
+            };
+
+            let direction = match parts[1] {
+                "east" => "East",
+                "west" => "West",
+                "north" => "North",
+                "south" => "South",
+                "central" => "Central",
+                "northeast" => "Northeast",
+                "southeast" => "Southeast",
+                _ => parts[1],
+            };
+
+            let number = if parts.len() > 2 { parts[2] } else { "" };
+
+            if number.is_empty() {
+                format!("{} {}", geo, direction)
+            } else {
+                format!("{} {} {}", geo, direction, number)
+            }
+        } else {
+            // Fallback to original if parsing fails
+            region_code.to_string()
+        }
+    }
+
+    /// Render bookmark management dialog
+    fn render_bookmark_manager_dialog(&mut self, ctx: &Context) {
+        if !self.show_bookmark_manager {
+            return;
+        }
+
+        let mut bookmark_to_delete: Option<String> = None;
+        let mut bookmark_to_edit: Option<String> = None;
+        let mut folder_to_delete: Option<String> = None;
+        let mut folder_to_rename: Option<String> = None;
+        let mut move_bookmark_to_folder: Option<(String, Option<String>)> = None; // (bookmark_id, folder_id)
+        let mut is_drag_drop_move = false; // Track if this is a drag-drop operation (always move, not copy)
+
+        let response = Window::new("Manage Bookmarks")
+            .default_size([700.0, 500.0])
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    // Stats
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Total bookmarks: {}", self.bookmark_manager.get_bookmarks().len()));
+                        ui.add_space(10.0);
+                        ui.label(format!("Total folders: {}", self.bookmark_manager.get_all_folders().len()));
+                    });
+
+                    // Toolbar
+                    ui.horizontal(|ui| {
+                        if ui.button("New Folder").clicked() {
+                            self.show_folder_dialog = true;
+                            self.folder_dialog_name = String::new();
+                            self.folder_dialog_parent_id = None;
+                            self.editing_folder_id = None;
+                        }
+                    });
+
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .max_height(350.0)
+                        .show(ui, |ui| {
+                            // Add "Top Folder" drop zone
+                            let top_folder_response = ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("🗁 Top Folder").strong());
+                            });
+
+                            // Check if something is being dragged over Top Folder
+                            if let Some(_dragged_data) = top_folder_response.response.dnd_hover_payload::<DragData>() {
+                                // Always allow dropping into Top Folder (any item can be dropped here)
+
+                                // Visual feedback: highlight Top Folder
+                                let painter = ui.painter();
+                                painter.rect_stroke(
+                                    top_folder_response.response.rect,
+                                    3.0,
+                                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                                    egui::epaint::StrokeKind::Outside,
+                                );
+                            }
+
+                            // Handle drop on Top Folder
+                            if let Some(dropped_data) = top_folder_response.response.dnd_release_payload::<DragData>() {
+                                match dropped_data.as_ref() {
+                                    DragData::Bookmark { id, source_folder } => {
+                                        // Don't drop bookmark if it's already in Top Folder
+                                        if source_folder.is_some() {
+                                            move_bookmark_to_folder = Some((id.clone(), None));
+                                            is_drag_drop_move = true; // Drag-drop should always move
+                                        }
+                                    }
+                                    DragData::Folder { id: dragged_folder_id, parent_id: current_parent } => {
+                                        // Don't drop folder if it's already in Top Folder
+                                        if current_parent.is_some() {
+                                            // Move folder to Top Folder (parent_id = None)
+                                            if let Err(e) = self.bookmark_manager.move_folder_to_parent(dragged_folder_id, None) {
+                                                tracing::error!("Failed to move folder to Top Folder: {}", e);
+                                            } else {
+                                                if let Err(e) = self.bookmark_manager.save() {
+                                                    tracing::error!("Failed to save after folder move to Top Folder: {}", e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            ui.add_space(5.0);
+
+                            // Render Top Folder level folders and bookmarks
+                            self.render_folder_tree_level(
+                                ui,
+                                None,
+                                &mut bookmark_to_delete,
+                                &mut bookmark_to_edit,
+                                &mut folder_to_delete,
+                                &mut folder_to_rename,
+                                &mut move_bookmark_to_folder,
+                                &mut is_drag_drop_move,
+                            );
+                        });
+
+                    ui.add_space(10.0);
+
+                    if ui.button("Close").clicked() {
+                        self.show_bookmark_manager = false;
+                    }
+                });
+            });
+
+        // Handle folder creation/edit dialog
+        if self.show_folder_dialog {
+            self.render_folder_dialog(ctx);
+        }
+
+        // Handle folder renaming
+        if let Some(folder_id) = folder_to_rename {
+            if let Some(folder) = self.bookmark_manager.get_folder(&folder_id) {
+                self.editing_folder_id = Some(folder.id.clone());
+                self.folder_dialog_name = folder.name.clone();
+                self.folder_dialog_parent_id = folder.parent_id.clone();
+                self.show_folder_dialog = true;
+            }
+        }
+
+        // Handle folder deletion
+        if let Some(folder_id) = folder_to_delete {
+            match self.bookmark_manager.remove_folder(&folder_id) {
+                Ok(Some(removed)) => {
+                    tracing::info!("Deleted folder: {}", removed.name);
+                    self.expanded_folders.remove(&folder_id);
+
+                    // Save to disk
+                    if let Err(e) = self.bookmark_manager.save() {
+                        tracing::error!("Failed to save folders: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Cannot delete folder: {}", e);
+                }
+                _ => {}
+            }
+        }
+
+        // Handle bookmark moving/copying to folder OR folder moving
+        if let Some((item_id, target_folder_id)) = move_bookmark_to_folder {
+            // Check if this is a bookmark or a folder
+            let is_bookmark = self
+                .bookmark_manager
+                .get_bookmarks()
+                .iter()
+                .any(|b| b.id == item_id);
+
+            if is_bookmark {
+                // Handle bookmark move/copy
+                if is_drag_drop_move || self.bookmark_clipboard_is_cut {
+                    // Drag-drop or Cut: Move the bookmark to the new folder
+                    self.bookmark_manager
+                        .move_bookmark_to_folder(&item_id, target_folder_id);
+                } else {
+                    // Copy: Duplicate the bookmark and place the copy in the new folder
+                    if let Some(original) = self
+                        .bookmark_manager
+                        .get_bookmarks()
+                        .iter()
+                        .find(|b| b.id == item_id)
+                        .cloned()
+                    {
+                        let mut copied = original.clone();
+                        copied.id = uuid::Uuid::new_v4().to_string();
+                        copied.folder_id = target_folder_id;
+                        copied.created_at = chrono::Utc::now();
+                        self.bookmark_manager.add_bookmark(copied);
+                    }
+                }
+
+                // Clear clipboard
+                self.bookmark_clipboard = None;
+                self.bookmark_clipboard_is_cut = false;
+            } else {
+                // Handle folder move (drag-drop only, no clipboard for folders)
+                if let Err(e) = self
+                    .bookmark_manager
+                    .move_folder_to_parent(&item_id, target_folder_id)
+                {
+                    tracing::error!("Failed to move folder: {}", e);
+                    // Show error to user (could add a toast/notification here)
+                }
+            }
+
+            // Save to disk
+            if let Err(e) = self.bookmark_manager.save() {
+                tracing::error!("Failed to save operation: {}", e);
+            }
+        }
+
+        // Handle bookmark editing
+        if let Some(bookmark_id) = bookmark_to_edit {
+            if let Some(bookmark) = self
+                .bookmark_manager
+                .get_bookmarks()
+                .iter()
+                .find(|b| b.id == bookmark_id)
+            {
+                // Populate edit dialog fields
+                self.editing_bookmark_id = Some(bookmark.id.clone());
+                self.bookmark_edit_name = bookmark.name.clone();
+                self.bookmark_edit_description = bookmark.description.clone().unwrap_or_default();
+                self.show_bookmark_edit_dialog = true;
+                tracing::info!("Opening edit dialog for bookmark: {}", bookmark.name);
+            }
+        }
+
+        // Handle bookmark deletion
+        if let Some(bookmark_id) = bookmark_to_delete {
+            if let Some(removed) = self.bookmark_manager.remove_bookmark(&bookmark_id) {
+                tracing::info!("Deleted bookmark: {}", removed.name);
+
+                // Save bookmarks to disk
+                if let Err(e) = self.bookmark_manager.save() {
+                    tracing::error!("Failed to save bookmarks: {}", e);
                 }
             }
         }
 
-        combinations
+        // Handle window close via X button
+        if response.is_none() {
+            self.show_bookmark_manager = false;
+        }
+    }
+
+    /// Recursively render folder contents as a menu (for bookmark bar dropdown)
+    fn render_folder_menu(
+        &self,
+        ui: &mut Ui,
+        folder_id: &str,
+        clicked_bookmark_id: &mut Option<String>,
+    ) {
+        // Get bookmarks in this folder
+        let bookmarks = self
+            .bookmark_manager
+            .get_bookmarks_in_folder(Some(&folder_id.to_string()));
+        for bookmark in &bookmarks {
+            if ui.button(&bookmark.name).clicked() {
+                *clicked_bookmark_id = Some(bookmark.id.clone());
+                ui.close();
+            }
+        }
+
+        // Show separator if there are both bookmarks and subfolders
+        let subfolders = self
+            .bookmark_manager
+            .get_subfolders(Some(&folder_id.to_string()));
+        if !bookmarks.is_empty() && !subfolders.is_empty() {
+            ui.separator();
+        }
+
+        // Get subfolders and render them as nested menus
+        for subfolder in &subfolders {
+            ui.menu_button(format!("\u{1F5C1} {}", subfolder.name), |ui| {
+                self.render_folder_menu(ui, &subfolder.id, clicked_bookmark_id);
+            });
+        }
+
+        // Show "empty" message if no bookmarks or folders
+        if bookmarks.is_empty() && subfolders.is_empty() {
+            ui.label(egui::RichText::new("(empty)").italics().weak());
+        }
+    }
+
+    /// Recursively render a folder tree level
+    fn render_folder_tree_level(
+        &mut self,
+        ui: &mut Ui,
+        parent_id: Option<String>,
+        bookmark_to_delete: &mut Option<String>,
+        bookmark_to_edit: &mut Option<String>,
+        folder_to_delete: &mut Option<String>,
+        folder_to_rename: &mut Option<String>,
+        move_bookmark_to_folder: &mut Option<(String, Option<String>)>,
+        is_drag_drop_move: &mut bool,
+    ) {
+        // Get folders at this level
+        let folders = self
+            .bookmark_manager
+            .get_subfolders(parent_id.as_ref())
+            .iter()
+            .map(|f| (*f).clone())
+            .collect::<Vec<_>>();
+
+        // Render folders
+        for folder in &folders {
+            let folder_id = folder.id.clone();
+            let is_expanded = self.expanded_folders.contains(&folder_id);
+
+            // Horizontal layout: [drag handle] [folder header]
+            let row_response = ui.horizontal(|ui| {
+                // Drag handle - only this small area is draggable
+                let folder_drag_id = ui.id().with("folder_drag").with(&folder_id);
+                let drag_payload = DragData::Folder {
+                    id: folder_id.clone(),
+                    parent_id: parent_id.clone(),
+                };
+
+                let _handle_response = ui.dnd_drag_source(folder_drag_id, drag_payload, |ui| {
+                    ui.label(":: "); // Drag handle icon (same as bookmarks)
+                });
+
+                // Folder header - this stays interactive (collapse arrow works)
+                let header_response =
+                    egui::CollapsingHeader::new(format!("\u{1F5C1} {}", folder.name))
+                        .id_salt(&folder_id)
+                        .default_open(is_expanded)
+                        .show(ui, |ui| {
+                            // Recursively render subfolders and bookmarks
+                            self.render_folder_tree_level(
+                                ui,
+                                Some(folder_id.clone()),
+                                bookmark_to_delete,
+                                bookmark_to_edit,
+                                folder_to_delete,
+                                folder_to_rename,
+                                move_bookmark_to_folder,
+                                is_drag_drop_move,
+                            );
+                        });
+
+                // Track expansion state
+                if header_response.body_returned.is_some() && !is_expanded {
+                    self.expanded_folders.insert(folder_id.clone());
+                } else if header_response.body_returned.is_none() && is_expanded {
+                    self.expanded_folders.remove(&folder_id);
+                }
+
+                // Add context menu on right-click on the header
+                let header_resp = header_response.header_response.clone();
+                header_resp.context_menu(|ui| {
+                    if let Some(clipboard_id) = &self.bookmark_clipboard {
+                        if ui.button("Paste Bookmark Here").clicked() {
+                            *move_bookmark_to_folder =
+                                Some((clipboard_id.clone(), Some(folder_id.clone())));
+                            ui.close();
+                        }
+                    } else {
+                        ui.label(egui::RichText::new("(no bookmark copied)").weak().italics());
+                    }
+
+                    ui.separator();
+
+                    if ui.button("Rename Folder").clicked() {
+                        *folder_to_rename = Some(folder_id.clone());
+                        ui.close();
+                    }
+
+                    if ui.button("Delete Folder").clicked() {
+                        *folder_to_delete = Some(folder_id.clone());
+                        ui.close();
+                    }
+                });
+
+                header_response.header_response
+            });
+
+            // Check if something is being dragged over this folder row
+            if let Some(dragged_data) = row_response.response.dnd_hover_payload::<DragData>() {
+                let can_drop = match dragged_data.as_ref() {
+                    DragData::Bookmark { source_folder, .. } => {
+                        // Don't allow dropping bookmark on its own folder
+                        source_folder.as_ref() != Some(&folder_id)
+                    }
+                    DragData::Folder {
+                        id: dragged_folder_id,
+                        ..
+                    } => {
+                        // Don't allow dropping folder on itself and prevent circular references
+                        dragged_folder_id != &folder_id
+                            && !self
+                                .bookmark_manager
+                                .is_descendant(&folder_id, dragged_folder_id)
+                    }
+                };
+
+                if can_drop {
+                    // Visual feedback: highlight folder
+                    let painter = ui.painter();
+                    painter.rect_stroke(
+                        row_response.response.rect,
+                        3.0,
+                        egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                        egui::epaint::StrokeKind::Outside,
+                    );
+                }
+            }
+
+            // Handle drop
+            if let Some(dropped_data) = row_response.response.dnd_release_payload::<DragData>() {
+                match dropped_data.as_ref() {
+                    DragData::Bookmark { id, source_folder } => {
+                        // Don't drop bookmark on its own folder
+                        if source_folder.as_ref() != Some(&folder_id) {
+                            *move_bookmark_to_folder = Some((id.clone(), Some(folder_id.clone())));
+                            *is_drag_drop_move = true; // Drag-drop should always move
+                        }
+                    }
+                    DragData::Folder {
+                        id: dragged_folder_id,
+                        ..
+                    } => {
+                        // Don't drop folder on itself and prevent circular references
+                        if dragged_folder_id != &folder_id
+                            && !self
+                                .bookmark_manager
+                                .is_descendant(&folder_id, dragged_folder_id)
+                        {
+                            // Move folder to be child of this folder
+                            if let Err(e) = self
+                                .bookmark_manager
+                                .move_folder_to_parent(dragged_folder_id, Some(folder_id.clone()))
+                            {
+                                tracing::error!("Failed to move folder: {}", e);
+                            } else {
+                                if let Err(e) = self.bookmark_manager.save() {
+                                    tracing::error!("Failed to save after folder move: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get bookmarks at this level
+        let mut bookmarks = self
+            .bookmark_manager
+            .get_bookmarks_in_folder(parent_id.as_ref())
+            .iter()
+            .map(|b| (*b).clone())
+            .collect::<Vec<_>>();
+
+        // Render bookmarks with drag-and-drop support
+        if !bookmarks.is_empty() {
+            let dnd_id = format!(
+                "bookmark_dnd_{}",
+                parent_id
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or("top_folder")
+            );
+            let dnd_response =
+                dnd(ui, &dnd_id).show_vec(&mut bookmarks, |ui, bookmark, handle, _state| {
+                    let bookmark_id = bookmark.id.clone();
+
+                    // Render the bookmark content
+                    let scope_response = ui.scope(|ui| {
+                        ui.horizontal(|ui| {
+                            // Drag handle - make ONLY the handle draggable for cross-folder moves
+                            let bookmark_drag_id =
+                                ui.id().with("bookmark_native_drag").with(&bookmark_id);
+                            let drag_payload = DragData::Bookmark {
+                                id: bookmark_id.clone(),
+                                source_folder: parent_id.clone(),
+                            };
+
+                            // Wrap only the handle in native drag-drop
+                            let _handle_response =
+                                ui.dnd_drag_source(bookmark_drag_id, drag_payload, |ui| {
+                                    handle.ui(ui, |ui| {
+                                        ui.label(":: ");
+                                    });
+                                });
+
+                            // Bold title - make it more prominent
+                            let default_size = ui
+                                .style()
+                                .text_styles
+                                .get(&egui::TextStyle::Body)
+                                .map(|f| f.size)
+                                .unwrap_or(14.0);
+                            ui.label(
+                                egui::RichText::new(&bookmark.name)
+                                    .strong()
+                                    .size(default_size * 1.1),
+                            );
+
+                            // Italic description
+                            if let Some(desc) = &bookmark.description {
+                                ui.label(egui::RichText::new(format!("- {}", desc)).italics());
+                            }
+                        });
+
+                        // Smaller font for summary (20% smaller)
+                        let default_size = ui
+                            .style()
+                            .text_styles
+                            .get(&egui::TextStyle::Body)
+                            .map(|f| f.size)
+                            .unwrap_or(14.0);
+                        let smaller_size = default_size * 0.8;
+
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "  {} accounts, {} regions, {} resource types | Used {} times",
+                                bookmark.account_ids.len(),
+                                bookmark.region_codes.len(),
+                                bookmark.resource_type_ids.len(),
+                                bookmark.access_count
+                            ))
+                            .size(smaller_size),
+                        );
+
+                        ui.separator();
+                    });
+
+                    // Create an interactive response for the bookmark area to enable context menu
+                    let rect = scope_response.response.rect;
+                    let interact_id = ui.id().with(&bookmark_id);
+                    let interact_response = ui.interact(rect, interact_id, egui::Sense::click());
+
+                    // Add context menu on right-click
+                    interact_response.context_menu(|ui| {
+                        if ui.button("Copy").clicked() {
+                            self.bookmark_clipboard = Some(bookmark_id.clone());
+                            self.bookmark_clipboard_is_cut = false;
+                            ui.close();
+                        }
+
+                        if ui.button("Cut").clicked() {
+                            self.bookmark_clipboard = Some(bookmark_id.clone());
+                            self.bookmark_clipboard_is_cut = true;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        if ui.button("Edit").clicked() {
+                            *bookmark_to_edit = Some(bookmark_id.clone());
+                            ui.close();
+                        }
+
+                        if ui.button("Delete").clicked() {
+                            *bookmark_to_delete = Some(bookmark_id.clone());
+                            ui.close();
+                        }
+                    });
+                });
+
+            // Handle drag-and-drop reordering within this folder
+            if let Some(update) = dnd_response.final_update() {
+                // Get all bookmarks in this folder (fresh from manager)
+                let folder_bookmarks: Vec<_> = self
+                    .bookmark_manager
+                    .get_bookmarks_in_folder(parent_id.as_ref())
+                    .iter()
+                    .map(|b| b.id.clone())
+                    .collect();
+
+                // Find the actual bookmark IDs being moved
+                if update.from < folder_bookmarks.len() && update.to < folder_bookmarks.len() {
+                    let from_id = &folder_bookmarks[update.from];
+                    let to_id = &folder_bookmarks[update.to];
+
+                    // Find indices in the global bookmark list
+                    let all_bookmarks = self.bookmark_manager.get_bookmarks();
+                    if let (Some(from_global), Some(to_global)) = (
+                        all_bookmarks.iter().position(|b| &b.id == from_id),
+                        all_bookmarks.iter().position(|b| &b.id == to_id),
+                    ) {
+                        self.bookmark_manager.reorder(from_global, to_global);
+
+                        // Save to disk
+                        if let Err(e) = self.bookmark_manager.save() {
+                            tracing::error!("Failed to save bookmark reorder: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Show "empty" message if no folders or bookmarks
+        if folders.is_empty() && bookmarks.is_empty() {
+            ui.label(egui::RichText::new("  (empty)").italics().weak());
+        }
+    }
+
+    /// Render folder creation/edit dialog
+    fn render_folder_dialog(&mut self, ctx: &Context) {
+        if !self.show_folder_dialog {
+            return;
+        }
+
+        let mut should_create = false;
+        let is_editing = self.editing_folder_id.is_some();
+
+        let title = if is_editing {
+            "Edit Folder"
+        } else {
+            "New Folder"
+        };
+
+        let response = Window::new(title)
+            .default_size([400.0, 200.0])
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label("Folder name:");
+                    ui.text_edit_singleline(&mut self.folder_dialog_name);
+
+                    ui.add_space(10.0);
+
+                    ui.label("Parent folder:");
+                    let current_parent_name = if let Some(parent_id) = &self.folder_dialog_parent_id
+                    {
+                        self.bookmark_manager
+                            .get_folder(parent_id)
+                            .map(|f| f.name.clone())
+                            .unwrap_or_else(|| "Top Folder".to_string())
+                    } else {
+                        "Top Folder".to_string()
+                    };
+
+                    egui::ComboBox::from_label("")
+                        .selected_text(current_parent_name)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(
+                                    self.folder_dialog_parent_id.is_none(),
+                                    "Top Folder",
+                                )
+                                .clicked()
+                            {
+                                self.folder_dialog_parent_id = None;
+                            }
+
+                            // Show all folders as potential parents (except the one being edited)
+                            for folder in self.bookmark_manager.get_all_folders().iter() {
+                                if self.editing_folder_id.as_ref() != Some(&folder.id) {
+                                    let is_selected =
+                                        self.folder_dialog_parent_id.as_ref() == Some(&folder.id);
+                                    if ui.selectable_label(is_selected, &folder.name).clicked() {
+                                        self.folder_dialog_parent_id = Some(folder.id.clone());
+                                    }
+                                }
+                            }
+                        });
+
+                    ui.add_space(10.0);
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(if is_editing { "Update" } else { "Create" })
+                            .clicked()
+                        {
+                            if !self.folder_dialog_name.is_empty() {
+                                should_create = true;
+                            }
+                        }
+
+                        if ui.button("Cancel").clicked() {
+                            self.show_folder_dialog = false;
+                            self.editing_folder_id = None;
+                        }
+                    });
+                });
+            });
+
+        // Create or update folder
+        if should_create {
+            if let Some(editing_id) = &self.editing_folder_id {
+                // Update existing folder
+                if let Some(folder) = self.bookmark_manager.get_folder_mut(editing_id) {
+                    folder.name = self.folder_dialog_name.clone();
+                    folder.parent_id = self.folder_dialog_parent_id.clone();
+                    folder.modified_at = chrono::Utc::now();
+
+                    tracing::info!("Updated folder: {}", folder.name);
+
+                    // Save to disk
+                    if let Err(e) = self.bookmark_manager.save() {
+                        tracing::error!("Failed to save folder update: {}", e);
+                    }
+                }
+            } else {
+                // Create new folder
+                let folder = BookmarkFolder::new(
+                    self.folder_dialog_name.clone(),
+                    self.folder_dialog_parent_id.clone(),
+                );
+
+                tracing::info!("Created folder: {}", folder.name);
+                self.bookmark_manager.add_folder(folder);
+
+                // Save to disk
+                if let Err(e) = self.bookmark_manager.save() {
+                    tracing::error!("Failed to save folder: {}", e);
+                }
+            }
+
+            self.show_folder_dialog = false;
+            self.editing_folder_id = None;
+        }
+
+        // Handle window close via X button
+        if response.is_none() {
+            self.show_folder_dialog = false;
+            self.editing_folder_id = None;
+        }
+    }
+
+    fn generate_refresh_combinations(
+        &self,
+        state: &ResourceExplorerState,
+    ) -> (Vec<String>, HashMap<String, String>) {
+        let mut display_combinations = Vec::new();
+        let mut display_to_cache_key = HashMap::new();
+
+        for account in &state.query_scope.accounts {
+            for region in &state.query_scope.regions {
+                for resource_type in &state.query_scope.resource_types {
+                    // Display name (friendly, shown to user)
+                    let display_name = format!(
+                        "{}/{}/{}",
+                        account.display_name, region.display_name, resource_type.display_name
+                    );
+
+                    // Cache key (actual IDs, used internally)
+                    let cache_key = format!(
+                        "{}:{}:{}",
+                        account.account_id, region.region_code, resource_type.resource_type
+                    );
+
+                    display_combinations.push(display_name.clone());
+                    display_to_cache_key.insert(display_name, cache_key);
+                }
+            }
+        }
+
+        (display_combinations, display_to_cache_key)
     }
 
     pub fn is_open(&self) -> bool {
@@ -669,9 +2840,6 @@ impl ResourceExplorerWindow {
                         let all_resources_clone = all_resources.clone();
                         let state_arc_clone = state_arc.clone();
 
-                        // Start query future - no need to spawn since we're not moving across thread boundaries
-                        // let query_handle = tokio::spawn(query_future);
-
                         // Run query and result processing concurrently - the key is CONCURRENT not sequential
                         let result_processing = async {
                             while let Some(result) = result_receiver.recv().await {
@@ -763,6 +2931,9 @@ impl ResourceExplorerWindow {
                                 state.resources = resources;
                                 state.finish_loading_task(&cache_key);
 
+                                // Update tag popularity and badge selection based on loaded resources
+                                state.update_tag_popularity();
+
                                 tracing::info!("✅ Parallel query completed: {} total resources (loading tasks remaining: {})",
                                     state.resources.len(), state.loading_task_count());
                                 break;
@@ -799,14 +2970,21 @@ impl ResourceExplorerWindow {
             let state_arc = self.state.clone();
 
             // Remove selected combinations from cache to force refresh
+            // Map display names to cache keys using the stored mapping
             if let Ok(mut state) = self.state.try_write() {
-                for combo in &selected_combinations {
-                    // Parse combination string to extract account, region, resource type
-                    let parts: Vec<&str> = combo.split('/').collect();
-                    if parts.len() == 3 {
-                        let cache_key = format!("{}:{}:{}", parts[0], parts[1], parts[2]);
-                        state.cached_queries.remove(&cache_key);
-                        tracing::info!("Cleared cache for combination: {}", cache_key);
+                for display_name in &selected_combinations {
+                    if let Some(cache_key) = self.refresh_display_to_cache.get(display_name) {
+                        state.cached_queries.remove(cache_key);
+                        tracing::info!(
+                            "Cleared cache for combination: {} (display: {})",
+                            cache_key,
+                            display_name
+                        );
+                    } else {
+                        tracing::warn!(
+                            "No cache key mapping found for display name: {}",
+                            display_name
+                        );
                     }
                 }
             }
@@ -892,9 +3070,6 @@ impl ResourceExplorerWindow {
                     let all_resources_clone = all_resources.clone();
                     let state_arc_clone = state_arc.clone();
 
-                    // Start query future - no need to spawn since we're not crossing thread boundaries
-                    // let query_handle = tokio::spawn(query_future);
-
                     // Run query and result processing concurrently for refresh
                     let result_processing = async {
                         while let Some(result) = result_receiver.recv().await {
@@ -977,24 +3152,62 @@ impl ResourceExplorerWindow {
                 // Update state with results
                 match result {
                     Ok((resources, final_cache)) => {
-                        if let Ok(mut state) = state_arc.try_write() {
-                            state.resources = resources;
-                            state.cached_queries = final_cache;
-                            state.loading_tasks.remove(&cache_key);
+                        // Retry logic to ensure we update state even if locked
+                        // UI thread only holds lock for ~1-5ms per frame (60fps = 16ms between frames)
+                        // Retry for up to 3 seconds to be absolutely sure
+                        let max_attempts = 30;
+                        let retry_delay_ms = 100;
 
-                            tracing::info!(
-                                "Successfully refreshed {} combinations with {} resources",
-                                selected_combinations.len(),
-                                state.resources.len()
-                            );
+                        for attempt in 0..max_attempts {
+                            if let Ok(mut state) = state_arc.try_write() {
+                                state.resources = resources.clone();
+                                state.cached_queries = final_cache.clone();
+                                state.loading_tasks.remove(&cache_key);
+
+                                tracing::info!(
+                                    "Successfully refreshed {} combinations with {} resources (attempt {})",
+                                    selected_combinations.len(),
+                                    state.resources.len(),
+                                    attempt + 1
+                                );
+                                break;
+                            } else if attempt < max_attempts - 1 {
+                                if attempt == 0 {
+                                    tracing::debug!(
+                                        "State locked, retrying to update after refresh..."
+                                    );
+                                } else if attempt % 10 == 0 {
+                                    tracing::warn!(
+                                        "Still retrying to acquire state lock (attempt {})",
+                                        attempt + 1
+                                    );
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    retry_delay_ms,
+                                ));
+                            } else {
+                                tracing::error!("CRITICAL: Failed to update state after refresh after {} attempts ({}s total)",
+                                    max_attempts, max_attempts * retry_delay_ms / 1000);
+                            }
                         }
                     }
                     Err(e) => {
                         tracing::error!("Failed to refresh AWS resources: {}", e);
 
-                        // Remove loading indicator
-                        if let Ok(mut state) = state_arc.try_write() {
-                            state.loading_tasks.remove(&cache_key);
+                        // Remove loading indicator with retry (critical to prevent stuck spinner)
+                        for attempt in 0..30 {
+                            if let Ok(mut state) = state_arc.try_write() {
+                                state.loading_tasks.remove(&cache_key);
+                                tracing::info!(
+                                    "Cleared loading task after error (attempt {})",
+                                    attempt + 1
+                                );
+                                break;
+                            } else if attempt < 29 {
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            } else {
+                                tracing::error!("CRITICAL: Failed to clear loading task after error - spinner may be stuck");
+                            }
                         }
                     }
                 }
@@ -1267,6 +3480,58 @@ impl ResourceExplorerWindow {
                 self.load_resource_details(resource.clone(), ctx, resource_key.clone());
             }
         }
+    }
+
+    /// Process tag badge clicks by adding filters to the filter group
+    fn process_tag_badge_clicks(
+        &self,
+        state: &mut ResourceExplorerState,
+        clicks: Vec<super::state::TagClickAction>,
+    ) {
+        use super::state::{BooleanOperator, TagFilter, TagFilterGroup, TagFilterType};
+        use super::widgets::tag_filter_builder::TagFilterBuilderWidget;
+
+        for click in clicks {
+            // Create the filter for this tag
+            let new_filter = TagFilter {
+                tag_key: click.tag_key.clone(),
+                filter_type: TagFilterType::Equals,
+                values: vec![click.tag_value.clone()],
+                pattern: None,
+            };
+
+            // Check if existing filter group is empty
+            if state.tag_filter_group.is_empty() {
+                // No existing filters - add as first filter
+                state.tag_filter_group.add_filter(new_filter);
+
+                tracing::info!(
+                    "Added first filter: {} = {}",
+                    click.tag_key,
+                    click.tag_value
+                );
+            } else {
+                // Existing filters - add as new sub-group with OR operator
+                let mut new_sub_group = TagFilterGroup::new();
+                new_sub_group.operator = BooleanOperator::Or;
+                new_sub_group.add_filter(new_filter);
+
+                state.tag_filter_group.add_sub_group(new_sub_group);
+
+                tracing::info!(
+                    "Added filter as sub-group: {} = {} (combined with OR)",
+                    click.tag_key,
+                    click.tag_value
+                );
+            }
+
+            // Log the resulting expression for visibility
+            let filter_expr =
+                TagFilterBuilderWidget::format_filter_expression(&state.tag_filter_group, 0);
+            tracing::info!("Updated filter expression: {}", filter_expr);
+        }
+
+        // Filters have changed, which will trigger tree rebuild on next frame
     }
 
     /// Load detailed properties for a specific resource using AWS describe APIs

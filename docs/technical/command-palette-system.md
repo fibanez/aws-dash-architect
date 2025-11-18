@@ -5,7 +5,7 @@ Keyboard-driven command palette providing quick access to core application funct
 ## Core Functionality
 
 **Command Architecture:**
-- **Main Command Palette**: System-level commands (Login, AWS Explorer, Control Bridge, Quit)
+- **Main Command Palette**: System-level commands (Login, AWS Explorer, Agent, Quit)
 - Simple, focused interface with 4 primary commands
 - Direct access to core features without hierarchical navigation
 
@@ -26,7 +26,7 @@ Keyboard-driven command palette providing quick access to core application funct
 - Window Focus System (FocusedWindow enum integration)
 - AWS Identity Center (login status awareness)
 - Resource Explorer (resource discovery and management)
-- Control Bridge (AI-powered AWS operations)
+- Agent (AI-powered AWS operations)
 
 ## Implementation Details
 
@@ -40,7 +40,7 @@ Keyboard-driven command palette providing quick access to core application funct
 pub enum CommandAction {
     Login,      // L key - Login to AWS Identity Center
     AWSExplorer, // E key - Open AWS Resource Explorer
-    ControlBridge, // B key - Open Control Bridge
+    ControlBridge, // B key - Open Agent
     Quit        // Q key - Quit application
 }
 ```
@@ -79,7 +79,7 @@ pub enum CommandAction {
    let commands = [
        CommandEntry { key: egui::Key::L, label: "Login AWS", ... },
        CommandEntry { key: egui::Key::E, label: "AWS Explorer", ... },
-       CommandEntry { key: egui::Key::B, label: "Control Bridge", ... },
+       CommandEntry { key: egui::Key::B, label: "Agent", ... },
        CommandEntry { key: egui::Key::N, label: "New Command", ... },
        CommandEntry { key: egui::Key::Q, label: "Quit", ... },
    ];

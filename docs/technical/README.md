@@ -8,11 +8,12 @@ This directory contains modular technical documentation for the AWS Dash project
 * [Keyboard Navigation System](keyboard-navigation-system.md) - Vimium-style navigation with hint mode and multi-modal interaction
 * [Notifications System](notifications-system.md) - Comprehensive notification management
 * [UI Testing Framework](ui-testing-framework.md) - Automated testing with egui_kittest
+* [Agent Framework](agent-framework-v2.md) - AI agent system using stood library for AWS operations
+* [Code Execution Tool](code-execution-tool.md) - V8-based JavaScript execution for AI agents
 
 ## UI Features
 
 * [Command Palette System](command-palette-system.md) - Command palette with keyboard shortcuts
-* [File Picker System](file-picker-system.md) - Custom file selection with fuzzy search and directory navigation
 * [AWS Icon System](aws-icon-system.md) - Dynamic icon loading and caching for AWS service visualization
 
 ## Architecture Patterns

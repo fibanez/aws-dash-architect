@@ -1,18 +1,22 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub struct CloudFrontDistributionNormalizer;
 
-impl ResourceNormalizer for CloudFrontDistributionNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for CloudFrontDistributionNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("Id")
             .and_then(|v| v.as_str())
@@ -38,7 +42,8 @@ impl ResourceNormalizer for CloudFrontDistributionNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::CloudFront::Distribution".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -51,96 +56,32 @@ impl ResourceNormalizer for CloudFrontDistributionNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // CloudFront distributions can be associated with WAF WebACLs
-        if let Some(web_acl_id) = entry
-            .raw_properties
-            .get("WebACLId")
-            .and_then(|v| v.as_str())
-        {
-            if !web_acl_id.is_empty() {
-                for resource in all_resources {
-                    if resource.resource_type == "AWS::WAFv2::WebACL"
-                        && resource.resource_id == web_acl_id
-                    {
-                        relationships.push(ResourceRelationship {
-                            relationship_type: RelationshipType::Uses,
-                            target_resource_id: resource.resource_id.clone(),
-                            target_resource_type: resource.resource_type.clone(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // CloudFront distributions can use ACM certificates
-        if let Some(viewer_cert) = entry
-            .raw_properties
-            .get("ViewerCertificate")
-            .and_then(|v| v.as_object())
-        {
-            if let Some(acm_cert_arn) = viewer_cert
-                .get("ACMCertificateArn")
-                .and_then(|v| v.as_str())
-            {
-                // Extract certificate ID from ARN
-                if let Some(cert_id) = acm_cert_arn.split('/').next_back() {
-                    for resource in all_resources {
-                        if resource.resource_type == "AWS::CertificateManager::Certificate"
-                            && resource.resource_id == cert_id
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // CloudFront distributions can use S3 buckets as origins
-        if let Some(origins) = entry
-            .raw_properties
-            .get("Origins")
-            .and_then(|v| v.as_array())
-        {
-            for origin in origins {
-                if let Some(domain_name) = origin.get("DomainName").and_then(|v| v.as_str()) {
-                    // Check if this is an S3 domain
-                    if domain_name.contains(".s3.") || domain_name.contains(".s3-") {
-                        // Extract bucket name from S3 domain
-                        let bucket_name = domain_name.split('.').next().unwrap_or("");
-                        for resource in all_resources {
-                            if resource.resource_type == "AWS::S3::Bucket"
-                                && resource.display_name == bucket_name
-                            {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {

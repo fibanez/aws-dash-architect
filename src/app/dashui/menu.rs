@@ -10,10 +10,12 @@ pub enum MenuAction {
     None,
     ThemeChanged,
     NavigationStatusBarChanged,
-    ShakeWindows,
-    ShowWindowSelector,
     ShowComplianceDetails,
     ValidateCompliance,
+    LoginAWS,
+    AWSExplorer,
+    AgentManager,
+    Quit,
 }
 
 /// Compliance status for Guard validation
@@ -38,18 +40,34 @@ pub fn build_menu(
     theme: &mut ThemeChoice,
     navigation_status_bar_settings: &mut NavigationStatusBarSettings,
     project_info: Option<(String, String, String)>,
-    help_window_open: &mut bool, // Changed from _resource_graph_show
     log_window_open: &mut bool,
     resource_count: Option<usize>,
     aws_identity_center: Option<&Arc<Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
-    window_selector: &mut crate::app::dashui::window_selector::WindowSelector,
     compliance_status: Option<ComplianceStatus>,
     compliance_programs: Option<&Vec<String>>,
-) -> (MenuAction, Option<String>) {
+) -> MenuAction {
     let mut theme_changed = false;
     let mut navigation_status_bar_changed = false;
+    let mut menu_action = MenuAction::None;
     let original_theme = *theme;
     let original_status_bar_setting = *navigation_status_bar_settings;
+
+    // Dash menu with command palette items
+    ui.menu_button("Dash", |ui| {
+        if ui.button("Login to AWS").clicked() {
+            menu_action = MenuAction::LoginAWS;
+        }
+        if ui.button("AWS Explorer").clicked() {
+            menu_action = MenuAction::AWSExplorer;
+        }
+        if ui.button("Agent Manager").clicked() {
+            menu_action = MenuAction::AgentManager;
+        }
+        ui.separator();
+        if ui.button("Quit").clicked() {
+            menu_action = MenuAction::Quit;
+        }
+    });
 
     ui.menu_button(RichText::new("🎨").size(18.0), |ui| {
         if ui.button("Latte").clicked() {
@@ -89,33 +107,18 @@ pub fn build_menu(
         navigation_status_bar_changed = true;
     }
 
-    // Add a log button
-    if ui.button(RichText::new("📜").size(16.0)).clicked() {
-        *log_window_open = !*log_window_open;
-        log_debug!("Log button clicked");
-    }
-
-    // Add a visual effect button
-    if ui.button(RichText::new("✨").size(16.0)).clicked() {
-        log_debug!("Visual effect button clicked");
-        return (MenuAction::ShakeWindows, None);
-    }
-
-    // Add window selector menu
-    let selected_window = window_selector.show_menu(ui);
-
-    // Add a help button
-    if ui.button(RichText::new("❓").size(16.0)).clicked() {
-        *help_window_open = true;
-        log_debug!("Help button clicked");
-    }
-
     // AWS login status indicator
     show_aws_login_status(ui, aws_identity_center);
 
     // Compliance programs display and validation button
     if let Some(validation_action) = show_compliance_programs_and_validation(ui, compliance_programs, compliance_status) {
-        return (validation_action, None);
+        return validation_action;
+    }
+
+    // Add a log button - positioned on far right
+    if ui.button(RichText::new("📜").size(16.0)).clicked() {
+        *log_window_open = !*log_window_open;
+        log_debug!("Log button clicked");
     }
 
     ui.add_space(16.0);
@@ -154,7 +157,9 @@ pub fn build_menu(
         });
     }
 
-    let menu_action = if theme_changed {
+    let final_menu_action = if menu_action != MenuAction::None {
+        menu_action
+    } else if theme_changed {
         MenuAction::ThemeChanged
     } else if navigation_status_bar_changed {
         MenuAction::NavigationStatusBarChanged
@@ -162,7 +167,7 @@ pub fn build_menu(
         MenuAction::None
     };
 
-    (menu_action, selected_window)
+    final_menu_action
 }
 
 /// Displays the AWS login status indicator

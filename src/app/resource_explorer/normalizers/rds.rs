@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for RDS DB Instances
 pub struct RDSDBInstanceNormalizer;
 
-impl ResourceNormalizer for RDSDBInstanceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for RDSDBInstanceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let db_instance_identifier = raw_response
             .get("DBInstanceIdentifier")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for RDSDBInstanceNormalizer {
 
         let display_name = extract_display_name(&raw_response, &db_instance_identifier);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::RDS::DBInstance", &db_instance_identifier, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::RDS::DBInstance {}: {}", db_instance_identifier, e);
+
+                Vec::new()
+
+            });
 
         // Extract creation time
         let _creation_date = raw_response
@@ -46,6 +63,9 @@ impl ResourceNormalizer for RDSDBInstanceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -92,13 +112,15 @@ impl ResourceNormalizer for RDSDBInstanceNormalizer {
 /// Normalizer for RDS DB Clusters
 pub struct RDSDBClusterNormalizer;
 
-impl ResourceNormalizer for RDSDBClusterNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let db_cluster_identifier = raw_response
             .get("DBClusterIdentifier")
@@ -108,7 +130,21 @@ impl ResourceNormalizer for RDSDBClusterNormalizer {
 
         let display_name = extract_display_name(&raw_response, &db_cluster_identifier);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::RDS::DBCluster", &db_cluster_identifier, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::RDS::DBCluster {}: {}", db_cluster_identifier, e);
+
+                Vec::new()
+
+            });
 
         // Extract creation time
         let _creation_date = raw_response
@@ -132,6 +168,9 @@ impl ResourceNormalizer for RDSDBClusterNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -195,13 +234,15 @@ impl ResourceNormalizer for RDSDBClusterNormalizer {
 /// Normalizer for RDS DB Snapshots
 pub struct RDSDBSnapshotNormalizer;
 
-impl ResourceNormalizer for RDSDBSnapshotNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for RDSDBSnapshotNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let snapshot_identifier = raw_response
             .get("DBSnapshotIdentifier")
@@ -211,7 +252,21 @@ impl ResourceNormalizer for RDSDBSnapshotNormalizer {
 
         let display_name = extract_display_name(&raw_response, &snapshot_identifier);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::RDS::DBSnapshot", &snapshot_identifier, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::RDS::DBSnapshot {}: {}", snapshot_identifier, e);
+
+                Vec::new()
+
+            });
 
         // Extract creation time
         let _creation_date = raw_response
@@ -235,6 +290,9 @@ impl ResourceNormalizer for RDSDBSnapshotNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -278,13 +336,15 @@ impl ResourceNormalizer for RDSDBSnapshotNormalizer {
 /// Normalizer for RDS DB Parameter Groups
 pub struct RDSDBParameterGroupNormalizer;
 
-impl ResourceNormalizer for RDSDBParameterGroupNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for RDSDBParameterGroupNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let parameter_group_name = raw_response
             .get("DBParameterGroupName")
@@ -294,7 +354,21 @@ impl ResourceNormalizer for RDSDBParameterGroupNormalizer {
 
         let display_name = extract_display_name(&raw_response, &parameter_group_name);
         let status = Some("Available".to_string()); // Parameter groups don't have status
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::RDS::DBParameterGroup", &parameter_group_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::RDS::DBParameterGroup {}: {}", parameter_group_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -310,6 +384,9 @@ impl ResourceNormalizer for RDSDBParameterGroupNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -334,13 +411,15 @@ impl ResourceNormalizer for RDSDBParameterGroupNormalizer {
 /// Normalizer for RDS DB Subnet Groups
 pub struct RDSDBSubnetGroupNormalizer;
 
-impl ResourceNormalizer for RDSDBSubnetGroupNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let subnet_group_name = raw_response
             .get("DBSubnetGroupName")
@@ -353,7 +432,21 @@ impl ResourceNormalizer for RDSDBSubnetGroupNormalizer {
             .get("SubnetGroupStatus")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::RDS::DBSubnetGroup", &subnet_group_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::RDS::DBSubnetGroup {}: {}", subnet_group_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -369,6 +462,9 @@ impl ResourceNormalizer for RDSDBSubnetGroupNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -425,3 +521,4 @@ impl ResourceNormalizer for RDSDBSubnetGroupNormalizer {
         "AWS::RDS::DBSubnetGroup"
     }
 }
+

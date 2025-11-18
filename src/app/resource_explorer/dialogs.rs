@@ -1269,8 +1269,115 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         // Bedrock Resources
         ResourceTypeSelection::new(
             "AWS::Bedrock::Model".to_string(),
-            "Bedrock Model".to_string(),
+            "Bedrock Foundation Model".to_string(),
             "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::InferenceProfile".to_string(),
+            "Bedrock Inference Profile".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::Guardrail".to_string(),
+            "Bedrock Guardrail".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::ProvisionedModelThroughput".to_string(),
+            "Bedrock Provisioned Model Throughput".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::Agent".to_string(),
+            "Bedrock Agent".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::KnowledgeBase".to_string(),
+            "Bedrock Knowledge Base".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::CustomModel".to_string(),
+            "Bedrock Custom Model".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::ImportedModel".to_string(),
+            "Bedrock Imported Model".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::EvaluationJob".to_string(),
+            "Bedrock Evaluation Job".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::ModelInvocationJob".to_string(),
+            "Bedrock Model Invocation Job".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::Prompt".to_string(),
+            "Bedrock Prompt".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::Flow".to_string(),
+            "Bedrock Flow".to_string(),
+            "Bedrock".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Bedrock::ModelCustomizationJob".to_string(),
+            "Bedrock Model Customization Job".to_string(),
+            "Bedrock".to_string(),
+        ),
+        // BedrockAgentCore - Control Plane Resources
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::AgentRuntime".to_string(),
+            "Bedrock AgentCore Runtime".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::AgentRuntimeEndpoint".to_string(),
+            "Bedrock AgentCore Runtime Endpoint".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::Memory".to_string(),
+            "Bedrock AgentCore Memory".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::Gateway".to_string(),
+            "Bedrock AgentCore Gateway".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::Browser".to_string(),
+            "Bedrock AgentCore Browser".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        // BedrockAgentCore - Additional Control Plane Resources
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::CodeInterpreter".to_string(),
+            "Bedrock AgentCore Code Interpreter".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::ApiKeyCredentialProvider".to_string(),
+            "Bedrock AgentCore API Key Credential Provider".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::OAuth2CredentialProvider".to_string(),
+            "Bedrock AgentCore OAuth2 Credential Provider".to_string(),
+            "Bedrock AgentCore".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::BedrockAgentCore::WorkloadIdentity".to_string(),
+            "Bedrock AgentCore Workload Identity".to_string(),
+            "Bedrock AgentCore".to_string(),
         ),
         // Route53 Resources
         ResourceTypeSelection::new(
@@ -1430,6 +1537,36 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         ),
         // AWS Organizations Resources
         ResourceTypeSelection::new(
+            "AWS::Organizations::Account".to_string(),
+            "Organizations Account".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::DelegatedAdministrator".to_string(),
+            "Delegated Administrator".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::Handshake".to_string(),
+            "Organization Handshake".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::CreateAccountStatus".to_string(),
+            "Account Creation Status".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::AwsServiceAccess".to_string(),
+            "Service Access".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::Organization".to_string(),
+            "Organization".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
             "AWS::Organizations::OrganizationalUnit".to_string(),
             "Organizational Unit".to_string(),
             "Organizations".to_string(),
@@ -1437,6 +1574,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         ResourceTypeSelection::new(
             "AWS::Organizations::Policy".to_string(),
             "Service Control Policy".to_string(),
+            "Organizations".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Organizations::Root".to_string(),
+            "Organizations Root".to_string(),
             "Organizations".to_string(),
         ),
         // EventBridge Resources
@@ -1494,7 +1636,7 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "Greengrass Component Version".to_string(),
             "Greengrass".to_string(),
         ),
-        // New Phase 1 Core Infrastructure Services
+        // Core Infrastructure Services
         ResourceTypeSelection::new(
             "AWS::GlobalAccelerator::Accelerator".to_string(),
             "Global Accelerator".to_string(),
@@ -1510,7 +1652,7 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "Amplify App".to_string(),
             "Amplify".to_string(),
         ),
-        // New Phase 2 AI/ML Services
+        // AI/ML Services
         ResourceTypeSelection::new(
             "AWS::Lex::Bot".to_string(),
             "Lex Bot".to_string(),

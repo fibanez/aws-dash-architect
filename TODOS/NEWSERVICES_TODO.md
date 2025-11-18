@@ -14,6 +14,405 @@ This document provides step-by-step instructions for adding new AWS services to 
    - Check for pagination support (`into_paginator()`)
    - Note which fields require manual JSON conversion vs automatic serde
 
+3. **Determine Tag Fetching Method**: Identify how tags are fetched for this service (see Tag Implementation section below)
+
+## Tag Implementation Guide
+
+### Overview: How AWS Services Handle Tags
+
+AWS services use **three different approaches** for tag fetching:
+
+1. **Service-Specific Tag Methods** (13 services) - Have dedicated tag APIs like `list_tags_for_resource()`
+2. **Resource Groups Tagging API** (67 services) - Use generic `get_resources()` with ARNs
+3. **Embedded Tags** (rare) - Tags included in describe/list responses
+
+**Reference Document**: See `AWS_SDK_TAG_METHODS_REFERENCE.md` for complete list of all services and their tag methods.
+
+### Step 1: Identify Tag Method by Examining SDK Source
+
+The **ONLY reliable way** to determine the tag method is to examine the actual AWS Rust SDK source code.
+
+**Find the SDK source directory:**
+```bash
+# SDKs are located in cargo registry
+ls ~/.cargo/registry/src/index.crates.io-*/aws-sdk-{service}-*/src/operation/
+```
+
+**Look for tag-related operations:**
+```bash
+# Search for tag operations in the service SDK
+ls ~/.cargo/registry/src/index.crates.io-*/aws-sdk-{service}-*/src/operation/ | grep -i tag
+```
+
+**Common tag operation names:**
+- `list_tags_for_resource` - Most ARN-based services
+- `list_tags` - Lambda-style (single operation name)
+- `list_tags_of_resource` - DynamoDB-style
+- `describe_tags` - EC2-style (with filters)
+- `get_bucket_tagging` - S3-style (service-specific)
+- `list_queue_tags` - SQS-style (service-specific)
+- `list_user_tags`, `list_role_tags`, `list_policy_tags` - IAM-style (resource-specific)
+
+**Example: Examining EC2 tags**
+```bash
+$ ls ~/.cargo/registry/src/index.crates.io-*/aws-sdk-ec2-*/src/operation/ | grep tag
+create_tags
+delete_tags
+describe_tags  # <-- This is the one we need for fetching
+```
+
+### Step 2: Examine Input Parameters
+
+Once you find the tag operation, examine its input file to see what parameters it requires:
+
+```bash
+# Read the input file to see parameters
+cat ~/.cargo/registry/src/index.crates.io-*/aws-sdk-{service}-*/src/operation/{operation}/_*_input.rs
+```
+
+**What to look for:**
+- Parameter names (`resource_arn`, `key_id`, `bucket`, `queue_url`, etc.)
+- Parameter types (`String` vs `Option<String>`)
+- Required vs optional parameters
+- Special formats (ARN, URL, ID, name)
+
+**Example: S3 get_bucket_tagging parameters**
+```rust
+// From aws-sdk-s3/src/operation/get_bucket_tagging/_get_bucket_tagging_input.rs
+pub struct GetBucketTaggingInput {
+    pub bucket: String,  // <-- Uses bucket NAME, not ARN
+    pub expected_bucket_owner: Option<String>,
+}
+```
+
+**Example: EC2 describe_tags parameters**
+```rust
+// From aws-sdk-ec2/src/operation/describe_tags/_describe_tags_input.rs
+pub struct DescribeTagsInput {
+    pub filters: Option<Vec<Filter>>,  // <-- Uses filters with resource-id
+    pub max_results: Option<i32>,
+    pub next_token: Option<String>,
+}
+```
+
+### Step 3: Categorize Your Service
+
+Based on what you found in the SDK, categorize the service:
+
+#### Category A: Service-Specific ARN-Based (Most Common)
+
+**Characteristics:**
+- Has `list_tags_for_resource()` or similar operation
+- Takes `resource_arn` parameter
+- Returns tags directly
+
+**Example Services**: ECS, EKS, SNS, KMS, CloudFront, Lambda, RDS, DynamoDB
+
+**Implementation Pattern:**
+```rust
+// In resource_tagging.rs
+pub async fn get_{service}_tags(
+    &self,
+    account_id: &str,
+    region: &str,
+    resource_arn: &str,
+) -> Result<Vec<ResourceTag>> {
+    let aws_config = self.credential_coordinator
+        .create_aws_config_for_account(account_id, region)
+        .await?;
+
+    let client = {service}::Client::new(&aws_config);
+
+    let response = client
+        .list_tags_for_resource()  // Check SDK for actual method name
+        .resource_arn(resource_arn)
+        .send()
+        .await
+        .context("Failed to fetch {service} tags")?;
+
+    let tags: Vec<ResourceTag> = response
+        .tags
+        .unwrap_or_default()
+        .into_iter()
+        .map(|tag| ResourceTag {
+            key: tag.key,
+            value: tag.value,
+        })
+        .collect();
+
+    Ok(tags)
+}
+```
+
+**Then add to aws_client.rs:**
+```rust
+match resource_type {
+    "AWS::Service::Resource" => {
+        tagging_service.get_{service}_tags(account, region, resource_id).await?
+    }
+    // ...
+}
+```
+
+#### Category B: Special Identifier Format (Non-ARN)
+
+**Characteristics:**
+- Uses identifiers OTHER than ARNs (bucket names, queue URLs, key IDs, resource names)
+- Requires construction or extraction of identifier
+
+**Example Services:**
+- **S3**: Uses bucket name (string)
+- **SQS**: Uses queue URL (constructed)
+- **IAM**: Uses resource names (user name, role name) except Policy (ARN)
+- **EC2**: Uses resource IDs with filters
+
+**S3 Pattern (bucket name):**
+```rust
+pub async fn get_s3_bucket_tags(
+    &self,
+    account_id: &str,
+    region: &str,
+    bucket_name: &str,  // <-- Just the name, not ARN
+) -> Result<Vec<ResourceTag>> {
+    let client = s3::Client::new(&aws_config);
+
+    let response = client
+        .get_bucket_tagging()  // <-- Service-specific method name
+        .bucket(bucket_name)
+        .send()
+        .await?;
+
+    // Handle response...
+}
+```
+
+**SQS Pattern (queue URL construction):**
+```rust
+pub async fn get_sqs_queue_tags(
+    &self,
+    account_id: &str,
+    region: &str,
+    queue_name: &str,
+) -> Result<Vec<ResourceTag>> {
+    let client = sqs::Client::new(&aws_config);
+
+    // Construct queue URL from components
+    let queue_url = format!(
+        "https://sqs.{}.amazonaws.com/{}/{}",
+        region, account_id, queue_name
+    );
+
+    let response = client
+        .list_queue_tags()
+        .queue_url(&queue_url)  // <-- Uses URL, not ARN
+        .send()
+        .await?;
+
+    // Handle response...
+}
+```
+
+**EC2 Pattern (resource ID with filters):**
+```rust
+pub async fn get_ec2_tags(
+    &self,
+    account_id: &str,
+    region: &str,
+    resource_id: &str,  // <-- EC2 resource ID (i-*, vol-*, vpc-*, etc.)
+) -> Result<Vec<ResourceTag>> {
+    let client = ec2::Client::new(&aws_config);
+
+    let response = client
+        .describe_tags()
+        .filters(
+            ec2::types::Filter::builder()
+                .name("resource-id")
+                .values(resource_id)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    // Handle response...
+}
+```
+
+**IAM Pattern (resource-specific methods):**
+```rust
+// Users and Roles use names
+pub async fn get_iam_user_tags(&self, account_id: &str, _region: &str, user_name: &str) -> Result<Vec<ResourceTag>> {
+    let client = iam::Client::new(&aws_config);
+    client.list_user_tags().user_name(user_name).send().await?
+}
+
+// Policies use ARN (exception!)
+pub async fn get_iam_policy_tags(&self, account_id: &str, _region: &str, policy_arn: &str) -> Result<Vec<ResourceTag>> {
+    let client = iam::Client::new(&aws_config);
+    client.list_policy_tags().policy_arn(policy_arn).send().await?
+}
+```
+
+#### Category C: Resource Groups Tagging API (Default)
+
+**Characteristics:**
+- No service-specific tag operation found in SDK
+- Service resources use standard ARN format
+- Falls back to generic tagging API
+
+**Example Services**: 67 services including ACM, Amplify, AppRunner, Backup, CodeBuild, etc.
+
+**Implementation:**
+Already handled by default in `aws_client.rs`:
+```rust
+// Default case in fetch_tags_for_resource()
+_ => {
+    if resource_id.starts_with("arn:") {
+        tagging_service.get_tags_for_arn(account, region, resource_id).await?
+    } else {
+        tracing::warn!(
+            "Cannot fetch tags for {}: {} - not an ARN and no service-specific implementation",
+            resource_type, resource_id
+        );
+        Vec::new()
+    }
+}
+```
+
+**No additional code needed** - it just works if your resource uses standard ARN format!
+
+#### Category D: Embedded Tags (Rare)
+
+**Characteristics:**
+- Tags are included in the list/describe response
+- No separate tag API call needed
+- More efficient (one less API call)
+
+**Example Services**: CloudFormation Stacks
+
+**Implementation:**
+Tags are already in the JSON from list/describe operations:
+```rust
+// In service implementation
+fn stack_to_json(&self, stack: &cloudformation::types::Stack) -> serde_json::Value {
+    let mut json = serde_json::Map::new();
+
+    // Tags are directly in the Stack object
+    if let Some(tags) = &stack.tags {
+        let tags_json: Vec<serde_json::Value> = tags
+            .iter()
+            .map(|tag| {
+                let mut tag_json = serde_json::Map::new();
+                tag_json.insert("Key".to_string(), json!(tag.key));
+                tag_json.insert("Value".to_string(), json!(tag.value));
+                serde_json::Value::Object(tag_json)
+            })
+            .collect();
+        json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+    }
+
+    serde_json::Value::Object(json)
+}
+```
+
+**No additional tag fetching code needed** - normalizer uses `extract_tags(&raw_response)` utility.
+
+### Step 4: Implementation Checklist
+
+**For Service-Specific Methods (Categories A, B, D):**
+
+1. **Add SDK import** to `resource_tagging.rs`:
+   ```rust
+   use aws_sdk_{service} as {service};
+   ```
+
+2. **Implement tag method** in `resource_tagging.rs`:
+   ```rust
+   pub async fn get_{service}_tags(...) -> Result<Vec<ResourceTag>> { ... }
+   ```
+
+3. **Add routing case** in `aws_client.rs` > `fetch_tags_for_resource()`:
+   ```rust
+   "AWS::Service::Resource" => {
+       tagging_service.get_{service}_tags(account, region, resource_id).await?
+   }
+   ```
+
+4. **Test compilation**:
+   ```bash
+   cargo build
+   ```
+
+**For Resource Groups Tagging API (Category C):**
+
+1. **Verify resource uses ARN format** in normalizer
+2. **No code needed** - default implementation handles it
+3. **Test with real resources** to confirm tags appear
+
+### Common Pitfalls
+
+1. **Wrong Parameter Order**:
+   - ❌ `get_tags(resource_id, account, region)`
+   - ✅ `get_tags(account, region, resource_id)`
+   - All service methods follow: account → region → resource identifier
+
+2. **Assuming ARN When Not**:
+   - Check SDK input parameters
+   - S3 uses bucket name, not ARN
+   - SQS uses queue URL, not ARN
+   - IAM users/roles use names, not ARNs
+
+3. **Not Checking Response Structure**:
+   - Read SDK response struct to see tag field names
+   - Some use `tags`, others `tag_set`, `tag_list`, etc.
+   - Some wrap in extra objects (CloudFront uses `tags.items`)
+
+4. **Forgetting Global Services**:
+   - IAM, CloudFront, Organizations are global
+   - Use `"us-east-1"` for region parameter
+   - Mark with comment `// Service is global`
+
+### Testing Your Implementation
+
+**Manual SDK Verification:**
+```bash
+# 1. Find the service SDK directory
+find ~/.cargo/registry/src -name "aws-sdk-{service}-*" -type d
+
+# 2. Look for tag operations
+ls {sdk-dir}/src/operation/ | grep -i tag
+
+# 3. Examine the input parameters
+cat {sdk-dir}/src/operation/{tag-operation}/_*_input.rs | grep "pub "
+
+# 4. Examine the output structure
+cat {sdk-dir}/src/operation/{tag-operation}/_*_output.rs | grep "pub tags"
+```
+
+**Compilation Test:**
+```bash
+cargo build 2>&1 | grep -i "tag\|error"
+```
+
+**Runtime Test:**
+1. Create test resource with tags in AWS account
+2. Query resource through Explorer
+3. Verify tags appear in UI
+4. Check logs for tag fetch success/errors
+
+### Quick Reference: Service Categories
+
+**Category A (Service-Specific ARN-Based):**
+CloudFront, DynamoDB, ECS, EKS, KMS, Lambda, RDS, SNS
+
+**Category B (Special Identifiers):**
+EC2 (resource IDs), S3 (bucket name), SQS (queue URL), IAM (names/ARN)
+
+**Category C (Resource Groups Tagging API):**
+ACM, Amplify, AppRunner, AppSync, Athena, Backup, Batch, Bedrock, CodeBuild, CodeCommit, CodePipeline, Cognito, Config, Connect, DataBrew, DataSync, Detective, DocumentDB, ECR, EFS, ElastiCache, ELB, ELBv2, EMR, EventBridge, FSx, GlobalAccelerator, Glue, Greengrass, GuardDuty, Inspector, IoT, Kinesis, KinesisFirehose, LakeFormation, Lex, Logs, Macie, MQ, MSK, Neptune, OpenSearch, Organizations, Polly, QuickSight, Redshift, Rekognition, Route53, SageMaker, SecretsManager, SecurityHub, Shield, SSM, StepFunctions, Timestream, Transfer, WAFv2, WorkSpaces, XRay
+
+**Category D (Embedded Tags):**
+CloudFormation
+
 ## Step-by-Step Integration Process
 
 ### 1. Create Service Implementation (`aws_services/servicename.rs`)
@@ -783,13 +1182,282 @@ if vector.is_empty() {
 - Check edge cases (no tags, missing optional fields)
 - Validate JSON structure matches normalizer expectations
 
-## Future Enhancements
+## Parent-Child (Nested) Resource Hierarchies
 
-1. **Detailed Properties**: Implement describe functionality for rich resource details
-2. **Cross-Service Relationships**: Link resources across different AWS services
-3. **Real-time Updates**: Add CloudWatch Events integration for live updates
-4. **Cost Data**: Integrate AWS Cost Explorer for resource cost information
+**⚠️ NEW FEATURE**: The Resource Explorer now supports hierarchical parent-child relationships for resources that have natural nesting (e.g., KnowledgeBase → DataSource → IngestionJob).
+
+### When to Use Nested Resources
+
+Use parent-child relationships when:
+- Resources have a natural containment hierarchy (parent contains children)
+- Child resources cannot exist without a parent
+- You want children to appear nested in the tree view under their parent
+- You want to automatically query children when querying parents
+
+**Examples:**
+- AWS::Bedrock::KnowledgeBase → AWS::Bedrock::DataSource → AWS::Bedrock::IngestionJob
+- AWS::Bedrock::Agent → AWS::Bedrock::AgentAlias + AWS::Bedrock::AgentActionGroup
+- AWS::Bedrock::Flow → AWS::Bedrock::FlowAlias
+- AWS::ECS::Cluster → AWS::ECS::Service → AWS::ECS::Task (potential future implementation)
+- AWS::RDS::DBCluster → AWS::RDS::DBInstance (potential future implementation)
+
+### Implementation Steps
+
+#### 1. Define Parent-Child Configuration
+
+Add your hierarchy to `src/app/resource_explorer/child_resources.rs`:
+
+```rust
+impl ChildResourceConfig {
+    pub fn new() -> Self {
+        let mut parent_to_children = HashMap::new();
+
+        // Define your parent-child relationship
+        parent_to_children.insert(
+            "AWS::Service::ParentResource".to_string(),
+            vec![
+                ChildResourceDef {
+                    child_type: "AWS::Service::ChildResource".to_string(),
+                    query_method: ChildQueryMethod::SingleParent {
+                        param_name: "parent_id",  // Parameter name to pass to child query
+                    },
+                },
+            ],
+        );
+
+        // For children that need multiple parent parameters
+        parent_to_children.insert(
+            "AWS::Service::ChildResource".to_string(),
+            vec![
+                ChildResourceDef {
+                    child_type: "AWS::Service::GrandchildResource".to_string(),
+                    query_method: ChildQueryMethod::MultiParent {
+                        params: vec!["parent_id", "child_id"],  // Multiple parameters
+                    },
+                },
+            ],
+        );
+
+        Self { parent_to_children }
+    }
+}
+```
+
+**Query Method Types:**
+- `SingleParent`: Child needs only the parent's ID (e.g., list_data_sources(knowledge_base_id))
+- `MultiParent`: Child needs multiple parameters from parent hierarchy (e.g., list_ingestion_jobs(knowledge_base_id, data_source_id))
+
+#### 2. Implement Child Query Methods in Service
+
+In your service implementation (e.g., `aws_services/yourservice.rs`), add methods to query child resources:
+
+```rust
+impl YourService {
+    /// List child resources that belong to a parent
+    pub async fn list_child_resources(
+        &self,
+        account_id: &str,
+        region: &str,
+        parent_id: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self.credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = yourservice::Client::new(&aws_config);
+
+        // Call AWS API with parent ID
+        let response = client
+            .list_child_resources()
+            .parent_id(parent_id)
+            .send()
+            .await?;
+
+        let mut resources = Vec::new();
+        if let Some(child_list) = response.children {
+            for child in child_list {
+                let child_json = self.child_to_json(&child);
+                resources.push(child_json);
+            }
+        }
+
+        Ok(resources)
+    }
+}
+```
+
+#### 3. Add Child Query Routing in AWSResourceClient
+
+In `src/app/resource_explorer/aws_client.rs`, add your child resource types to the query routing methods.
+
+The system provides these helper methods (already implemented):
+- `query_children_recursive()` - Automatically queries children recursively up to max depth
+- `query_child_with_single_parent()` - For children needing only parent_id
+- `query_child_with_multi_parent()` - For children needing multiple parent parameters
+
+**Add routing for single-parent children:**
+```rust
+async fn query_child_with_single_parent(
+    &self,
+    account: &str,
+    region: &str,
+    child_type: &str,
+    _param_name: &str,
+    parent_id: &str,
+    parent: &ResourceEntry,
+) -> Result<Vec<ResourceEntry>> {
+    let raw_children = match child_type {
+        // Add your child resource type here
+        "AWS::Service::ChildResource" => {
+            self.get_yourservice_service()
+                .list_child_resources(account, region, parent_id)
+                .await?
+        }
+        _ => return Ok(vec![]),
+    };
+
+    self.normalize_child_resources(
+        raw_children,
+        child_type,
+        account,
+        region,
+        Some(parent.resource_id.clone()),
+        Some(parent.resource_type.clone()),
+    )
+}
+```
+
+**Add routing for multi-parent children:**
+```rust
+async fn query_child_with_multi_parent(
+    &self,
+    account: &str,
+    region: &str,
+    child_type: &str,
+    parent_params: &HashMap<String, String>,
+    parent: &ResourceEntry,
+) -> Result<Vec<ResourceEntry>> {
+    let raw_children = match child_type {
+        "AWS::Service::GrandchildResource" => {
+            let parent_id = parent_params.get("parent_id")
+                .context("Missing parent_id")?;
+            let child_id = parent_params.get("child_id")
+                .context("Missing child_id")?;
+
+            self.get_yourservice_service()
+                .list_grandchild_resources(account, region, parent_id, child_id)
+                .await?
+        }
+        _ => return Ok(vec![]),
+    };
+
+    self.normalize_child_resources(
+        raw_children,
+        child_type,
+        account,
+        region,
+        Some(parent.resource_id.clone()),
+        Some(parent.resource_type.clone()),
+    )
+}
+```
+
+**Add parameter extraction logic** (for multi-parent children):
+```rust
+fn extract_parent_params(
+    &self,
+    parent: &ResourceEntry,
+    _param_names: &[&str],
+) -> Result<HashMap<String, String>> {
+    let mut params = HashMap::new();
+
+    // Example: Child resource needs both grandparent and parent IDs
+    if parent.resource_type == "AWS::Service::ChildResource" {
+        // Get grandparent ID from parent's parent_resource_id
+        if let Some(grandparent_id) = &parent.parent_resource_id {
+            params.insert("parent_id".to_string(), grandparent_id.clone());
+        }
+        // Get direct parent ID
+        params.insert("child_id".to_string(), parent.resource_id.clone());
+    }
+
+    Ok(params)
+}
+```
+
+#### 4. Automatic Child Resource Features
+
+Once configured, the system automatically:
+- ✅ Queries child resources recursively when parent is queried (up to depth 3)
+- ✅ Marks children with `is_child_resource = true`
+- ✅ Tracks parent with `parent_resource_id` and `parent_resource_type` fields
+- ✅ Hides children from top-level resource list (they appear nested under parents)
+- ✅ Creates bidirectional relationships (`ChildOf` / `ParentOf`)
+- ✅ Displays children in tree view grouped by type under their parent
+- ✅ Handles errors gracefully (child query failures don't break parent queries)
+
+#### 5. Testing Child Hierarchies
+
+Add unit tests to `child_resources.rs`:
+```rust
+#[test]
+fn test_your_service_has_children() {
+    let config = ChildResourceConfig::new();
+    assert!(config.has_children("AWS::Service::ParentResource"));
+
+    let children = config.get_children("AWS::Service::ParentResource").unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].child_type, "AWS::Service::ChildResource");
+}
+```
+
+### Architecture Details
+
+**Data Model Fields** (automatically handled):
+- `parent_resource_id: Option<String>` - ID of parent resource
+- `parent_resource_type: Option<String>` - Type of parent resource
+- `is_child_resource: bool` - Flag to identify child resources
+
+**Relationship Types**:
+- `RelationshipType::ChildOf` - Added to child pointing to parent
+- `RelationshipType::ParentOf` - Can be added to parent pointing to children
+
+**Tree Display**:
+- Parent resources appear in normal tree groupings
+- Children appear as nested nodes under their parents
+- Children are grouped by resource type if multiple types
+- Grandchildren nest recursively under children
+
+**Depth Limiting**:
+- Maximum recursion depth: 3 levels
+- Prevents infinite loops in misconfigured hierarchies
+- Logs warning when depth limit reached
+
+### Best Practices
+
+1. **Define Clear Hierarchies**: Only use for resources with true containment relationships
+2. **Keep Hierarchies Shallow**: 2-3 levels max for optimal UI performance
+3. **Handle Missing Parents**: Children should gracefully handle missing parent data
+4. **Test Recursion**: Verify depth limiting works correctly
+5. **Document Relationships**: Add comments explaining why resources are hierarchical
+
+### Reference Implementation
+
+See `src/app/resource_explorer/child_resources.rs` for complete examples of:
+- Bedrock KnowledgeBase → DataSource → IngestionJob (3-level hierarchy)
+- Bedrock Agent → AgentAlias + AgentActionGroup (2-level with multiple children)
+- Bedrock Flow → FlowAlias (2-level simple hierarchy)
 
 ---
 
-**Pro Tip**: Always start with the Bedrock service implementation as a reference - it follows all the correct patterns and has been thoroughly tested.
+## Future Enhancements
+
+1. **Detailed Properties**: Implement describe functionality for rich resource details
+2. **Cross-Service Relationships**: Link resources across different AWS services (non-hierarchical)
+3. **Real-time Updates**: Add CloudWatch Events integration for live updates
+4. **Cost Data**: Integrate AWS Cost Explorer for resource cost information
+5. **More Hierarchies**: Extend nested resources to ECS, RDS, Organizations, etc.
+
+---
+
+**Pro Tip**: Always start with the Bedrock service implementation as a reference - it follows all the correct patterns including hierarchical child resources, and has been thoroughly tested.

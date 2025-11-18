@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for DocumentDB Resources
 pub struct DocumentDbResourceNormalizer;
 
-impl ResourceNormalizer for DocumentDbResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for DocumentDbResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
             .or_else(|| raw_response.get("Id"))
@@ -26,7 +30,8 @@ impl ResourceNormalizer for DocumentDbResourceNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::DocumentDB::Cluster".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -39,83 +44,32 @@ impl ResourceNormalizer for DocumentDbResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-        
-        // DocumentDB relates to VPCs, subnets, and security groups
-        for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::EC2::VPC" => {
-                    // DocumentDB clusters are deployed in VPCs
-                    if let Some(vpc_security_groups) = entry.raw_properties.get("VpcSecurityGroups") {
-                        if vpc_security_groups.is_array() {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                "AWS::EC2::SecurityGroup" => {
-                    // DocumentDB uses security groups for network access control
-                    if let Some(vpc_security_groups) = entry.raw_properties.get("VpcSecurityGroups") {
-                        if let Some(groups) = vpc_security_groups.as_array() {
-                            for group in groups {
-                                if let Some(group_id) = group.get("VpcSecurityGroupId").and_then(|v| v.as_str()) {
-                                    if group_id == resource.resource_id {
-                                        relationships.push(ResourceRelationship {
-                                            relationship_type: RelationshipType::Uses,
-                                            target_resource_id: resource.resource_id.clone(),
-                                            target_resource_type: resource.resource_type.clone(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                "AWS::Lambda::Function" => {
-                    // Lambda functions often connect to DocumentDB
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::IAM::Role" => {
-                    // DocumentDB uses IAM roles for authentication and permissions
-                    if let Some(associated_roles) = entry.raw_properties.get("AssociatedRoles") {
-                        if let Some(roles) = associated_roles.as_array() {
-                            for role in roles {
-                                if let Some(role_arn) = role.get("RoleArn").and_then(|v| v.as_str()) {
-                                    if role_arn.contains(&resource.resource_id) {
-                                        relationships.push(ResourceRelationship {
-                                            relationship_type: RelationshipType::Uses,
-                                            target_resource_id: resource.resource_id.clone(),
-                                            target_resource_type: resource.resource_type.clone(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {

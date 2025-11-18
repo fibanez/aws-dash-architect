@@ -1,0 +1,614 @@
+use super::super::credentials::CredentialCoordinator;
+use anyhow::{Context, Result};
+use aws_sdk_bedrockagentcore as bedrockagentcore;
+use std::sync::Arc;
+
+pub struct BedrockAgentCoreService {
+    credential_coordinator: Arc<CredentialCoordinator>,
+}
+
+impl BedrockAgentCoreService {
+    pub fn new(credential_coordinator: Arc<CredentialCoordinator>) -> Self {
+        Self {
+            credential_coordinator,
+        }
+    }
+
+    // ==================== MemoryRecord ====================
+
+    /// List Memory Records (requires memory_arn)
+    pub async fn list_memory_records(
+        &self,
+        account_id: &str,
+        region: &str,
+        memory_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+
+        let mut records = Vec::new();
+        let mut paginator = client
+            .list_memory_records()
+            .memory_arn(memory_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for record in page.memory_record_summaries {
+                records.push(self.memory_record_to_json(&record));
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Get detailed information for a specific memory record
+    pub async fn describe_memory_record(
+        &self,
+        account_id: &str,
+        region: &str,
+        memory_arn: &str,
+        record_id: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+        let response = client
+            .get_memory_record()
+            .memory_arn(memory_arn)
+            .record_id(record_id)
+            .send()
+            .await?;
+
+        Ok(self.memory_record_details_to_json(&response))
+    }
+
+    fn memory_record_to_json(
+        &self,
+        record: &bedrockagentcore::types::MemoryRecordSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "RecordId".to_string(),
+            serde_json::Value::String(record.record_id.clone()),
+        );
+
+        if let Some(memory_arn) = &record.memory_arn {
+            json.insert(
+                "MemoryArn".to_string(),
+                serde_json::Value::String(memory_arn.clone()),
+            );
+        }
+
+        if let Some(created_at) = &record.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &record.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn memory_record_details_to_json(
+        &self,
+        response: &bedrockagentcore::operation::get_memory_record::GetMemoryRecordOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "RecordId".to_string(),
+            serde_json::Value::String(response.record_id.clone()),
+        );
+
+        if let Some(memory_arn) = &response.memory_arn {
+            json.insert(
+                "MemoryArn".to_string(),
+                serde_json::Value::String(memory_arn.clone()),
+            );
+        }
+
+        if let Some(content) = &response.content {
+            json.insert(
+                "Content".to_string(),
+                serde_json::Value::String(content.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== Event ====================
+
+    /// List Events (requires memory_arn)
+    pub async fn list_events(
+        &self,
+        account_id: &str,
+        region: &str,
+        memory_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+
+        let mut events = Vec::new();
+        let mut paginator = client
+            .list_events()
+            .memory_arn(memory_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for event in page.event_summaries {
+                events.push(self.event_to_json(&event));
+            }
+        }
+
+        Ok(events)
+    }
+
+    /// Get detailed information for a specific event
+    pub async fn describe_event(
+        &self,
+        account_id: &str,
+        region: &str,
+        memory_arn: &str,
+        event_id: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+        let response = client
+            .get_event()
+            .memory_arn(memory_arn)
+            .event_id(event_id)
+            .send()
+            .await?;
+
+        Ok(self.event_details_to_json(&response))
+    }
+
+    fn event_to_json(
+        &self,
+        event: &bedrockagentcore::types::EventSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "EventId".to_string(),
+            serde_json::Value::String(event.event_id.clone()),
+        );
+
+        if let Some(memory_arn) = &event.memory_arn {
+            json.insert(
+                "MemoryArn".to_string(),
+                serde_json::Value::String(memory_arn.clone()),
+            );
+        }
+
+        if let Some(event_type) = &event.event_type {
+            json.insert(
+                "EventType".to_string(),
+                serde_json::Value::String(event_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &event.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn event_details_to_json(
+        &self,
+        response: &bedrockagentcore::operation::get_event::GetEventOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "EventId".to_string(),
+            serde_json::Value::String(response.event_id.clone()),
+        );
+
+        if let Some(memory_arn) = &response.memory_arn {
+            json.insert(
+                "MemoryArn".to_string(),
+                serde_json::Value::String(memory_arn.clone()),
+            );
+        }
+
+        if let Some(event_type) = &response.event_type {
+            json.insert(
+                "EventType".to_string(),
+                serde_json::Value::String(event_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(event_data) = &response.event_data {
+            json.insert(
+                "EventData".to_string(),
+                serde_json::Value::String(event_data.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== BrowserSession ====================
+
+    /// List Browser Sessions (requires browser_arn)
+    pub async fn list_browser_sessions(
+        &self,
+        account_id: &str,
+        region: &str,
+        browser_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+
+        let mut sessions = Vec::new();
+        let mut paginator = client
+            .list_browser_sessions()
+            .browser_arn(browser_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for session in page.browser_session_summaries {
+                sessions.push(self.browser_session_to_json(&session));
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    /// Get detailed information for a specific browser session
+    pub async fn describe_browser_session(
+        &self,
+        account_id: &str,
+        region: &str,
+        browser_arn: &str,
+        session_id: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+        let response = client
+            .get_browser_session()
+            .browser_arn(browser_arn)
+            .session_id(session_id)
+            .send()
+            .await?;
+
+        Ok(self.browser_session_details_to_json(&response))
+    }
+
+    fn browser_session_to_json(
+        &self,
+        session: &bedrockagentcore::types::BrowserSessionSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "SessionId".to_string(),
+            serde_json::Value::String(session.session_id.clone()),
+        );
+
+        if let Some(browser_arn) = &session.browser_arn {
+            json.insert(
+                "BrowserArn".to_string(),
+                serde_json::Value::String(browser_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &session.session_status {
+            json.insert(
+                "SessionStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &session.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &session.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn browser_session_details_to_json(
+        &self,
+        response: &bedrockagentcore::operation::get_browser_session::GetBrowserSessionOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "SessionId".to_string(),
+            serde_json::Value::String(response.session_id.clone()),
+        );
+
+        if let Some(browser_arn) = &response.browser_arn {
+            json.insert(
+                "BrowserArn".to_string(),
+                serde_json::Value::String(browser_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &response.session_status {
+            json.insert(
+                "SessionStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== CodeInterpreterSession ====================
+
+    /// List Code Interpreter Sessions (requires code_interpreter_arn)
+    pub async fn list_code_interpreter_sessions(
+        &self,
+        account_id: &str,
+        region: &str,
+        code_interpreter_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+
+        let mut sessions = Vec::new();
+        let mut paginator = client
+            .list_code_interpreter_sessions()
+            .code_interpreter_arn(code_interpreter_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for session in page.code_interpreter_session_summaries {
+                sessions.push(self.code_interpreter_session_to_json(&session));
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    /// Get detailed information for a specific code interpreter session
+    pub async fn describe_code_interpreter_session(
+        &self,
+        account_id: &str,
+        region: &str,
+        code_interpreter_arn: &str,
+        session_id: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcore::Client::new(&aws_config);
+        let response = client
+            .get_code_interpreter_session()
+            .code_interpreter_arn(code_interpreter_arn)
+            .session_id(session_id)
+            .send()
+            .await?;
+
+        Ok(self.code_interpreter_session_details_to_json(&response))
+    }
+
+    fn code_interpreter_session_to_json(
+        &self,
+        session: &bedrockagentcore::types::CodeInterpreterSessionSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "SessionId".to_string(),
+            serde_json::Value::String(session.session_id.clone()),
+        );
+
+        if let Some(code_interpreter_arn) = &session.code_interpreter_arn {
+            json.insert(
+                "CodeInterpreterArn".to_string(),
+                serde_json::Value::String(code_interpreter_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &session.session_status {
+            json.insert(
+                "SessionStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &session.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &session.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn code_interpreter_session_details_to_json(
+        &self,
+        response: &bedrockagentcore::operation::get_code_interpreter_session::GetCodeInterpreterSessionOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "SessionId".to_string(),
+            serde_json::Value::String(response.session_id.clone()),
+        );
+
+        if let Some(code_interpreter_arn) = &response.code_interpreter_arn {
+            json.insert(
+                "CodeInterpreterArn".to_string(),
+                serde_json::Value::String(code_interpreter_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &response.session_status {
+            json.insert(
+                "SessionStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+}

@@ -662,7 +662,9 @@ impl AwsIdentityCenter {
 
         // This requires temporary credentials from one of the accounts
         if let Some(credentials) = &self.default_role_credentials {
+            let rt_start = std::time::Instant::now();
             let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+            log::info!("⏱️ [AWS] Runtime creation (identify_sso_management_account) took {:?}", rt_start.elapsed());
 
             // Clone the necessary data before the async block
             let region = self.identity_center_region.clone();
@@ -865,6 +867,29 @@ impl AwsIdentityCenter {
             self.default_role_name
         );
 
+        // Check if we have cached credentials that are still valid (TTL check)
+        if let Some(ref cached_creds) = self.default_role_credentials {
+            if let Some(expiration) = cached_creds.expiration {
+                let now = Utc::now();
+                let buffer = chrono::Duration::minutes(5);
+
+                if now + buffer < expiration {
+                    info!(
+                        "Using cached default role credentials (valid until {})",
+                        expiration
+                    );
+                    return Ok(cached_creds.clone());
+                } else {
+                    info!(
+                        "Cached credentials expired or expiring soon (expiration: {}), refreshing",
+                        expiration
+                    );
+                }
+            }
+        }
+
+        info!("Refreshing default role credentials");
+
         // We need to find an account that has the default role
         // Look for accounts with the default role, prioritizing management/SSO accounts
         let accounts_with_role: Vec<_> = self
@@ -988,8 +1013,10 @@ impl AwsIdentityCenter {
         info!("Starting device authorization with AWS SSO OIDC");
 
         // Create a Tokio runtime for async operations
+        let rt_start = std::time::Instant::now();
         let runtime =
             Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!("⏱️ [AWS] Runtime creation (start_device_authorization) took {:?}", rt_start.elapsed());
 
         let region = Region::new(self.identity_center_region.clone());
 
@@ -1175,8 +1202,12 @@ impl AwsIdentityCenter {
 
         thread::spawn(move || {
             // Create a new Tokio runtime for this thread
+            let rt_start = std::time::Instant::now();
             let runtime = match Runtime::new() {
-                Ok(rt) => rt,
+                Ok(rt) => {
+                    log::info!("⏱️ [AWS] Runtime creation (poll_for_token_bg_thread) took {:?}", rt_start.elapsed());
+                    rt
+                }
                 Err(e) => {
                     let _ = tx.send(Err(format!("Failed to create Tokio runtime: {}", e)));
                     return;
@@ -1446,8 +1477,10 @@ impl AwsIdentityCenter {
         }
 
         // Execute the async code in a tokio runtime
+        let rt_start = std::time::Instant::now();
         let runtime =
             Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!("⏱️ [AWS] Runtime creation (get_account_role_credentials) took {:?}", rt_start.elapsed());
 
         let region = self.identity_center_region.clone();
 
@@ -1869,8 +1902,10 @@ impl AwsIdentityCenter {
         );
 
         // Execute the async code in a tokio runtime to get the signin token
+        let rt_start = std::time::Instant::now();
         let runtime =
             Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!("⏱️ [AWS] Runtime creation (generate_console_url) took {:?}", rt_start.elapsed());
 
         let signin_result = runtime.block_on(async {
             // Make HTTP request to get signin token
@@ -2024,8 +2059,10 @@ impl AwsIdentityCenter {
             .ok_or("Not logged in - no default role credentials available")?;
 
         // Create a Tokio runtime for async operations
+        let rt_start = std::time::Instant::now();
         let runtime =
             Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!("⏱️ [AWS] Runtime creation (discover_aws_reserved_sso_role) took {:?}", rt_start.elapsed());
 
         let region = Region::new(self.identity_center_region.clone());
 
@@ -2278,8 +2315,10 @@ impl AwsIdentityCenter {
             .ok_or("Not logged in - no default role credentials available")?;
 
         // Create a Tokio runtime for async operations
+        let rt_start = std::time::Instant::now();
         let runtime =
             Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!("⏱️ [AWS] Runtime creation (extract_infrastructure_info) took {:?}", rt_start.elapsed());
 
         let region = Region::new(self.identity_center_region.clone());
 

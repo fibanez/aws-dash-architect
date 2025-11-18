@@ -6,6 +6,12 @@ pub struct GlobalServiceRegistry {
     global_resource_types: HashSet<&'static str>,
 }
 
+impl Default for GlobalServiceRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalServiceRegistry {
     pub fn new() -> Self {
         let mut registry = HashSet::new();

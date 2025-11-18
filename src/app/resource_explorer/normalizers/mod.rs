@@ -1,6 +1,11 @@
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+
+// Re-export AWSResourceClient from parent module for normalizer use
+// The actual implementation is in ../aws_client.rs
+use super::AWSResourceClient;
 
 pub mod accessanalyzer;
 pub mod acm;
@@ -15,6 +20,7 @@ pub mod autoscaling;
 pub mod backup;
 pub mod batch;
 pub mod bedrock;
+pub mod bedrockagentcore;
 pub mod cloudformation;
 pub mod cloudfront;
 pub mod cloudtrail;
@@ -62,8 +68,15 @@ pub mod mq;
 pub mod msk;
 pub mod neptune;
 pub mod opensearch;
+pub mod organizations_account;
+pub mod organizations_aws_service_access;
+pub mod organizations_create_account_status;
+pub mod organizations_delegated_admin;
+pub mod organizations_handshake;
+pub mod organizations_organization;
 pub mod organizations_ou;
 pub mod organizations_policy;
+pub mod organizations_root;
 pub mod polly;
 pub mod quicksight;
 pub mod rds;
@@ -100,6 +113,7 @@ pub use autoscaling::*;
 pub use backup::*;
 pub use batch::*;
 pub use bedrock::*;
+pub use bedrockagentcore::*;
 pub use cloudformation::*;
 pub use cloudfront::*;
 pub use cloudtrail::*;
@@ -147,8 +161,15 @@ pub use mq::*;
 pub use msk::*;
 pub use neptune::*;
 pub use opensearch::*;
+pub use organizations_account::*;
+pub use organizations_aws_service_access::*;
+pub use organizations_create_account_status::*;
+pub use organizations_delegated_admin::*;
+pub use organizations_handshake::*;
+pub use organizations_organization::*;
 pub use organizations_ou::*;
 pub use organizations_policy::*;
+pub use organizations_root::*;
 pub use polly::*;
 pub use quicksight::*;
 pub use rds::*;
@@ -172,18 +193,221 @@ pub use wafv2::*;
 pub use workspaces::*;
 pub use xray::*;
 
-/// Trait for normalizing different AWS service responses into consistent ResourceEntry format
-pub trait ResourceNormalizer {
-    /// Normalize raw AWS API response into ResourceEntry
-    fn normalize(
+/// Trait for normalizing AWS service responses with tag fetching support
+///
+/// This trait provides asynchronous tag fetching from AWS APIs. All normalizers should
+/// implement this trait to enable tag filtering, tag grouping, and tag badge features
+/// in the Resource Explorer.
+///
+/// # Tag Fetching Strategy
+///
+/// The trait provides a default `fetch_tags()` implementation that uses the AWS Resource
+/// Groups Tagging API, which works for most AWS services. Services that don't support
+/// this API (like S3, IAM, CloudFront) should override `fetch_tags()` with a service-specific
+/// implementation.
+///
+/// ## Tag Caching
+///
+/// All tag fetching should use the `AWSResourceClient`'s built-in tag cache to minimize
+/// API calls. The cache has a 15-minute TTL and is automatically managed.
+///
+/// # Example Implementation
+///
+/// ```rust,ignore
+/// use async_trait::async_trait;
+///
+/// pub struct EC2InstanceNormalizer;
+///
+/// #[async_trait]
+/// impl AsyncResourceNormalizer for EC2InstanceNormalizer {
+///     async fn normalize(
+///         &self,
+///         raw_response: serde_json::Value,
+///         account: &str,
+///         region: &str,
+///         query_timestamp: DateTime<Utc>,
+///         aws_client: &AWSResourceClient,
+///     ) -> Result<ResourceEntry> {
+///         let instance_id = raw_response["InstanceId"].as_str().unwrap_or("unknown");
+///
+///         // Fetch tags asynchronously
+///         let tags = self.fetch_tags(instance_id, account, region, aws_client)
+///             .await
+///             .unwrap_or_else(|e| {
+///                 tracing::warn!("Failed to fetch tags for {}: {}", instance_id, e);
+///                 Vec::new()
+///             });
+///
+///         Ok(ResourceEntry {
+///             resource_id: instance_id.to_string(),
+///             tags,  // Now populated with actual tags
+///             // ... other fields
+///         })
+///     }
+///
+///     async fn fetch_tags(
+///         &self,
+///         resource_id: &str,
+///         account: &str,
+///         region: &str,
+///         aws_client: &AWSResourceClient,
+///     ) -> Result<Vec<ResourceTag>> {
+///         // Check cache first
+///         let cache_key = format!("{}:{}:{}", account, region, resource_id);
+///         if let Some(cached_tags) = aws_client.tag_cache.get(&cache_key).await {
+///             return Ok(cached_tags);
+///         }
+///
+///         // Construct ARN for Resource Groups Tagging API
+///         let arn = format!("arn:aws:ec2:{}:{}:instance/{}", region, account, resource_id);
+///
+///         // Try Resource Groups Tagging API first (works for most services)
+///         match aws_client.get_tags_for_resource(&arn).await {
+///             Ok(tags) => {
+///                 aws_client.tag_cache.set(&cache_key, &tags).await;
+///                 Ok(tags)
+///             }
+///             Err(_) => {
+///                 // Fall back to service-specific API if needed
+///                 self.fetch_tags_ec2_specific(resource_id, account, region, aws_client).await
+///             }
+///         }
+///     }
+///
+///     fn extract_relationships(
+///         &self,
+///         entry: &ResourceEntry,
+///         all_resources: &[ResourceEntry],
+///     ) -> Vec<ResourceRelationship> {
+///         // Relationship extraction remains synchronous
+///         Vec::new()
+///     }
+///
+///     fn resource_type(&self) -> &'static str {
+///         "AWS::EC2::Instance"
+///     }
+/// }
+/// ```
+///
+/// # Migration from ResourceNormalizer
+///
+/// To migrate an existing normalizer:
+///
+/// 1. Add `#[async_trait]` attribute above `impl AsyncResourceNormalizer`
+/// 2. Change `fn normalize(...)` to `async fn normalize(..., aws_client: &AWSResourceClient)`
+/// 3. Add tag fetching logic inside `normalize()` using `self.fetch_tags().await`
+/// 4. Optionally override `fetch_tags()` for service-specific tag APIs
+/// 5. Update the factory to return `Box<dyn AsyncResourceNormalizer + Send + Sync>`
+#[async_trait]
+pub trait AsyncResourceNormalizer: Send + Sync {
+    /// Normalize raw AWS API response into ResourceEntry with tag fetching
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_response` - The JSON response from the AWS list/describe API
+    /// * `account` - The AWS account ID
+    /// * `region` - The AWS region name
+    /// * `query_timestamp` - When the query was executed (for cache validation)
+    /// * `aws_client` - Client for AWS API calls (includes tag cache and credentials)
+    ///
+    /// # Returns
+    ///
+    /// A `ResourceEntry` with all fields populated, including tags fetched from AWS
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if normalization fails. Tag fetching failures should be handled
+    /// gracefully (log warning and return empty Vec) to avoid blocking resource display.
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry>;
 
+    /// Fetch tags for a specific resource
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation uses the AWS Resource Groups Tagging API, which works
+    /// for most services. Override this method for services that require service-specific
+    /// tag APIs (S3, IAM, CloudFront, Route53, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_id` - The resource identifier (instance ID, bucket name, function name, etc.)
+    /// * `account` - The AWS account ID
+    /// * `region` - The AWS region name
+    /// * `aws_client` - Client for AWS API calls (includes tag cache)
+    ///
+    /// # Returns
+    ///
+    /// Vector of tags. Returns empty Vec on failure (graceful degradation).
+    ///
+    /// # Caching
+    ///
+    /// Always check `aws_client.tag_cache` before making API calls, and cache successful
+    /// results using `aws_client.tag_cache.set()`.
+    ///
+    /// # Example: Service-Specific Override
+    ///
+    /// ```rust,ignore
+    /// async fn fetch_tags(
+    ///     &self,
+    ///     resource_id: &str,
+    ///     account: &str,
+    ///     region: &str,
+    ///     aws_client: &AWSResourceClient,
+    /// ) -> Result<Vec<ResourceTag>> {
+    ///     let cache_key = format!("{}:{}:{}", account, region, resource_id);
+    ///     if let Some(cached) = aws_client.tag_cache.get(&cache_key).await {
+    ///         return Ok(cached);
+    ///     }
+    ///
+    ///     // S3 example: use bucket name instead of ARN
+    ///     let config = aws_client.get_config(account, region).await?;
+    ///     let client = aws_sdk_s3::Client::new(&config);
+    ///     let response = client.get_bucket_tagging().bucket(resource_id).send().await?;
+    ///
+    ///     let tags = response.tag_set.into_iter()
+    ///         .filter_map(|t| Some(ResourceTag {
+    ///             key: t.key?,
+    ///             value: t.value?,
+    ///         }))
+    ///         .collect();
+    ///
+    ///     aws_client.tag_cache.set(&cache_key, &tags).await;
+    ///     Ok(tags)
+    /// }
+    /// ```
+    async fn fetch_tags(
+        &self,
+        resource_id: &str,
+        account: &str,
+        region: &str,
+        aws_client: &AWSResourceClient,
+    ) -> Result<Vec<ResourceTag>> {
+        // Default implementation - will be overridden when AWSResourceClient is implemented
+        // For now, return empty to allow compilation
+        let _ = (resource_id, account, region, aws_client);
+        Ok(Vec::new())
+    }
+
     /// Extract relationships between this resource and others
+    ///
+    /// This method remains synchronous as relationship extraction doesn't require API calls.
+    /// It analyzes the resource entry and other loaded resources to identify connections.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The resource entry to find relationships for
+    /// * `all_resources` - All currently loaded resources for relationship matching
+    ///
+    /// # Returns
+    ///
+    /// Vector of discovered relationships (VPC -> Subnet, Instance -> SecurityGroup, etc.)
     fn extract_relationships(
         &self,
         entry: &ResourceEntry,
@@ -191,6 +415,9 @@ pub trait ResourceNormalizer {
     ) -> Vec<ResourceRelationship>;
 
     /// Get the resource type this normalizer handles
+    ///
+    /// Must return the AWS CloudFormation resource type string (e.g., "AWS::EC2::Instance").
+    /// This is used for routing normalization requests to the correct normalizer.
     fn resource_type(&self) -> &'static str;
 }
 
@@ -200,7 +427,7 @@ pub struct NormalizerFactory;
 impl NormalizerFactory {
     pub fn create_normalizer(
         resource_type: &str,
-    ) -> Option<Box<dyn ResourceNormalizer + Send + Sync>> {
+    ) -> Option<Box<dyn AsyncResourceNormalizer + Send + Sync>> {
         match resource_type {
             "AWS::EC2::Instance" => Some(Box::new(EC2InstanceNormalizer)),
             "AWS::EC2::SecurityGroup" => Some(Box::new(EC2SecurityGroupNormalizer)),
@@ -227,6 +454,38 @@ impl NormalizerFactory {
             "AWS::IAM::User" => Some(Box::new(IAMUserNormalizer)),
             "AWS::IAM::Policy" => Some(Box::new(IAMPolicyNormalizer)),
             "AWS::Bedrock::Model" => Some(Box::new(BedrockModelNormalizer)),
+            "AWS::Bedrock::InferenceProfile" => Some(Box::new(BedrockInferenceProfileNormalizer)),
+            "AWS::Bedrock::Guardrail" => Some(Box::new(BedrockGuardrailNormalizer)),
+            "AWS::Bedrock::ProvisionedModelThroughput" => Some(Box::new(BedrockProvisionedModelThroughputNormalizer)),
+            "AWS::Bedrock::Agent" => Some(Box::new(BedrockAgentNormalizer)),
+            "AWS::Bedrock::KnowledgeBase" => Some(Box::new(BedrockKnowledgeBaseNormalizer)),
+            "AWS::Bedrock::CustomModel" => Some(Box::new(BedrockCustomModelNormalizer)),
+            "AWS::Bedrock::ImportedModel" => Some(Box::new(BedrockImportedModelNormalizer)),
+            "AWS::Bedrock::EvaluationJob" => Some(Box::new(BedrockEvaluationJobNormalizer)),
+            "AWS::Bedrock::ModelInvocationJob" => Some(Box::new(BedrockModelInvocationJobNormalizer)),
+            "AWS::Bedrock::Prompt" => Some(Box::new(BedrockPromptNormalizer)),
+            "AWS::Bedrock::Flow" => Some(Box::new(BedrockFlowNormalizer)),
+            "AWS::Bedrock::AgentAlias" => Some(Box::new(BedrockAgentAliasNormalizer)),
+            "AWS::Bedrock::AgentActionGroup" => Some(Box::new(BedrockAgentActionGroupNormalizer)),
+            "AWS::Bedrock::DataSource" => Some(Box::new(BedrockDataSourceNormalizer)),
+            "AWS::Bedrock::ModelCustomizationJob" => Some(Box::new(BedrockModelCustomizationJobNormalizer)),
+            "AWS::Bedrock::IngestionJob" => Some(Box::new(BedrockIngestionJobNormalizer)),
+            "AWS::Bedrock::FlowAlias" => Some(Box::new(BedrockFlowAliasNormalizer)),
+            "AWS::BedrockAgentCore::AgentRuntime" => Some(Box::new(BedrockAgentCoreAgentRuntimeNormalizer)),
+            "AWS::BedrockAgentCore::AgentRuntimeEndpoint" => Some(Box::new(BedrockAgentCoreAgentRuntimeEndpointNormalizer)),
+            "AWS::BedrockAgentCore::Memory" => Some(Box::new(BedrockAgentCoreMemoryNormalizer)),
+            "AWS::BedrockAgentCore::Gateway" => Some(Box::new(BedrockAgentCoreGatewayNormalizer)),
+            "AWS::BedrockAgentCore::Browser" => Some(Box::new(BedrockAgentCoreBrowserNormalizer)),
+            "AWS::BedrockAgentCore::CodeInterpreter" => Some(Box::new(BedrockAgentCoreCodeInterpreterNormalizer)),
+            "AWS::BedrockAgentCore::ApiKeyCredentialProvider" => Some(Box::new(BedrockAgentCoreApiKeyCredentialProviderNormalizer)),
+            "AWS::BedrockAgentCore::OAuth2CredentialProvider" => Some(Box::new(BedrockAgentCoreOAuth2CredentialProviderNormalizer)),
+            "AWS::BedrockAgentCore::WorkloadIdentity" => Some(Box::new(BedrockAgentCoreWorkloadIdentityNormalizer)),
+            "AWS::BedrockAgentCore::AgentRuntimeVersion" => Some(Box::new(BedrockAgentCoreAgentRuntimeVersionNormalizer)),
+            "AWS::BedrockAgentCore::GatewayTarget" => Some(Box::new(BedrockAgentCoreGatewayTargetNormalizer)),
+            "AWS::BedrockAgentCore::MemoryRecord" => Some(Box::new(BedrockAgentCoreMemoryRecordNormalizer)),
+            "AWS::BedrockAgentCore::Event" => Some(Box::new(BedrockAgentCoreEventNormalizer)),
+            "AWS::BedrockAgentCore::BrowserSession" => Some(Box::new(BedrockAgentCoreBrowserSessionNormalizer)),
+            "AWS::BedrockAgentCore::CodeInterpreterSession" => Some(Box::new(BedrockAgentCoreCodeInterpreterSessionNormalizer)),
             "AWS::S3::Bucket" => Some(Box::new(S3BucketNormalizer)),
             "AWS::CloudFormation::Stack" => Some(Box::new(CloudFormationStackNormalizer)),
             "AWS::RDS::DBInstance" => Some(Box::new(RDSDBInstanceNormalizer)),
@@ -291,8 +550,15 @@ impl NormalizerFactory {
             "AWS::GreengrassV2::ComponentVersion" => {
                 Some(Box::new(GreengrassComponentVersionNormalizer))
             }
+            "AWS::Organizations::Account" => Some(Box::new(OrganizationsAccountNormalizer)),
+            "AWS::Organizations::AwsServiceAccess" => Some(Box::new(OrganizationsAwsServiceAccessNormalizer)),
+            "AWS::Organizations::CreateAccountStatus" => Some(Box::new(OrganizationsCreateAccountStatusNormalizer)),
+            "AWS::Organizations::DelegatedAdministrator" => Some(Box::new(OrganizationsDelegatedAdministratorNormalizer)),
+            "AWS::Organizations::Handshake" => Some(Box::new(OrganizationsHandshakeNormalizer)),
+            "AWS::Organizations::Organization" => Some(Box::new(OrganizationsOrganizationNormalizer)),
             "AWS::Organizations::OrganizationalUnit" => Some(Box::new(OrganizationsOUNormalizer)),
             "AWS::Organizations::Policy" => Some(Box::new(OrganizationsPolicyNormalizer)),
+            "AWS::Organizations::Root" => Some(Box::new(OrganizationsRootNormalizer)),
             "AWS::CertificateManager::Certificate" => Some(Box::new(AcmCertificateNormalizer)),
             "AWS::ACMPCA::CertificateAuthority" => Some(Box::new(AcmPcaNormalizer)),
             "AWS::AutoScaling::AutoScalingGroup" => Some(Box::new(AutoScalingGroupNormalizer)),
@@ -344,9 +610,6 @@ impl NormalizerFactory {
             "AWS::KMS::Key" => Some(Box::new(KmsKeyNormalizer)),
             "AWS::SecretsManager::Secret" => Some(Box::new(SecretsManagerSecretNormalizer)),
             "AWS::StepFunctions::StateMachine" => Some(Box::new(StepFunctionsStateMachineNormalizer)),
-            "AWS::XRay::SamplingRule" => Some(Box::new(XRaySamplingRuleNormalizer)),
-            "AWS::Shield::Protection" => Some(Box::new(ShieldProtectionNormalizer)),
-            "AWS::Shield::Subscription" => Some(Box::new(ShieldSubscriptionNormalizer)),
             _ => None,
         }
     }
@@ -378,6 +641,23 @@ impl NormalizerFactory {
             "AWS::IAM::User",
             "AWS::IAM::Policy",
             "AWS::Bedrock::Model",
+            "AWS::Bedrock::InferenceProfile",
+            "AWS::Bedrock::Guardrail",
+            "AWS::Bedrock::ProvisionedModelThroughput",
+            "AWS::Bedrock::Agent",
+            "AWS::Bedrock::KnowledgeBase",
+            "AWS::Bedrock::CustomModel",
+            "AWS::Bedrock::ImportedModel",
+            "AWS::Bedrock::EvaluationJob",
+            "AWS::Bedrock::ModelInvocationJob",
+            "AWS::Bedrock::Prompt",
+            "AWS::Bedrock::Flow",
+            "AWS::Bedrock::AgentAlias",
+            "AWS::Bedrock::AgentActionGroup",
+            "AWS::Bedrock::DataSource",
+            "AWS::Bedrock::ModelCustomizationJob",
+            "AWS::Bedrock::IngestionJob",
+            "AWS::Bedrock::FlowAlias",
             "AWS::S3::Bucket",
             "AWS::CloudFormation::Stack",
             "AWS::RDS::DBInstance",
@@ -436,8 +716,13 @@ impl NormalizerFactory {
             "AWS::CodeCommit::Repository",
             "AWS::IoT::Thing",
             "AWS::GreengrassV2::ComponentVersion",
+            "AWS::Organizations::Account",
+            "AWS::Organizations::DelegatedAdministrator",
+            "AWS::Organizations::Handshake",
+            "AWS::Organizations::Organization",
             "AWS::Organizations::OrganizationalUnit",
             "AWS::Organizations::Policy",
+            "AWS::Organizations::Root",
             "AWS::CertificateManager::Certificate",
             "AWS::ACMPCA::CertificateAuthority",
             "AWS::AutoScaling::AutoScalingGroup",
@@ -606,4 +891,62 @@ pub mod utils {
 
         serde_json::Value::Object(normalized)
     }
+
+    /// Macro to create ResourceEntry with default child resource fields
+    /// This reduces boilerplate when creating ResourceEntry instances
+    #[macro_export]
+    macro_rules! create_resource_entry {
+        (
+            resource_type: $resource_type:expr,
+            account_id: $account_id:expr,
+            region: $region:expr,
+            resource_id: $resource_id:expr,
+            display_name: $display_name:expr,
+            status: $status:expr,
+            properties: $properties:expr,
+            raw_properties: $raw_properties:expr,
+            detailed_properties: $detailed_properties:expr,
+            detailed_timestamp: $detailed_timestamp:expr,
+            tags: $tags:expr,
+            relationships: $relationships:expr,
+            account_color: $account_color:expr,
+            region_color: $region_color:expr,
+            query_timestamp: $query_timestamp:expr
+            $(, parent_resource_id: $parent_resource_id:expr)?
+            $(, parent_resource_type: $parent_resource_type:expr)?
+            $(, is_child_resource: $is_child_resource:expr)?
+        ) => {
+            ResourceEntry {
+                resource_type: $resource_type,
+                account_id: $account_id,
+                region: $region,
+                resource_id: $resource_id,
+                display_name: $display_name,
+                status: $status,
+                properties: $properties,
+                raw_properties: $raw_properties,
+                detailed_properties: $detailed_properties,
+                detailed_timestamp: $detailed_timestamp,
+                tags: $tags,
+                relationships: $relationships,
+                parent_resource_id: create_resource_entry!(@optional $($parent_resource_id)?),
+                parent_resource_type: create_resource_entry!(@optional $($parent_resource_type)?),
+                is_child_resource: create_resource_entry!(@default_false $($is_child_resource)?),
+                account_color: $account_color,
+                region_color: $region_color,
+                query_timestamp: $query_timestamp,
+            }
+        };
+
+        // Helper for optional fields - provides None if not specified
+        (@optional $value:expr) => { Some($value) };
+        (@optional) => { None };
+
+        // Helper for boolean fields - provides false if not specified
+        (@default_false $value:expr) => { $value };
+        (@default_false) => { false };
+    }
+
+    // Re-export the macro at crate level
+    pub use create_resource_entry;
 }

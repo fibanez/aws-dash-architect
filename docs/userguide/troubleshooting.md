@@ -184,7 +184,7 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash.
 * **Theme Switching**: Fix theme persistence and application
 * **Custom Styling**: Update custom components for theme compatibility
 
-## Control Bridge Issues
+## Agent Issues
 
 ### AI Agent Communication Problems
 
@@ -235,7 +235,7 @@ Comprehensive guide for diagnosing and resolving common issues in AWS Dash.
 *Important Log Sections*:
 * Authentication flows and credential management
 * AWS resource discovery and API operations
-* Control Bridge agent task execution
+* Agent agent task execution
 * AWS SDK interactions and error responses
 * UI event processing and window management
 

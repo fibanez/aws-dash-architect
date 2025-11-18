@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for MSK (Managed Streaming for Kafka) Clusters
 pub struct MskNormalizer;
 
-impl ResourceNormalizer for MskNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for MskNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
             .or_else(|| raw_response.get("ClusterArn"))
@@ -26,7 +30,8 @@ impl ResourceNormalizer for MskNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::MSK::Cluster".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -39,94 +44,32 @@ impl ResourceNormalizer for MskNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // MSK clusters can be related to VPC subnets and security groups
-        if let Some(provisioned) = entry.raw_properties.get("Provisioned") {
-            if let Some(broker_info) = provisioned.get("BrokerNodeGroupInfo") {
-                if let Some(client_subnets) = broker_info.get("ClientSubnets") {
-                    if let Some(subnets_array) = client_subnets.as_array() {
-                        for subnet in subnets_array {
-                            if let Some(subnet_id) = subnet.as_str() {
-                                // Find VPC subnets this cluster is deployed in
-                                for resource in all_resources {
-                                    if resource.resource_type == "AWS::EC2::Subnet" 
-                                        && resource.resource_id == subnet_id {
-                                        relationships.push(ResourceRelationship {
-                                            relationship_type: RelationshipType::Uses,
-                                            target_resource_id: resource.resource_id.clone(),
-                                            target_resource_type: "AWS::EC2::Subnet".to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check for serverless VPC configuration
-        if let Some(serverless) = entry.raw_properties.get("Serverless") {
-            if let Some(vpc_configs) = serverless.get("VpcConfigs") {
-                if let Some(configs_array) = vpc_configs.as_array() {
-                    for config in configs_array {
-                        // Subnet relationships
-                        if let Some(subnet_ids) = config.get("SubnetIds") {
-                            if let Some(subnets_array) = subnet_ids.as_array() {
-                                for subnet in subnets_array {
-                                    if let Some(subnet_id) = subnet.as_str() {
-                                        for resource in all_resources {
-                                            if resource.resource_type == "AWS::EC2::Subnet" 
-                                                && resource.resource_id == subnet_id {
-                                                relationships.push(ResourceRelationship {
-                                                    relationship_type: RelationshipType::Uses,
-                                                    target_resource_id: resource.resource_id.clone(),
-                                                    target_resource_type: "AWS::EC2::Subnet".to_string(),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Security group relationships
-                        if let Some(sg_ids) = config.get("SecurityGroupIds") {
-                            if let Some(sgs_array) = sg_ids.as_array() {
-                                for sg in sgs_array {
-                                    if let Some(sg_id) = sg.as_str() {
-                                        for resource in all_resources {
-                                            if resource.resource_type == "AWS::EC2::SecurityGroup" 
-                                                && resource.resource_id == sg_id {
-                                                relationships.push(ResourceRelationship {
-                                                    relationship_type: RelationshipType::Uses,
-                                                    target_resource_id: resource.resource_id.clone(),
-                                                    target_resource_type: "AWS::EC2::SecurityGroup".to_string(),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {

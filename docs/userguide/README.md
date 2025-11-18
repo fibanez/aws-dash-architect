@@ -14,6 +14,6 @@ This section provides comprehensive guides for end-users of AWS Dash.
 
 Additional user documentation sections are being developed:
 - Resource Exploration Guide
-- Control Bridge Usage Guide
+- Agent Usage Guide
 - Multi-Account Management Guide
 - Customization Options Guide

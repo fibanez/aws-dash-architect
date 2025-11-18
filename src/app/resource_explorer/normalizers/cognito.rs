@@ -1,18 +1,22 @@
-use super::super::state::{RelationshipType, ResourceEntry, ResourceRelationship};
-use super::{utils, ResourceNormalizer};
+use super::super::state::{ResourceEntry, ResourceRelationship};
+use super::{utils, AsyncResourceNormalizer};
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub struct CognitoNormalizer;
 
-impl ResourceNormalizer for CognitoNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for CognitoNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         // Determine resource type and extract fields
         let (resource_id, resource_type, display_name) =
             if let Some(user_pool_id) = raw_response.get("Id").and_then(|v| v.as_str()) {
@@ -63,7 +67,8 @@ impl ResourceNormalizer for CognitoNormalizer {
         // Create normalized properties
         let normalized_properties = utils::create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: resource_type.to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -76,79 +81,35 @@ impl ResourceNormalizer for CognitoNormalizer {
             detailed_timestamp: Some(query_timestamp),
             tags,
             relationships: Vec::new(), // Will be filled by extract_relationships
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: egui::Color32::PLACEHOLDER,
             region_color: egui::Color32::PLACEHOLDER,
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
+        _entry: &ResourceEntry,
         _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // Extract relationships based on resource type
-        if entry.resource_type == "AWS::Cognito::UserPool" {
-            // User Pool relationships
-            if let Some(email_config) = entry.raw_properties.get("EmailConfiguration") {
-                if let Some(source_arn) = email_config.get("SourceArn").and_then(|v| v.as_str()) {
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: source_arn.to_string(),
-                        target_resource_type: "AWS::SES::ConfigurationSet".to_string(),
-                    });
-                }
-            }
-
-            if let Some(sms_config) = entry.raw_properties.get("SmsConfiguration") {
-                if let Some(sns_caller_arn) =
-                    sms_config.get("SnsCallerArn").and_then(|v| v.as_str())
-                {
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: sns_caller_arn.to_string(),
-                        target_resource_type: "AWS::SNS::Topic".to_string(),
-                    });
-                }
-            }
-        } else if entry.resource_type == "AWS::Cognito::IdentityPool" {
-            // Identity Pool relationships
-            if let Some(cognito_providers) = entry.raw_properties.get("CognitoIdentityProviders") {
-                if let Some(providers_array) = cognito_providers.as_array() {
-                    for provider in providers_array {
-                        if let Some(provider_name) =
-                            provider.get("ProviderName").and_then(|v| v.as_str())
-                        {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: provider_name.to_string(),
-                                target_resource_type: "AWS::Cognito::UserPool".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        } else if entry.resource_type == "AWS::Cognito::UserPoolClient" {
-            // User Pool Client relationships
-            if let Some(user_pool_id) = entry
-                .raw_properties
-                .get("UserPoolId")
-                .and_then(|v| v.as_str())
-            {
-                relationships.push(ResourceRelationship {
-                    relationship_type: RelationshipType::AttachedTo,
-                    target_resource_id: user_pool_id.to_string(),
-                    target_resource_type: "AWS::Cognito::UserPool".to_string(),
-                });
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
-        "AWS::Cognito::*" // Handles multiple Cognito resource types
+        "AWS::Cognito::*"
     }
 }

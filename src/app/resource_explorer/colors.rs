@@ -122,11 +122,81 @@ impl AwsColorGenerator {
     }
 
     /// Generate a resource type specific color using seeded random generation
+    ///
+    /// Uses a hybrid approach for maximum color contrast:
+    /// 1. Extracts the resource name (e.g., "Instance" from "AWS::EC2::Instance")
+    /// 2. Maps resource name to one of 8 distinct hue families via hash
+    /// 3. Alternates luminosity (Bright/Light) based on hash for additional contrast
+    ///
+    /// This ensures visually distinct colors for different resource types even within
+    /// the same AWS service (e.g., Instance, SecurityGroup, VPC all get different hues).
     pub fn get_resource_type_color(&self, resource_type: &str) -> Color32 {
+        use random_color::Color;
+
+        // Extract just the resource name (last part after ::)
+        // "AWS::EC2::Instance" -> "Instance"
+        // "AWS::EC2::SecurityGroup" -> "SecurityGroup"
+        let resource_name = resource_type.split("::").last().unwrap_or(resource_type);
+
+        // Create a simple hash of the resource name for hue selection
+        let hash = self.hash_string(resource_name);
+
+        // Map hash to one of 8 distinct hue families for maximum color separation
+        let hue = match hash % 8 {
+            0 => Color::Red,
+            1 => Color::Orange,
+            2 => Color::Yellow,
+            3 => Color::Green,
+            4 => Color::Blue,
+            5 => Color::Purple,
+            6 => Color::Pink,
+            _ => Color::Monochrome,
+        };
+
+        // Alternate luminosity based on hash parity for additional visual distinction
+        let luminosity = if hash % 2 == 0 {
+            Luminosity::Bright
+        } else {
+            Luminosity::Light
+        };
+
         let mut random_color = RandomColor::new();
 
-        // Seed with resource type for deterministic results
-        random_color.seed(format!("resource_type_{}", resource_type));
+        // Seed with resource name for deterministic results
+        random_color.seed(format!("resource_type_{}", resource_name));
+        random_color.hue(hue);
+        random_color.luminosity(luminosity);
+
+        // Generate the color and convert to egui::Color32
+        let hex_color = random_color.to_hex();
+        self.hex_to_color32(&hex_color)
+    }
+
+    /// Simple hash function for string-to-number mapping
+    fn hash_string(&self, s: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Generate a tag key specific color using seeded random generation
+    ///
+    /// Uses the tag key as a seed to ensure the same tag key always gets the same color.
+    /// This provides visual consistency for tag badges across resources.
+    ///
+    /// # Parameters
+    /// * `tag_key` - The tag key (e.g., "Environment", "Team", "Project")
+    ///
+    /// # Returns
+    /// An egui::Color32 suitable for use as a tag badge background color
+    pub fn get_tag_key_color(&self, tag_key: &str) -> Color32 {
+        let mut random_color = RandomColor::new();
+
+        // Seed with tag key for deterministic results
+        random_color.seed(format!("tag_key_{}", tag_key));
 
         // Use light luminosity for pastel-like colors that work well as tag backgrounds
         random_color.luminosity(Luminosity::Light);

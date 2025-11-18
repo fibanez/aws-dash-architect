@@ -1,0 +1,1639 @@
+use super::super::credentials::CredentialCoordinator;
+use anyhow::{Context, Result};
+use aws_sdk_bedrockagentcorecontrol as bedrockagentcorecontrol;
+use std::sync::Arc;
+
+pub struct BedrockAgentCoreControlService {
+    credential_coordinator: Arc<CredentialCoordinator>,
+}
+
+impl BedrockAgentCoreControlService {
+    pub fn new(credential_coordinator: Arc<CredentialCoordinator>) -> Self {
+        Self {
+            credential_coordinator,
+        }
+    }
+
+    // ==================== AgentRuntime ====================
+
+    /// List Agent Runtimes
+    pub async fn list_agent_runtimes(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut runtimes = Vec::new();
+        let mut paginator = client.list_agent_runtimes().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for runtime in page.agent_runtime_summaries {
+                runtimes.push(self.agent_runtime_to_json(&runtime));
+            }
+        }
+
+        Ok(runtimes)
+    }
+
+    /// Get detailed information for a specific agent runtime
+    pub async fn describe_agent_runtime(
+        &self,
+        account_id: &str,
+        region: &str,
+        runtime_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_agent_runtime()
+            .agent_runtime_arn(runtime_arn)
+            .send()
+            .await?;
+
+        Ok(self.agent_runtime_details_to_json(&response))
+    }
+
+    fn agent_runtime_to_json(
+        &self,
+        runtime: &bedrockagentcorecontrol::types::AgentRuntimeSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "AgentRuntimeArn".to_string(),
+            serde_json::Value::String(runtime.agent_runtime_arn.clone()),
+        );
+
+        if let Some(name) = &runtime.agent_runtime_name {
+            json.insert(
+                "AgentRuntimeName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &runtime.agent_runtime_status {
+            json.insert(
+                "AgentRuntimeStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &runtime.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &runtime.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn agent_runtime_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_agent_runtime::GetAgentRuntimeOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "AgentRuntimeArn".to_string(),
+            serde_json::Value::String(response.agent_runtime_arn.clone()),
+        );
+
+        if let Some(name) = &response.agent_runtime_name {
+            json.insert(
+                "AgentRuntimeName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.agent_runtime_status {
+            json.insert(
+                "AgentRuntimeStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== AgentRuntimeEndpoint ====================
+
+    /// List Agent Runtime Endpoints
+    pub async fn list_agent_runtime_endpoints(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut endpoints = Vec::new();
+        let mut paginator = client
+            .list_agent_runtime_endpoints()
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for endpoint in page.agent_runtime_endpoint_summaries {
+                endpoints.push(self.agent_runtime_endpoint_to_json(&endpoint));
+            }
+        }
+
+        Ok(endpoints)
+    }
+
+    /// Get detailed information for a specific agent runtime endpoint
+    pub async fn describe_agent_runtime_endpoint(
+        &self,
+        account_id: &str,
+        region: &str,
+        endpoint_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_agent_runtime_endpoint()
+            .agent_runtime_endpoint_arn(endpoint_arn)
+            .send()
+            .await?;
+
+        Ok(self.agent_runtime_endpoint_details_to_json(&response))
+    }
+
+    fn agent_runtime_endpoint_to_json(
+        &self,
+        endpoint: &bedrockagentcorecontrol::types::AgentRuntimeEndpointSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "AgentRuntimeEndpointArn".to_string(),
+            serde_json::Value::String(endpoint.agent_runtime_endpoint_arn.clone()),
+        );
+
+        if let Some(name) = &endpoint.agent_runtime_endpoint_name {
+            json.insert(
+                "AgentRuntimeEndpointName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(runtime_arn) = &endpoint.agent_runtime_arn {
+            json.insert(
+                "AgentRuntimeArn".to_string(),
+                serde_json::Value::String(runtime_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &endpoint.agent_runtime_endpoint_status {
+            json.insert(
+                "AgentRuntimeEndpointStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &endpoint.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &endpoint.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn agent_runtime_endpoint_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_agent_runtime_endpoint::GetAgentRuntimeEndpointOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "AgentRuntimeEndpointArn".to_string(),
+            serde_json::Value::String(response.agent_runtime_endpoint_arn.clone()),
+        );
+
+        if let Some(name) = &response.agent_runtime_endpoint_name {
+            json.insert(
+                "AgentRuntimeEndpointName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(runtime_arn) = &response.agent_runtime_arn {
+            json.insert(
+                "AgentRuntimeArn".to_string(),
+                serde_json::Value::String(runtime_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &response.agent_runtime_endpoint_status {
+            json.insert(
+                "AgentRuntimeEndpointStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(endpoint_url) = &response.endpoint_url {
+            json.insert(
+                "EndpointUrl".to_string(),
+                serde_json::Value::String(endpoint_url.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== Memory ====================
+
+    /// List Memories
+    pub async fn list_memories(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut memories = Vec::new();
+        let mut paginator = client.list_memories().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for memory in page.memory_summaries {
+                memories.push(self.memory_to_json(&memory));
+            }
+        }
+
+        Ok(memories)
+    }
+
+    /// Get detailed information for a specific memory
+    pub async fn describe_memory(
+        &self,
+        account_id: &str,
+        region: &str,
+        memory_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client.get_memory().memory_arn(memory_arn).send().await?;
+
+        Ok(self.memory_details_to_json(&response))
+    }
+
+    fn memory_to_json(
+        &self,
+        memory: &bedrockagentcorecontrol::types::MemorySummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "MemoryArn".to_string(),
+            serde_json::Value::String(memory.memory_arn.clone()),
+        );
+
+        if let Some(name) = &memory.memory_name {
+            json.insert(
+                "MemoryName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &memory.memory_status {
+            json.insert(
+                "MemoryStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &memory.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &memory.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn memory_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_memory::GetMemoryOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "MemoryArn".to_string(),
+            serde_json::Value::String(response.memory_arn.clone()),
+        );
+
+        if let Some(name) = &response.memory_name {
+            json.insert(
+                "MemoryName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.memory_status {
+            json.insert(
+                "MemoryStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== Gateway ====================
+
+    /// List Gateways
+    pub async fn list_gateways(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut gateways = Vec::new();
+        let mut paginator = client.list_gateways().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for gateway in page.gateway_summaries {
+                gateways.push(self.gateway_to_json(&gateway));
+            }
+        }
+
+        Ok(gateways)
+    }
+
+    /// Get detailed information for a specific gateway
+    pub async fn describe_gateway(
+        &self,
+        account_id: &str,
+        region: &str,
+        gateway_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_gateway()
+            .gateway_arn(gateway_arn)
+            .send()
+            .await?;
+
+        Ok(self.gateway_details_to_json(&response))
+    }
+
+    fn gateway_to_json(
+        &self,
+        gateway: &bedrockagentcorecontrol::types::GatewaySummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "GatewayArn".to_string(),
+            serde_json::Value::String(gateway.gateway_arn.clone()),
+        );
+
+        if let Some(name) = &gateway.gateway_name {
+            json.insert(
+                "GatewayName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &gateway.gateway_status {
+            json.insert(
+                "GatewayStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &gateway.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &gateway.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn gateway_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_gateway::GetGatewayOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "GatewayArn".to_string(),
+            serde_json::Value::String(response.gateway_arn.clone()),
+        );
+
+        if let Some(name) = &response.gateway_name {
+            json.insert(
+                "GatewayName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.gateway_status {
+            json.insert(
+                "GatewayStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== Browser ====================
+
+    /// List Browsers
+    pub async fn list_browsers(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut browsers = Vec::new();
+        let mut paginator = client.list_browsers().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for browser in page.browser_summaries {
+                browsers.push(self.browser_to_json(&browser));
+            }
+        }
+
+        Ok(browsers)
+    }
+
+    /// Get detailed information for a specific browser
+    pub async fn describe_browser(
+        &self,
+        account_id: &str,
+        region: &str,
+        browser_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_browser()
+            .browser_arn(browser_arn)
+            .send()
+            .await?;
+
+        Ok(self.browser_details_to_json(&response))
+    }
+
+    fn browser_to_json(
+        &self,
+        browser: &bedrockagentcorecontrol::types::BrowserSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "BrowserArn".to_string(),
+            serde_json::Value::String(browser.browser_arn.clone()),
+        );
+
+        if let Some(name) = &browser.browser_name {
+            json.insert(
+                "BrowserName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &browser.browser_status {
+            json.insert(
+                "BrowserStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &browser.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &browser.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn browser_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_browser::GetBrowserOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "BrowserArn".to_string(),
+            serde_json::Value::String(response.browser_arn.clone()),
+        );
+
+        if let Some(name) = &response.browser_name {
+            json.insert(
+                "BrowserName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.browser_status {
+            json.insert(
+                "BrowserStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== CodeInterpreter ====================
+
+    /// List Code Interpreters
+    pub async fn list_code_interpreters(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut code_interpreters = Vec::new();
+        let mut paginator = client.list_code_interpreters().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for code_interpreter in page.code_interpreter_summaries {
+                code_interpreters.push(self.code_interpreter_to_json(&code_interpreter));
+            }
+        }
+
+        Ok(code_interpreters)
+    }
+
+    /// Get detailed information for a specific code interpreter
+    pub async fn describe_code_interpreter(
+        &self,
+        account_id: &str,
+        region: &str,
+        code_interpreter_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_code_interpreter()
+            .code_interpreter_arn(code_interpreter_arn)
+            .send()
+            .await?;
+
+        Ok(self.code_interpreter_details_to_json(&response))
+    }
+
+    fn code_interpreter_to_json(
+        &self,
+        code_interpreter: &bedrockagentcorecontrol::types::CodeInterpreterSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "CodeInterpreterArn".to_string(),
+            serde_json::Value::String(code_interpreter.code_interpreter_arn.clone()),
+        );
+
+        if let Some(name) = &code_interpreter.code_interpreter_name {
+            json.insert(
+                "CodeInterpreterName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &code_interpreter.code_interpreter_status {
+            json.insert(
+                "CodeInterpreterStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &code_interpreter.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &code_interpreter.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn code_interpreter_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_code_interpreter::GetCodeInterpreterOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "CodeInterpreterArn".to_string(),
+            serde_json::Value::String(response.code_interpreter_arn.clone()),
+        );
+
+        if let Some(name) = &response.code_interpreter_name {
+            json.insert(
+                "CodeInterpreterName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.code_interpreter_status {
+            json.insert(
+                "CodeInterpreterStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== ApiKeyCredentialProvider ====================
+
+    /// List API Key Credential Providers
+    pub async fn list_api_key_credential_providers(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut providers = Vec::new();
+        let mut paginator = client
+            .list_api_key_credential_providers()
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for provider in page.api_key_credential_provider_summaries {
+                providers.push(self.api_key_credential_provider_to_json(&provider));
+            }
+        }
+
+        Ok(providers)
+    }
+
+    /// Get detailed information for a specific API key credential provider
+    pub async fn describe_api_key_credential_provider(
+        &self,
+        account_id: &str,
+        region: &str,
+        provider_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_api_key_credential_provider()
+            .api_key_credential_provider_arn(provider_arn)
+            .send()
+            .await?;
+
+        Ok(self.api_key_credential_provider_details_to_json(&response))
+    }
+
+    fn api_key_credential_provider_to_json(
+        &self,
+        provider: &bedrockagentcorecontrol::types::ApiKeyCredentialProviderSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "ApiKeyCredentialProviderArn".to_string(),
+            serde_json::Value::String(provider.api_key_credential_provider_arn.clone()),
+        );
+
+        if let Some(name) = &provider.api_key_credential_provider_name {
+            json.insert(
+                "ApiKeyCredentialProviderName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &provider.api_key_credential_provider_status {
+            json.insert(
+                "ApiKeyCredentialProviderStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &provider.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &provider.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn api_key_credential_provider_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_api_key_credential_provider::GetApiKeyCredentialProviderOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "ApiKeyCredentialProviderArn".to_string(),
+            serde_json::Value::String(response.api_key_credential_provider_arn.clone()),
+        );
+
+        if let Some(name) = &response.api_key_credential_provider_name {
+            json.insert(
+                "ApiKeyCredentialProviderName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.api_key_credential_provider_status {
+            json.insert(
+                "ApiKeyCredentialProviderStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== OAuth2CredentialProvider ====================
+
+    /// List OAuth2 Credential Providers
+    pub async fn list_oauth2_credential_providers(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut providers = Vec::new();
+        let mut paginator = client
+            .list_oauth2_credential_providers()
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for provider in page.oauth2_credential_provider_summaries {
+                providers.push(self.oauth2_credential_provider_to_json(&provider));
+            }
+        }
+
+        Ok(providers)
+    }
+
+    /// Get detailed information for a specific OAuth2 credential provider
+    pub async fn describe_oauth2_credential_provider(
+        &self,
+        account_id: &str,
+        region: &str,
+        provider_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_oauth2_credential_provider()
+            .oauth2_credential_provider_arn(provider_arn)
+            .send()
+            .await?;
+
+        Ok(self.oauth2_credential_provider_details_to_json(&response))
+    }
+
+    fn oauth2_credential_provider_to_json(
+        &self,
+        provider: &bedrockagentcorecontrol::types::OAuth2CredentialProviderSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "OAuth2CredentialProviderArn".to_string(),
+            serde_json::Value::String(provider.oauth2_credential_provider_arn.clone()),
+        );
+
+        if let Some(name) = &provider.oauth2_credential_provider_name {
+            json.insert(
+                "OAuth2CredentialProviderName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &provider.oauth2_credential_provider_status {
+            json.insert(
+                "OAuth2CredentialProviderStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &provider.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &provider.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn oauth2_credential_provider_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_oauth2_credential_provider::GetOAuth2CredentialProviderOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "OAuth2CredentialProviderArn".to_string(),
+            serde_json::Value::String(response.oauth2_credential_provider_arn.clone()),
+        );
+
+        if let Some(name) = &response.oauth2_credential_provider_name {
+            json.insert(
+                "OAuth2CredentialProviderName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.oauth2_credential_provider_status {
+            json.insert(
+                "OAuth2CredentialProviderStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== WorkloadIdentity ====================
+
+    /// List Workload Identities
+    pub async fn list_workload_identities(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut identities = Vec::new();
+        let mut paginator = client.list_workload_identities().into_paginator().send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for identity in page.workload_identity_summaries {
+                identities.push(self.workload_identity_to_json(&identity));
+            }
+        }
+
+        Ok(identities)
+    }
+
+    /// Get detailed information for a specific workload identity
+    pub async fn describe_workload_identity(
+        &self,
+        account_id: &str,
+        region: &str,
+        identity_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_workload_identity()
+            .workload_identity_arn(identity_arn)
+            .send()
+            .await?;
+
+        Ok(self.workload_identity_details_to_json(&response))
+    }
+
+    fn workload_identity_to_json(
+        &self,
+        identity: &bedrockagentcorecontrol::types::WorkloadIdentitySummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "WorkloadIdentityArn".to_string(),
+            serde_json::Value::String(identity.workload_identity_arn.clone()),
+        );
+
+        if let Some(name) = &identity.workload_identity_name {
+            json.insert(
+                "WorkloadIdentityName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &identity.workload_identity_status {
+            json.insert(
+                "WorkloadIdentityStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &identity.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &identity.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn workload_identity_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_workload_identity::GetWorkloadIdentityOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "WorkloadIdentityArn".to_string(),
+            serde_json::Value::String(response.workload_identity_arn.clone()),
+        );
+
+        if let Some(name) = &response.workload_identity_name {
+            json.insert(
+                "WorkloadIdentityName".to_string(),
+                serde_json::Value::String(name.clone()),
+            );
+        }
+
+        if let Some(status) = &response.workload_identity_status {
+            json.insert(
+                "WorkloadIdentityStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    // ==================== Child Resources ====================
+
+    /// List Agent Runtime Versions (requires runtime_arn)
+    pub async fn list_agent_runtime_versions(
+        &self,
+        account_id: &str,
+        region: &str,
+        runtime_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut versions = Vec::new();
+        let mut paginator = client
+            .list_agent_runtime_versions()
+            .agent_runtime_arn(runtime_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for version in page.agent_runtime_version_summaries {
+                versions.push(self.agent_runtime_version_to_json(&version));
+            }
+        }
+
+        Ok(versions)
+    }
+
+    fn agent_runtime_version_to_json(
+        &self,
+        version: &bedrockagentcorecontrol::types::AgentRuntimeVersionSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(version_number) = &version.version {
+            json.insert(
+                "Version".to_string(),
+                serde_json::Value::String(version_number.clone()),
+            );
+        }
+
+        if let Some(runtime_arn) = &version.agent_runtime_arn {
+            json.insert(
+                "AgentRuntimeArn".to_string(),
+                serde_json::Value::String(runtime_arn.clone()),
+            );
+        }
+
+        if let Some(created_at) = &version.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// List Gateway Targets (requires gateway_arn)
+    pub async fn list_gateway_targets(
+        &self,
+        account_id: &str,
+        region: &str,
+        gateway_arn: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+
+        let mut targets = Vec::new();
+        let mut paginator = client
+            .list_gateway_targets()
+            .gateway_arn(gateway_arn)
+            .into_paginator()
+            .send();
+
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            for target in page.gateway_target_summaries {
+                targets.push(self.gateway_target_to_json(&target));
+            }
+        }
+
+        Ok(targets)
+    }
+
+    /// Get detailed information for a specific gateway target
+    pub async fn describe_gateway_target(
+        &self,
+        account_id: &str,
+        region: &str,
+        gateway_arn: &str,
+        target_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = bedrockagentcorecontrol::Client::new(&aws_config);
+        let response = client
+            .get_gateway_target()
+            .gateway_arn(gateway_arn)
+            .target_arn(target_arn)
+            .send()
+            .await?;
+
+        Ok(self.gateway_target_details_to_json(&response))
+    }
+
+    fn gateway_target_to_json(
+        &self,
+        target: &bedrockagentcorecontrol::types::GatewayTargetSummary,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "TargetArn".to_string(),
+            serde_json::Value::String(target.target_arn.clone()),
+        );
+
+        if let Some(gateway_arn) = &target.gateway_arn {
+            json.insert(
+                "GatewayArn".to_string(),
+                serde_json::Value::String(gateway_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &target.target_status {
+            json.insert(
+                "TargetStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(created_at) = &target.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &target.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn gateway_target_details_to_json(
+        &self,
+        response: &bedrockagentcorecontrol::operation::get_gateway_target::GetGatewayTargetOutput,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "TargetArn".to_string(),
+            serde_json::Value::String(response.target_arn.clone()),
+        );
+
+        if let Some(gateway_arn) = &response.gateway_arn {
+            json.insert(
+                "GatewayArn".to_string(),
+                serde_json::Value::String(gateway_arn.clone()),
+            );
+        }
+
+        if let Some(status) = &response.target_status {
+            json.insert(
+                "TargetStatus".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(description) = &response.description {
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
+        }
+
+        if let Some(created_at) = &response.created_at {
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
+        }
+
+        if let Some(updated_at) = &response.updated_at {
+            json.insert(
+                "UpdatedAt".to_string(),
+                serde_json::Value::String(updated_at.to_string()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+}

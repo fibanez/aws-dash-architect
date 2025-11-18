@@ -1,17 +1,20 @@
-use super::{utils::*, ResourceNormalizer};
+use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub struct IAMRoleNormalizer;
 
-impl ResourceNormalizer for IAMRoleNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for IAMRoleNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let role_name = raw_response
             .get("RoleName")
@@ -26,7 +29,21 @@ impl ResourceNormalizer for IAMRoleNormalizer {
             .to_string();
 
         let display_name = role_name.clone();
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::IAM::Role", &role_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::IAM::Role {}: {}", role_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -42,6 +59,9 @@ impl ResourceNormalizer for IAMRoleNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -85,13 +105,15 @@ impl ResourceNormalizer for IAMRoleNormalizer {
 
 pub struct IAMUserNormalizer;
 
-impl ResourceNormalizer for IAMUserNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for IAMUserNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let user_name = raw_response
             .get("UserName")
@@ -106,7 +128,21 @@ impl ResourceNormalizer for IAMUserNormalizer {
             .to_string();
 
         let display_name = user_name.clone();
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::IAM::User", &user_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::IAM::User {}: {}", user_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -122,6 +158,9 @@ impl ResourceNormalizer for IAMUserNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -181,13 +220,15 @@ impl ResourceNormalizer for IAMUserNormalizer {
 
 pub struct IAMPolicyNormalizer;
 
-impl ResourceNormalizer for IAMPolicyNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for IAMPolicyNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let policy_name = raw_response
             .get("PolicyName")
@@ -202,7 +243,21 @@ impl ResourceNormalizer for IAMPolicyNormalizer {
             .to_string();
 
         let display_name = policy_name.clone();
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::IAM::Policy", &policy_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::IAM::Policy {}: {}", policy_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -218,6 +273,9 @@ impl ResourceNormalizer for IAMPolicyNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -237,3 +295,4 @@ impl ResourceNormalizer for IAMPolicyNormalizer {
         "AWS::IAM::Policy"
     }
 }
+

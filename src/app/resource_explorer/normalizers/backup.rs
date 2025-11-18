@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Backup Plans
 pub struct BackupPlanNormalizer;
 
-impl ResourceNormalizer for BackupPlanNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for BackupPlanNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let backup_plan_id = raw_response
             .get("BackupPlanId")
@@ -28,7 +31,21 @@ impl ResourceNormalizer for BackupPlanNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Backup::BackupPlan", &backup_plan_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Backup::BackupPlan {}: {}", backup_plan_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -44,6 +61,9 @@ impl ResourceNormalizer for BackupPlanNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -87,13 +107,15 @@ impl ResourceNormalizer for BackupPlanNormalizer {
 /// Normalizer for Backup Vaults
 pub struct BackupVaultNormalizer;
 
-impl ResourceNormalizer for BackupVaultNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for BackupVaultNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let backup_vault_name = raw_response
             .get("BackupVaultName")
@@ -103,7 +125,21 @@ impl ResourceNormalizer for BackupVaultNormalizer {
 
         let display_name = extract_display_name(&raw_response, &backup_vault_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Backup::BackupVault", &backup_vault_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Backup::BackupVault {}: {}", backup_vault_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -119,6 +155,9 @@ impl ResourceNormalizer for BackupVaultNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -139,3 +178,4 @@ impl ResourceNormalizer for BackupVaultNormalizer {
         "AWS::Backup::BackupVault"
     }
 }
+

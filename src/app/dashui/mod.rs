@@ -29,7 +29,7 @@
 //!
 //! ## Visualization Components
 //! - **Resource Explorer**: Tree-based visualization of AWS resources across accounts and regions
-//! - **Control Bridge**: AI-powered AWS operations interface
+//! - **Agent Control**: AI-powered AWS operations interface (Agent Framework)
 //!
 //! # Integration with Core Systems
 //!
@@ -47,7 +47,6 @@
 //! - **User Preference Persistence**: Theme choices saved across sessions
 //!
 //! ## File Operations
-//! - **Custom File Picker**: [`fuzzy_file_picker::FuzzyFilePicker`] with fuzzy search capabilities
 //! - **CloudFormation Picker**: [`cloudformation_file_picker::CloudFormationFilePicker`] optimized for templates
 //! - **Drag and Drop**: Support for template files and project imports
 //!
@@ -78,12 +77,14 @@
 //! detailed implementation patterns and the [UI testing guide](../../../docs/technical/ui-component-testing.wiki)
 //! for testing strategies.
 
+pub mod agent_log_window;
+pub mod agent_manager_window;
 pub mod app;
 pub mod aws_login_window;
+pub mod cloudwatch_logs_window;
+pub mod cloudtrail_events_window;
 pub mod command_palette;
-pub mod control_bridge_window;
 pub mod credentials_debug_window;
-pub mod fuzzy_file_picker;
 pub mod help_window;
 pub mod hint_mode;
 pub mod key_mapping;
@@ -96,12 +97,14 @@ pub mod verification_window;
 pub mod window_focus;
 pub mod window_selector;
 
+pub use agent_log_window::AgentLogWindow;
+pub use agent_manager_window::AgentManagerWindow;
 pub use app::DashApp;
 pub use aws_login_window::AwsLoginWindow;
+pub use cloudwatch_logs_window::{CloudWatchLogsShowParams, CloudWatchLogsWindow};
+pub use cloudtrail_events_window::{CloudTrailEventsShowParams, CloudTrailEventsWindow};
 pub use command_palette::CommandPalette;
-pub use control_bridge_window::ControlBridgeWindow;
 pub use credentials_debug_window::CredentialsDebugWindow;
-pub use fuzzy_file_picker::{FuzzyFilePicker, FuzzyFilePickerStatus};
 pub use help_window::HelpWindow;
 pub use hint_mode::{HintConfig, HintGenerator, HintMarker, HintMode, HintOverlay};
 pub use key_mapping::{KeyBindingMap, KeyBindingSettings, KeyMapping, KeyMappingRegistry};

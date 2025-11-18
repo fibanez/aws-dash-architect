@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for AWS App Runner Service Resources
 pub struct AppRunnerResourceNormalizer;
 
-impl ResourceNormalizer for AppRunnerResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for AppRunnerResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
             .or_else(|| raw_response.get("ServiceArn"))
@@ -36,7 +40,8 @@ impl ResourceNormalizer for AppRunnerResourceNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::AppRunner::Service".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -49,105 +54,32 @@ impl ResourceNormalizer for AppRunnerResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-        
-        // App Runner services relate to various AWS resources
-        for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::IAM::Role" => {
-                    // App Runner services use IAM roles for instance permissions
-                    if let Some(instance_config) = entry.raw_properties.get("InstanceConfiguration") {
-                        if let Some(instance_role_arn) = instance_config.get("InstanceRoleArn").and_then(|v| v.as_str()) {
-                            if instance_role_arn.contains(&resource.resource_id) {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::ECR::Repository" => {
-                    // App Runner services can use ECR repositories as image sources
-                    if let Some(source_config) = entry.raw_properties.get("SourceConfiguration") {
-                        if let Some(image_repo) = source_config.get("ImageRepository") {
-                            if let Some(image_identifier) = image_repo.get("ImageIdentifier").and_then(|v| v.as_str()) {
-                                if image_identifier.contains("ecr") && image_identifier.contains(&resource.resource_id) {
-                                    relationships.push(ResourceRelationship {
-                                        relationship_type: RelationshipType::Uses,
-                                        target_resource_id: resource.resource_id.clone(),
-                                        target_resource_type: resource.resource_type.clone(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "AWS::CodeCommit::Repository" => {
-                    // App Runner services can use CodeCommit repositories as code sources
-                    if let Some(source_config) = entry.raw_properties.get("SourceConfiguration") {
-                        if let Some(code_repo) = source_config.get("CodeRepository") {
-                            if let Some(repo_url) = code_repo.get("RepositoryUrl").and_then(|v| v.as_str()) {
-                                if repo_url.contains("codecommit") && repo_url.contains(&resource.resource_id) {
-                                    relationships.push(ResourceRelationship {
-                                        relationship_type: RelationshipType::Uses,
-                                        target_resource_id: resource.resource_id.clone(),
-                                        target_resource_type: resource.resource_type.clone(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "AWS::AppRunner::Connection" => {
-                    // App Runner services use connections for external code repositories
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::CloudWatch::LogGroup" => {
-                    // App Runner services send logs to CloudWatch
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::CertificateManager::Certificate" => {
-                    // App Runner services can use custom domains with SSL certificates
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::EC2::VPC" => {
-                    // App Runner services can connect to VPCs through VPC connectors
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                _ => {}
-            }
-        }
-        
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -158,13 +90,15 @@ impl ResourceNormalizer for AppRunnerResourceNormalizer {
 /// Normalizer for AWS App Runner Connection Resources
 pub struct AppRunnerConnectionResourceNormalizer;
 
-impl ResourceNormalizer for AppRunnerConnectionResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for AppRunnerConnectionResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -185,7 +119,28 @@ impl ResourceNormalizer for AppRunnerConnectionResourceNormalizer {
             .unwrap_or("Unknown")
             .to_string();
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::AppRunner::Connection", &resource_id, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::AppRunner::Connection {}: {}", resource_id, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -201,6 +156,9 @@ impl ResourceNormalizer for AppRunnerConnectionResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -209,8 +167,8 @@ impl ResourceNormalizer for AppRunnerConnectionResourceNormalizer {
 
     fn extract_relationships(
         &self,
-        _entry: &ResourceEntry,
-        _all_resources: &[ResourceEntry],
+        __entry: &ResourceEntry,
+        __all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         // App Runner connections are primarily used by App Runner services
         // The relationship is established from the service side
@@ -221,3 +179,4 @@ impl ResourceNormalizer for AppRunnerConnectionResourceNormalizer {
         "AWS::AppRunner::Connection"
     }
 }
+

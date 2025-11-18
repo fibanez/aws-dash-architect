@@ -5,9 +5,15 @@ This document lists AWS services that are **NOT YET IMPLEMENTED** in the AWS Exp
 
 ## Summary
 
-**Currently Implemented**: 157 resource types across 72 AWS services  
-**Missing Resources**: 200+ critical resources across existing services  
+**Currently Implemented**: 156 resource types across 72 AWS services
+**Hierarchical Child Resources**: 6 child resource types (Bedrock DataSource, IngestionJob, AgentAlias, AgentActionGroup, FlowAlias) with automatic nested querying
+**Missing Resources**: 200+ critical resources across existing services
 **Implementation Goal**: Complete coverage of all resources for top 100+ most-used AWS services
+
+### Recent Updates
+- ✅ **Hierarchical Child Resource System**: Implemented parent-child relationships for Bedrock resources (KnowledgeBase → DataSource → IngestionJob, Agent → AgentAlias/AgentActionGroup, Flow → FlowAlias)
+- ✅ **Automatic Recursive Querying**: Children are automatically discovered when querying parent resources
+- ✅ **Tree View Nesting**: Child resources display nested under their parents in the tree view
 
 ---
 

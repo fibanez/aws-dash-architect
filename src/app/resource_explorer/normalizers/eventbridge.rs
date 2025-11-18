@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for EventBridge Event Bus
 pub struct EventBridgeEventBusNormalizer;
 
-impl ResourceNormalizer for EventBridgeEventBusNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EventBridgeEventBusNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let event_bus_name = raw_response
             .get("Name")
@@ -22,7 +25,21 @@ impl ResourceNormalizer for EventBridgeEventBusNormalizer {
 
         let display_name = extract_display_name(&raw_response, &event_bus_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Events::EventBus", &event_bus_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Events::EventBus {}: {}", event_bus_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -38,6 +55,9 @@ impl ResourceNormalizer for EventBridgeEventBusNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -62,13 +82,15 @@ impl ResourceNormalizer for EventBridgeEventBusNormalizer {
 /// Normalizer for EventBridge Rules
 pub struct EventBridgeRuleNormalizer;
 
-impl ResourceNormalizer for EventBridgeRuleNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let rule_name = raw_response
             .get("Name")
@@ -78,7 +100,21 @@ impl ResourceNormalizer for EventBridgeRuleNormalizer {
 
         let display_name = extract_display_name(&raw_response, &rule_name);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Events::Rule", &rule_name, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Events::Rule {}: {}", rule_name, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -94,6 +130,9 @@ impl ResourceNormalizer for EventBridgeRuleNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -136,3 +175,4 @@ impl ResourceNormalizer for EventBridgeRuleNormalizer {
         "AWS::Events::Rule"
     }
 }
+

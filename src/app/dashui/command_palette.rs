@@ -4,7 +4,7 @@ use egui::{self, Align2, Context, FontId, Id, Pos2, Rect, RichText, Vec2};
 pub enum CommandAction {
     Login,
     AWSExplorer,    // AWS resource explorer
-    ControlBridge,  // Control Bridge AI assistant
+    AgentManager,  // Agent Manager for managing multiple agents
     Quit,
 }
 
@@ -180,11 +180,11 @@ impl CommandPalette {
                 description: "Explore AWS resources across accounts",
             },
             CommandEntry {
-                key: egui::Key::B,
-                key_char: 'B',
-                label: "Control Bridge",
-                color: egui::Color32::from_rgb(70, 150, 200), // Blue
-                description: "AI assistant for AWS resource operations",
+                key: egui::Key::M,
+                key_char: 'M',
+                label: "Agent Manager",
+                color: egui::Color32::from_rgb(100, 180, 220), // Light Blue
+                description: "Manage multiple AI agents",
             },
             CommandEntry {
                 key: egui::Key::Q,
@@ -246,7 +246,7 @@ impl CommandPalette {
                                     match cmd.key {
                                         egui::Key::L => result = Some(CommandAction::Login),
                                         egui::Key::E => result = Some(CommandAction::AWSExplorer),
-                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
+                                        egui::Key::M => result = Some(CommandAction::AgentManager),
                                         egui::Key::Q => result = Some(CommandAction::Quit),
                                         _ => {}
                                     }
@@ -278,7 +278,7 @@ impl CommandPalette {
                                     match cmd.key {
                                         egui::Key::L => result = Some(CommandAction::Login),
                                         egui::Key::E => result = Some(CommandAction::AWSExplorer),
-                                        egui::Key::B => result = Some(CommandAction::ControlBridge),
+                                        egui::Key::M => result = Some(CommandAction::AgentManager),
                                         egui::Key::Q => result = Some(CommandAction::Quit),
                                         _ => {}
                                     }

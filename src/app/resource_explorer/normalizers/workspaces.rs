@@ -1,18 +1,21 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Amazon WorkSpaces Resources
 pub struct WorkSpacesResourceNormalizer;
 
-impl ResourceNormalizer for WorkSpacesResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -33,7 +36,28 @@ impl ResourceNormalizer for WorkSpacesResourceNormalizer {
             .unwrap_or("Unknown")
             .to_string();
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::WorkSpaces::Workspace", &resource_id, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::WorkSpaces::Workspace {}: {}", resource_id, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -49,6 +73,9 @@ impl ResourceNormalizer for WorkSpacesResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -124,13 +151,15 @@ impl ResourceNormalizer for WorkSpacesResourceNormalizer {
 /// Normalizer for Amazon WorkSpaces Directory Resources
 pub struct WorkSpacesDirectoryResourceNormalizer;
 
-impl ResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -152,7 +181,28 @@ impl ResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
             .unwrap_or("Unknown")
             .to_string();
 
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+
+        let tags = aws_client
+
+
+            .fetch_tags_for_resource("AWS::WorkSpaces::Directory", &resource_id, account, region)
+
+
+            .await
+
+
+            .unwrap_or_else(|e| {
+
+
+                tracing::warn!("Failed to fetch tags for AWS::WorkSpaces::Directory {}: {}", resource_id, e);
+
+
+                Vec::new()
+
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -168,6 +218,9 @@ impl ResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -225,3 +278,4 @@ impl ResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
         "AWS::WorkSpaces::Directory"
     }
 }
+

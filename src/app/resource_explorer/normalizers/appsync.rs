@@ -1,18 +1,21 @@
 use super::utils::*;
 use super::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for AppSync GraphQL APIs
 pub struct AppSyncGraphQLApiNormalizer;
 
-impl ResourceNormalizer for AppSyncGraphQLApiNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for AppSyncGraphQLApiNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let api_id = raw_response
             .get("ApiId")
@@ -28,7 +31,21 @@ impl ResourceNormalizer for AppSyncGraphQLApiNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::AppSync::GraphQLApi", &api_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::AppSync::GraphQLApi {}: {}", api_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -44,6 +61,9 @@ impl ResourceNormalizer for AppSyncGraphQLApiNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -52,8 +72,8 @@ impl ResourceNormalizer for AppSyncGraphQLApiNormalizer {
 
     fn extract_relationships(
         &self,
-        _entry: &ResourceEntry,
-        _all_resources: &[ResourceEntry],
+        __entry: &ResourceEntry,
+        __all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         // AppSync APIs can have relationships with:
         // - Cognito User Pools (for authentication)
@@ -70,3 +90,4 @@ impl ResourceNormalizer for AppSyncGraphQLApiNormalizer {
         "AWS::AppSync::GraphQLApi"
     }
 }
+

@@ -1,18 +1,21 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for Polly Voice Resources
 pub struct PollyVoiceNormalizer;
 
-impl ResourceNormalizer for PollyVoiceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for PollyVoiceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -29,7 +32,21 @@ impl ResourceNormalizer for PollyVoiceNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Polly::Voice", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Polly::Voice {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -45,6 +62,9 @@ impl ResourceNormalizer for PollyVoiceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -65,16 +85,19 @@ impl ResourceNormalizer for PollyVoiceNormalizer {
     }
 }
 
+
 /// Normalizer for Polly Lexicon Resources
 pub struct PollyLexiconNormalizer;
 
-impl ResourceNormalizer for PollyLexiconNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for PollyLexiconNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -85,7 +108,21 @@ impl ResourceNormalizer for PollyLexiconNormalizer {
 
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::Polly::Lexicon", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::Polly::Lexicon {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -101,6 +138,9 @@ impl ResourceNormalizer for PollyLexiconNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -137,37 +177,42 @@ impl ResourceNormalizer for PollyLexiconNormalizer {
     }
 }
 
+
 /// Normalizer for Polly Synthesis Task Resources
 pub struct PollySynthesisTaskNormalizer;
 
-impl ResourceNormalizer for PollySynthesisTaskNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for PollySynthesisTaskNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
-            .or_else(|| raw_response.get("TaskId"))
+            .or_else(|| raw_response.get("VoiceId"))
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown-task")
+            .unwrap_or("unknown-voice")
             .to_string();
 
-        let display_name = resource_id.clone();
-
-        let status = raw_response
-            .get("TaskStatus")
-            .or_else(|| raw_response.get("Status"))
+        let display_name = raw_response
+            .get("VoiceName")
+            .or_else(|| raw_response.get("Name"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .unwrap_or(&resource_id)
+            .to_string();
 
-        let tags = extract_tags(&raw_response);
+        let status = extract_status(&raw_response);
+        let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
-            resource_type: "AWS::Polly::SynthesisTask".to_string(),
+
+        let mut entry = ResourceEntry {
+            resource_type: "AWS::Polly::Voice".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
             resource_id,
@@ -179,80 +224,32 @@ impl ResourceNormalizer for PollySynthesisTaskNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-
-        // Synthesis tasks can be associated with various AWS resources
-        for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::SNS::Topic" => {
-                    // Synthesis tasks can notify via SNS
-                    if let Some(sns_topic_arn) = entry.raw_properties.get("SnsTopicArn") {
-                        if let Some(sns_topic_arn_str) = sns_topic_arn.as_str() {
-                            if sns_topic_arn_str.contains(&resource.resource_id) {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::S3::Bucket" => {
-                    // Synthesis tasks output to S3
-                    if let Some(output_uri) = entry.raw_properties.get("OutputUri") {
-                        if let Some(output_uri_str) = output_uri.as_str() {
-                            if output_uri_str.contains(&resource.resource_id) {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::Polly::Voice" => {
-                    // Synthesis tasks use voices
-                    if let Some(voice_id) = entry.raw_properties.get("VoiceId") {
-                        if let Some(voice_id_str) = voice_id.as_str() {
-                            if voice_id_str == resource.resource_id {
-                                relationships.push(ResourceRelationship {
-                                    relationship_type: RelationshipType::Uses,
-                                    target_resource_id: resource.resource_id.clone(),
-                                    target_resource_type: resource.resource_type.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                "AWS::Polly::Lexicon" => {
-                    // Synthesis tasks can use lexicons
-                    if resource.account_id == entry.account_id 
-                        && resource.region == entry.region {
-                        relationships.push(ResourceRelationship {
-                            relationship_type: RelationshipType::Uses,
-                            target_resource_id: resource.resource_id.clone(),
-                            target_resource_type: resource.resource_type.clone(),
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {

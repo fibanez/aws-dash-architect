@@ -1,19 +1,23 @@
 use super::*;
 use super::utils::*;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 /// Normalizer for AWS DataSync Task Resources
 pub struct DataSyncResourceNormalizer;
 
-impl ResourceNormalizer for DataSyncResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for DataSyncResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &crate::app::resource_explorer::aws_client::AWSResourceClient,
     ) -> Result<ResourceEntry> {
+        // Inline normalization logic
         let resource_id = raw_response
             .get("ResourceId")
             .or_else(|| raw_response.get("TaskArn"))
@@ -31,7 +35,8 @@ impl ResourceNormalizer for DataSyncResourceNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-        Ok(ResourceEntry {
+
+        let mut entry = ResourceEntry {
             resource_type: "AWS::DataSync::Task".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
@@ -44,129 +49,32 @@ impl ResourceNormalizer for DataSyncResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
-        })
+        };
+
+        // Fetch tags (will be empty for resources that don't support tagging)
+        entry.tags = aws_client
+            .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                Vec::new()
+            });
+
+        Ok(entry)
     }
 
     fn extract_relationships(
         &self,
-        entry: &ResourceEntry,
-        all_resources: &[ResourceEntry],
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
-        let mut relationships = Vec::new();
-        
-        // DataSync tasks relate to S3 buckets, EFS file systems, and other storage services
-        for resource in all_resources {
-            match resource.resource_type.as_str() {
-                "AWS::S3::Bucket" => {
-                    // DataSync tasks often transfer data to/from S3 buckets
-                    if let Some(source_location) = entry.raw_properties.get("SourceLocationArn").and_then(|v| v.as_str()) {
-                        if source_location.contains("s3") && source_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                    
-                    if let Some(destination_location) = entry.raw_properties.get("DestinationLocationArn").and_then(|v| v.as_str()) {
-                        if destination_location.contains("s3") && destination_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                "AWS::EFS::FileSystem" => {
-                    // DataSync tasks can transfer data to/from EFS file systems
-                    if let Some(source_location) = entry.raw_properties.get("SourceLocationArn").and_then(|v| v.as_str()) {
-                        if source_location.contains("efs") && source_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                    
-                    if let Some(destination_location) = entry.raw_properties.get("DestinationLocationArn").and_then(|v| v.as_str()) {
-                        if destination_location.contains("efs") && destination_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                "AWS::FSx::FileSystem" => {
-                    // DataSync tasks can transfer data to/from FSx file systems
-                    if let Some(source_location) = entry.raw_properties.get("SourceLocationArn").and_then(|v| v.as_str()) {
-                        if source_location.contains("fsx") && source_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                    
-                    if let Some(destination_location) = entry.raw_properties.get("DestinationLocationArn").and_then(|v| v.as_str()) {
-                        if destination_location.contains("fsx") && destination_location.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                "AWS::EC2::Subnet" => {
-                    // DataSync agents need subnets for VPC connectivity
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::EC2::SecurityGroup" => {
-                    // DataSync agents use security groups for network access control
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::IAM::Role" => {
-                    // DataSync uses IAM roles for permissions to access source and destination locations
-                    relationships.push(ResourceRelationship {
-                        relationship_type: RelationshipType::Uses,
-                        target_resource_id: resource.resource_id.clone(),
-                        target_resource_type: resource.resource_type.clone(),
-                    });
-                }
-                "AWS::CloudWatch::LogGroup" => {
-                    // DataSync tasks can log to CloudWatch
-                    if let Some(log_group_arn) = entry.raw_properties.get("CloudWatchLogGroupArn").and_then(|v| v.as_str()) {
-                        if log_group_arn.contains(&resource.resource_id) {
-                            relationships.push(ResourceRelationship {
-                                relationship_type: RelationshipType::Uses,
-                                target_resource_id: resource.resource_id.clone(),
-                                target_resource_type: resource.resource_type.clone(),
-                            });
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        relationships
+        Vec::new()
     }
 
     fn resource_type(&self) -> &'static str {
@@ -177,13 +85,15 @@ impl ResourceNormalizer for DataSyncResourceNormalizer {
 /// Normalizer for AWS DataSync Location Resources
 pub struct DataSyncLocationResourceNormalizer;
 
-impl ResourceNormalizer for DataSyncLocationResourceNormalizer {
-    fn normalize(
+#[async_trait]
+impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
+    async fn normalize(
         &self,
         raw_response: serde_json::Value,
         account: &str,
         region: &str,
         query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
     ) -> Result<ResourceEntry> {
         let resource_id = raw_response
             .get("ResourceId")
@@ -199,7 +109,21 @@ impl ResourceNormalizer for DataSyncLocationResourceNormalizer {
             .to_string();
 
         let status = extract_status(&raw_response);
-        let tags = extract_tags(&raw_response);
+        // Fetch tags asynchronously from AWS API with caching
+
+        let tags = aws_client
+
+            .fetch_tags_for_resource("AWS::DataSync::Location", &resource_id, account, region)
+
+            .await
+
+            .unwrap_or_else(|e| {
+
+                tracing::warn!("Failed to fetch tags for AWS::DataSync::Location {}: {}", resource_id, e);
+
+                Vec::new()
+
+            });
         let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
@@ -215,6 +139,9 @@ impl ResourceNormalizer for DataSyncLocationResourceNormalizer {
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
+            parent_resource_id: None,
+            parent_resource_type: None,
+            is_child_resource: false,
             account_color: assign_account_color(account),
             region_color: assign_region_color(region),
             query_timestamp,
@@ -271,3 +198,4 @@ impl ResourceNormalizer for DataSyncLocationResourceNormalizer {
         "AWS::DataSync::Location"
     }
 }
+

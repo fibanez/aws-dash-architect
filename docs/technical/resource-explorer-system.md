@@ -1,12 +1,13 @@
 # Resource Explorer System
 
-Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 80+ resource types with hierarchical organization and real-time credential management.
+Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 156 resource types from 72 AWS services, with hierarchical organization, parent-child resource nesting, and real-time credential management.
 
 ## Core Functionality
 
 **Key Features:**
-- Multi-account, multi-region AWS resource querying across 80+ resource types
-- Hierarchical tree organization with customizable grouping (by Account, Region, or Resource Type)  
+- Multi-account, multi-region AWS resource querying across 156 resource types from 72 services
+- Hierarchical tree organization with customizable grouping (by Account, Region, or Resource Type)
+- Parent-child resource nesting with automatic recursive querying (6 nested resource types)
 - Real-time credential management with session caching and automatic renewal
 - Fuzzy search and filtering capabilities for large resource inventories
 - Color-coded visual organization for accounts and regions
@@ -25,18 +26,19 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - AWS Identity Center for live credential management and multi-account access
 - Window Focus System for keyboard navigation integration
 - Color System for consistent visual coding across the application
-- Control Bridge for AI-powered resource operations
+- Agent for AI-powered resource operations
 
 ## Implementation Details
 
 **Key Files:**
 - `src/app/resource_explorer/mod.rs` - Main ResourceExplorer struct and module interface
 - `src/app/resource_explorer/state.rs` - State management with ResourceEntry and caching
-- `src/app/resource_explorer/aws_client.rs` - Service orchestration and parallel query execution
+- `src/app/resource_explorer/aws_client.rs` - Service coordination and parallel query execution
 - `src/app/resource_explorer/window.rs` - UI rendering and user interaction handling
 - `src/app/resource_explorer/credentials.rs` - Multi-account credential management
 - `src/app/resource_explorer/tree.rs` - Hierarchical resource organization
-- `src/app/resource_explorer/aws_services/` - 57 AWS service modules (EC2, IAM, S3, Lambda, etc.)
+- `src/app/resource_explorer/aws_services/` - 72 AWS service modules (EC2, IAM, S3, Lambda, Bedrock, etc.)
+- `src/app/resource_explorer/child_resources.rs` - Parent-child resource hierarchy configuration
 - `src/app/resource_explorer/normalizers/` - Resource data transformation modules
 
 **Important Patterns:**
