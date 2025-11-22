@@ -153,12 +153,9 @@ impl AwsColorGenerator {
             _ => Color::Monochrome,
         };
 
-        // Alternate luminosity based on hash parity for additional visual distinction
-        let luminosity = if hash % 2 == 0 {
-            Luminosity::Bright
-        } else {
-            Luminosity::Light
-        };
+        // Use Light luminosity only to avoid overly bright colors (especially for Pink)
+        // This prevents bright pink Lambda functions and other resources
+        let luminosity = Luminosity::Light;
 
         let mut random_color = RandomColor::new();
 

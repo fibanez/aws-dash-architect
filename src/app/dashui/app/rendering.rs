@@ -156,7 +156,6 @@ impl DashApp {
                                 FocusedWindow::Help => "Help",
                                 FocusedWindow::Log => "Log",
                                 FocusedWindow::Chat => "Chat",
-                                FocusedWindow::CredentialsDebug => "Credentials",
                                 _ => "Other",
                             };
                             ui.weak(format!("Focus: {}", window_name));
@@ -345,7 +344,6 @@ impl DashApp {
             || self.help_window.open
             || self.log_window.open
             || self.agent_manager_window.as_ref().map_or(false, |w| w.is_open())
-            || self.credentials_debug_window.open
             || self.verification_window.visible
             || self.resource_explorer.is_open()
         {

@@ -10,7 +10,8 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - Parent-child resource nesting with automatic recursive querying (6 nested resource types)
 - Real-time credential management with session caching and automatic renewal
 - Fuzzy search and filtering capabilities for large resource inventories
-- Color-coded visual organization for accounts and regions
+- Tag-based filtering (show only tagged, show only untagged resources)
+- Color-coded visual organization for accounts and regions with reduced brightness
 - Resource relationship mapping and detailed property inspection
 - Session-based query caching with staleness detection (15-minute default threshold)
 
@@ -51,6 +52,33 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - AWS Identity Center must be configured for multi-account access
 - Default role name (typically "awsdash") for credential assumption
 - Memory limits require `-j 7` flag for testing due to large concurrent operations
+
+**Filtering System:**
+
+The Explorer provides multiple filtering mechanisms in the sidebar:
+
+- **Tag Presence Filters**: Mutually exclusive checkboxes for tag-based filtering
+  - "Show only tagged": Displays only resources that have at least one tag
+  - "Show only untagged": Displays only resources with no tags
+  - Both unchecked: Shows all resources regardless of tag presence
+
+- **Search Filter**: Fuzzy text matching across resource names and identifiers
+
+- **Account/Region Selection**: Checkboxes to filter by specific accounts or regions
+
+- **Resource Type Selection**: Checkboxes to filter by specific AWS resource types
+
+Tag filters are mutually exclusive (selecting one unchecks the other) and work in combination with other filter types to provide precise resource discovery.
+
+**Color System:**
+
+Resource colors use reduced brightness to improve readability:
+
+- **Lambda Functions**: Light luminosity (Luminosity::Light) instead of alternating Bright/Light
+- **Account Colors**: Deterministic hashing ensures consistent colors across sessions
+- **Region Colors**: Visual distinction in hierarchical tree views
+
+The Light luminosity setting prevents overly bright colors (particularly pink for Lambda functions) while maintaining visual distinction between resources.
 
 ## Developer Notes
 

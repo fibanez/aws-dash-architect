@@ -752,6 +752,33 @@ impl ResourceExplorerState {
         self.property_catalog = crate::app::resource_explorer::PropertyCatalog::new();
     }
 
+    /// Clear all selections: accounts, regions, resource types, filters, grouping, and search
+    ///
+    /// This resets the explorer to its initial state, clearing all user selections
+    /// but preserving the resource data and cache.
+    pub fn clear_all_selections(&mut self) {
+        // Clear query scope (accounts, regions, resource types)
+        self.query_scope.accounts.clear();
+        self.query_scope.regions.clear();
+        self.query_scope.resource_types.clear();
+
+        // Clear search filter
+        self.search_filter.clear();
+
+        // Reset grouping to default
+        self.primary_grouping = GroupingMode::ByAccount;
+
+        // Clear tag filters
+        self.tag_filter_group = TagFilterGroup::new();
+        self.show_only_tagged = false;
+        self.show_only_untagged = false;
+
+        // Clear property filters
+        self.property_filter_group = crate::app::resource_explorer::PropertyFilterGroup::new();
+
+        tracing::info!("Cleared all selections - Explorer reset to default state");
+    }
+
     /// Set resources and rebuild property catalog
     ///
     /// This is a convenience method that sets resources and rebuilds the property catalog

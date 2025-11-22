@@ -86,6 +86,7 @@ ui.label("  ├─ Child");                  // NO - box-drawing
 - 🔄 **Iterative Progress**: Mark items complete only after successful testing
 - 📏 **Token Limits**: Keep implementation chunks manageable for Claude Code sessions
 - 📝 **Update Documentation**: Add documentation tasks for new features in this file as you mark coding tasks done - use DOCS_TODO.md for detailed documentation strategy
+- 💾 **Git Commits**: ALWAYS use the `/commit` slash command for creating git commits - never use `git commit` directly
 
 
 ## Build/Lint/Test Commands
@@ -354,6 +355,25 @@ The application implements a Vimium-like keyboard navigation system for efficien
 2. Look for log entries like "Enter hint mode with action: Click, 7 elements"
 3. Currently using demo elements - real UI element detection is in development
 4. Ensure you have windows open (Identity Center, CloudFormation Template, etc.)
+
+## Slash Commands
+
+This project includes custom slash commands in `.claude/commands/` for common workflows:
+
+**Available Commands:**
+- `/commit` - Create git commits without Claude/Anthropic references (follows conventional commit style)
+- `/dash-docs` - Review changes and update documentation per AWS Dash guidelines
+- `/dash-references` - Update reference folder pseudocode documentation
+- `/clean-workflow-comments` - Rephrase workflow comments to focus on functionality
+
+**Usage:**
+- ALWAYS use `/commit` for creating git commits (never use `git commit` directly)
+- Use `/dash-docs` after implementing new features to update technical documentation
+- Commands are version-controlled in the repository for team sharing
+
+**Global Commands:**
+The following commands are available globally from `~/.claude/commands/`:
+- `/squash-merge` - Squash merge current worktree branch into main branch
 
 ## Technical Documentation System
 

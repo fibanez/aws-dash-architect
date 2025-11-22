@@ -1366,7 +1366,10 @@ impl AwsIdentityCenter {
                 self.last_refresh = Some(Utc::now());
                 self.accounts = accounts;
                 self.available_roles = available_roles;
-                self.login_state = LoginState::LoggedIn;
+
+                // Don't set LoggedIn state here - let the caller set it after credentials are fetched
+                // This prevents race condition where state says "logged in" but credentials aren't ready
+                tracing::info!("Device authorization complete, accounts loaded, waiting for credentials");
 
                 // Try to automatically extract infrastructure information for common CloudFormation roles
                 self.auto_extract_infrastructure_info();

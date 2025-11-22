@@ -56,7 +56,6 @@ pub struct ResourceExplorerWindow {
     editing_bookmark_id: Option<String>,
     bookmark_edit_name: String,
     bookmark_edit_description: String,
-    current_folder_id: Option<String>, // Current folder being viewed in bookmark bar (None = Top Folder)
 
     // Folder management
     show_folder_dialog: bool,
@@ -111,7 +110,6 @@ impl ResourceExplorerWindow {
             editing_bookmark_id: None,
             bookmark_edit_name: String::new(),
             bookmark_edit_description: String::new(),
-            current_folder_id: None,
             show_folder_dialog: false,
             folder_dialog_name: String::new(),
             folder_dialog_parent_id: None,
@@ -244,29 +242,25 @@ impl ResourceExplorerWindow {
                         }
                     });
 
+                // Left sidebar for grouping and filter controls
+                egui::SidePanel::left("explorer_sidebar")
+                    .default_width(180.0)
+                    .min_width(150.0)
+                    .resizable(true)
+                    .show_inside(ui, |ui| {
+                        if let Ok(mut state) = self.state.try_write() {
+                            self.render_sidebar(ui, &mut state);
+                        }
+                    });
+
                 // Main content area
                 egui::CentralPanel::default()
                     .show_inside(ui, |ui| {
-                        // Store bookmark bar actions to apply after rendering
-                        let (clicked_bookmark_id, show_add, show_manage, reorder_action, navigate_to_folder, navigate_up) = if let Ok(state) = self.state.try_read() {
-                            self.render_bookmark_bar(ui, &state)
-                        } else {
-                            (None, false, false, None, None, false)
-                        };
+                        // Render unified toolbar with bookmarks menu and control buttons
+                        let (clicked_bookmark_id, show_add, show_manage, clear_clicked) =
+                            self.render_unified_toolbar(ui);
 
-                        // Handle folder navigation
-                        if let Some(folder_id) = navigate_to_folder {
-                            self.current_folder_id = folder_id;
-                        } else if navigate_up {
-                            // Navigate to parent folder
-                            if let Some(current_id) = &self.current_folder_id {
-                                if let Some(current_folder) = self.bookmark_manager.get_folder(current_id) {
-                                    self.current_folder_id = current_folder.parent_id.clone();
-                                }
-                            }
-                        }
-
-                        // Apply bookmark bar actions
+                        // Apply bookmark menu actions
                         if let Some(bookmark_id) = clicked_bookmark_id {
                             // Find the bookmark (read-only)
                             if let Some(bookmark) = self.bookmark_manager.get_bookmarks()
@@ -302,27 +296,18 @@ impl ResourceExplorerWindow {
                             self.show_bookmark_manager = true;
                             tracing::info!("Manage bookmarks clicked");
                         }
-
-                        // Apply reorder action from bookmark bar drag-and-drop
-                        if let Some((from_index, to_index)) = reorder_action {
-                            self.bookmark_manager.reorder(from_index, to_index);
-
-                            // Save to disk
-                            if let Err(e) = self.bookmark_manager.save() {
-                                tracing::error!("Failed to save bookmark reorder: {}", e);
+                        if clear_clicked {
+                            if let Ok(mut state) = self.state.try_write() {
+                                state.clear_all_selections();
                             }
                         }
 
                         ui.separator();
 
                         if let Ok(mut state) = self.state.try_write() {
-                            Self::render_toolbar_static(ui, &mut state);
-                            ui.separator();
                             self.render_active_tags_static(ui, &mut state);
                             ui.add_space(10.0);
                             Self::render_search_bar_static(ui, &mut state);
-                            Self::render_grouping_controls_static(ui, &mut state);
-                            Self::render_tag_filter_controls_static(ui, &mut state);
                             ui.separator();
                             Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
                         } else {
@@ -532,38 +517,6 @@ impl ResourceExplorerWindow {
         response.is_some()
     }
 
-    fn render_toolbar_static(ui: &mut Ui, state: &mut ResourceExplorerState) {
-        ui.horizontal(|ui| {
-            if ui.button("Add Account").clicked() {
-                state.show_account_dialog = true;
-            }
-
-            if ui.button("Add Region").clicked() {
-                state.show_region_dialog = true;
-            }
-
-            if ui.button("Add Resource").clicked() {
-                state.show_resource_type_dialog = true;
-            }
-
-            ui.separator();
-
-            if ui.button("Refresh").clicked() {
-                state.show_refresh_dialog = true;
-            }
-
-            // Show loading indicator if queries are active
-            if state.is_loading() {
-                ui.separator();
-                ui.spinner();
-                ui.label(format!(
-                    "Loading... ({} queries)",
-                    state.loading_tasks.len()
-                ));
-            }
-        });
-    }
-
     fn render_active_tags_static(&self, ui: &mut Ui, state: &mut ResourceExplorerState) {
         ui.label("Active Selection:");
 
@@ -652,103 +605,6 @@ impl ResourceExplorerWindow {
         });
     }
 
-    fn render_grouping_controls_static(ui: &mut Ui, state: &mut ResourceExplorerState) {
-        ui.horizontal(|ui| {
-            ui.label("Group by:");
-
-            // Primary grouping dropdown with tag-based options
-            egui::ComboBox::from_label("")
-                .selected_text(state.primary_grouping.display_name())
-                .show_ui(ui, |ui| {
-                    // Section 1: Built-in groupings
-                    ui.label(egui::RichText::new("Built-in").small().weak());
-                    for mode in GroupingMode::default_modes() {
-                        ui.selectable_value(
-                            &mut state.primary_grouping,
-                            mode.clone(),
-                            mode.display_name(),
-                        );
-                    }
-
-                    // Separator
-                    ui.separator();
-
-                    // Section 2: Tag-based groupings (dynamic)
-                    let tag_keys = state.tag_discovery.get_tag_keys_by_popularity();
-                    if !tag_keys.is_empty() {
-                        ui.label(egui::RichText::new("Tag Groupings").small().weak());
-
-                        for (tag_key, resource_count) in tag_keys.iter().take(20) {
-                            // Only show tags with multiple values (can meaningfully group)
-                            if let Some(metadata) = state.tag_discovery.get_tag_metadata(tag_key) {
-                                if !metadata.has_multiple_values() {
-                                    continue; // Skip tags with only 1 value
-                                }
-
-                                // Apply minimum resource count filter
-                                if *resource_count < state.min_tag_resources_for_grouping {
-                                    continue;
-                                }
-
-                                let value_count = metadata.value_count();
-                                let label = format!("Tag: {} ({} resources, {} values)",
-                                    tag_key, resource_count, value_count);
-
-                                let mode = GroupingMode::ByTag(tag_key.clone());
-                                let response = ui.selectable_value(
-                                    &mut state.primary_grouping,
-                                    mode,
-                                    label,
-                                );
-
-                                // Add tooltip with value distribution preview
-                                if response.hovered() {
-                                    let values = metadata.get_sorted_values();
-                                    let preview = values.iter()
-                                        .take(5)
-                                        .map(|v| v.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let more = if values.len() > 5 {
-                                        format!(" ...and {} more", values.len() - 5)
-                                    } else {
-                                        String::new()
-                                    };
-                                    response.on_hover_text(format!("Values: {}{}", preview, more));
-                                }
-                            }
-                        }
-
-                        ui.separator();
-                    }
-
-                    // Section 3: Tag Hierarchy option (future enhancement)
-                    ui.label(egui::RichText::new("Advanced").small().weak());
-                    if ui.button("Tag Hierarchy...").clicked() {
-                        tracing::info!("Tag Hierarchy builder clicked (future enhancement)");
-                        state.show_tag_hierarchy_builder = true;
-                    }
-                    if ui.button("Property Hierarchy...").clicked() {
-                        tracing::info!("Property Hierarchy builder clicked");
-                        state.show_property_hierarchy_builder = true;
-                    }
-                });
-
-            ui.add_space(10.0);
-
-            // Minimum resource count control for tag grouping
-            ui.label("Min resources:");
-            let drag_response = ui.add(
-                egui::DragValue::new(&mut state.min_tag_resources_for_grouping)
-                    .speed(1.0)
-                    .range(1..=100)
-            );
-            if drag_response.hovered() {
-                drag_response.on_hover_text("Minimum number of resources for tags to appear in GroupBy dropdown. Drag to adjust or click to type.");
-            }
-        });
-    }
-
     /// Apply all tag filters to a resource (presence/absence + advanced filters)
     fn apply_tag_filters(resource: &ResourceEntry, state: &ResourceExplorerState) -> bool {
         // First, apply presence/absence filters
@@ -796,114 +652,6 @@ impl ResourceExplorerWindow {
         );
 
         matches
-    }
-
-    fn render_tag_filter_controls_static(ui: &mut Ui, state: &mut ResourceExplorerState) {
-        // Calculate total filter count (tag presence + tag advanced + property)
-        let presence_count = state.tag_presence_filter_count();
-        let advanced_count = state.tag_filter_group.filter_count();
-        let property_filter_count = state.property_filter_group.total_filter_count();
-        let total_filter_count = presence_count + advanced_count + property_filter_count;
-
-        let header_text = if total_filter_count > 0 {
-            format!("Tag Filters ({})", total_filter_count)
-        } else {
-            "Tag Filters".to_string()
-        };
-
-        egui::CollapsingHeader::new(header_text)
-            .default_open(false)
-            .show(ui, |ui| {
-                // Show only tagged checkbox
-                ui.horizontal(|ui| {
-                    let mut show_tagged = state.show_only_tagged;
-                    if ui
-                        .checkbox(&mut show_tagged, "Show only tagged resources")
-                        .changed()
-                    {
-                        state.show_only_tagged = show_tagged;
-                        // Ensure mutual exclusivity
-                        if show_tagged {
-                            state.show_only_untagged = false;
-                        }
-                        tracing::info!(
-                            "Tag filter changed: show_only_tagged={}",
-                            state.show_only_tagged
-                        );
-                    }
-
-                    if state.show_only_tagged {
-                        ui.label("(resources with any tags)");
-                    }
-                });
-
-                // Show only untagged checkbox
-                ui.horizontal(|ui| {
-                    let mut show_untagged = state.show_only_untagged;
-                    if ui
-                        .checkbox(&mut show_untagged, "Show only untagged resources")
-                        .changed()
-                    {
-                        state.show_only_untagged = show_untagged;
-                        // Ensure mutual exclusivity
-                        if show_untagged {
-                            state.show_only_tagged = false;
-                        }
-                        tracing::info!(
-                            "Tag filter changed: show_only_untagged={}",
-                            state.show_only_untagged
-                        );
-                    }
-
-                    if state.show_only_untagged {
-                        ui.label("(resources with no tags)");
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // All filter buttons on the same line
-                ui.horizontal(|ui| {
-                    // Tag Filters button
-                    if ui.button("Tag Filters...").clicked() {
-                        state.show_filter_builder = true;
-                    }
-                    if advanced_count > 0 {
-                        ui.label(format!("({} active)", advanced_count));
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Property Filters button
-                    if ui.button("Property Filters...").clicked() {
-                        state.show_property_filter_builder = true;
-                    }
-                    if property_filter_count > 0 {
-                        ui.label(format!("({} active)", property_filter_count));
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Clear Filters button (always show, enable only when filters are active)
-                    let clear_button = egui::Button::new("Clear Filters");
-                    if total_filter_count > 0 {
-                        if ui.button("Clear Filters").clicked() {
-                            // Clear all tag filters
-                            state.show_only_tagged = false;
-                            state.show_only_untagged = false;
-                            state.tag_filter_group = TagFilterGroup::new();
-
-                            // Clear all property filters
-                            state.property_filter_group =
-                                crate::app::resource_explorer::PropertyFilterGroup::new();
-
-                            tracing::info!("Cleared all filters (tags and properties)");
-                        }
-                    } else {
-                        ui.add_enabled(false, clear_button);
-                    }
-                });
-            });
     }
 
     fn render_tree_view_static(
@@ -1459,201 +1207,345 @@ impl ResourceExplorerWindow {
         }
     }
 
-    /// Render the bookmark bar with quick access to saved configurations
-    /// Returns: (clicked_bookmark_id, show_add_dialog, show_manage_dialog, reorder_action, navigate_to_folder, navigate_up)
-    fn render_bookmark_bar(
-        &self,
-        ui: &mut Ui,
-        state: &ResourceExplorerState,
-    ) -> (
-        Option<String>,
-        bool,
-        bool,
-        Option<(usize, usize)>,
-        Option<Option<String>>,
-        bool,
-    ) {
+    /// Render left sidebar with grouping and filter controls
+    fn render_sidebar(&self, ui: &mut Ui, state: &mut ResourceExplorerState) {
+        ui.vertical(|ui| {
+            // Group By section
+            ui.label("Group by:");
+            ui.add_space(4.0);
+
+            // Primary grouping dropdown with tag-based options
+            egui::ComboBox::from_label("")
+                .selected_text(state.primary_grouping.display_name())
+                .show_ui(ui, |ui| {
+                    // Section 1: Built-in groupings
+                    ui.label(egui::RichText::new("Built-in").small().weak());
+                    for mode in GroupingMode::default_modes() {
+                        ui.selectable_value(
+                            &mut state.primary_grouping,
+                            mode.clone(),
+                            mode.display_name(),
+                        );
+                    }
+
+                    // Separator
+                    ui.separator();
+
+                    // Section 2: Tag-based groupings (dynamic)
+                    let tag_keys = state.tag_discovery.get_tag_keys_by_popularity();
+                    if !tag_keys.is_empty() {
+                        ui.label(egui::RichText::new("Tag Groupings").small().weak());
+
+                        for (tag_key, resource_count) in tag_keys.iter().take(20) {
+                            // Only show tags with multiple values (can meaningfully group)
+                            if let Some(metadata) = state.tag_discovery.get_tag_metadata(tag_key) {
+                                if !metadata.has_multiple_values() {
+                                    continue; // Skip tags with only 1 value
+                                }
+
+                                // Apply minimum resource count filter
+                                if *resource_count < state.min_tag_resources_for_grouping {
+                                    continue;
+                                }
+
+                                let value_count = metadata.value_count();
+                                let label = format!("Tag: {} ({} resources, {} values)",
+                                    tag_key, resource_count, value_count);
+
+                                let mode = GroupingMode::ByTag(tag_key.clone());
+                                let response = ui.selectable_value(
+                                    &mut state.primary_grouping,
+                                    mode,
+                                    label,
+                                );
+
+                                // Add tooltip with value distribution preview
+                                if response.hovered() {
+                                    let values = metadata.get_sorted_values();
+                                    let preview = values.iter()
+                                        .take(5)
+                                        .map(|v| v.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    let more = if values.len() > 5 {
+                                        format!(" ...and {} more", values.len() - 5)
+                                    } else {
+                                        String::new()
+                                    };
+                                    response.on_hover_text(format!("Values: {}{}", preview, more));
+                                }
+                            }
+                        }
+
+                        ui.separator();
+                    }
+
+                    // Section 3: Tag Hierarchy option
+                    ui.label(egui::RichText::new("Advanced").small().weak());
+                    if ui.button("Tag Hierarchy...").clicked() {
+                        tracing::info!("Tag Hierarchy builder clicked");
+                        state.show_tag_hierarchy_builder = true;
+                    }
+                    if ui.button("Property Hierarchy...").clicked() {
+                        tracing::info!("Property Hierarchy builder clicked");
+                        state.show_property_hierarchy_builder = true;
+                    }
+                });
+
+            ui.add_space(8.0);
+
+            // Min Resources control (below Group By dropdown)
+            ui.label("Min res:");
+            let drag_response = ui.add(
+                egui::DragValue::new(&mut state.min_tag_resources_for_grouping)
+                    .speed(1.0)
+                    .range(1..=100)
+            );
+            drag_response.on_hover_text(
+                "Minimum number of resources for tags to appear in GroupBy dropdown. Drag to adjust or click to type."
+            );
+
+            ui.separator();
+            ui.add_space(8.0);
+
+            // Tag presence checkboxes
+            let mut show_tagged = state.show_only_tagged;
+            if ui
+                .checkbox(&mut show_tagged, "Show only tagged")
+                .on_hover_text("Show only resources with any tags")
+                .changed()
+            {
+                state.show_only_tagged = show_tagged;
+                // Ensure mutual exclusivity
+                if show_tagged {
+                    state.show_only_untagged = false;
+                }
+                tracing::info!(
+                    "Tag filter changed: show_only_tagged={}",
+                    state.show_only_tagged
+                );
+            }
+
+            let mut show_untagged = state.show_only_untagged;
+            if ui
+                .checkbox(&mut show_untagged, "Show only untagged")
+                .on_hover_text("Show only resources with no tags")
+                .changed()
+            {
+                state.show_only_untagged = show_untagged;
+                // Ensure mutual exclusivity
+                if show_untagged {
+                    state.show_only_tagged = false;
+                }
+                tracing::info!(
+                    "Tag filter changed: show_only_untagged={}",
+                    state.show_only_untagged
+                );
+            }
+
+            ui.add_space(8.0);
+
+            // Filter buttons stacked vertically
+            let advanced_count = state.tag_filter_group.filter_count();
+            let property_filter_count = state.property_filter_group.total_filter_count();
+            let presence_count = state.tag_presence_filter_count();
+            let total_filter_count = presence_count + advanced_count + property_filter_count;
+
+            // Tag Filters button
+            if ui.button("Tag Filters...").on_hover_text("Open advanced tag filter builder").clicked() {
+                state.show_filter_builder = true;
+            }
+            if advanced_count > 0 {
+                ui.label(egui::RichText::new(format!("({} active)", advanced_count)).small());
+            }
+
+            ui.add_space(4.0);
+
+            // Property Filters button
+            if ui.button("Property Filters...").on_hover_text("Open property filter builder").clicked() {
+                state.show_property_filter_builder = true;
+            }
+            if property_filter_count > 0 {
+                ui.label(egui::RichText::new(format!("({} active)", property_filter_count)).small());
+            }
+
+            ui.add_space(4.0);
+
+            // Clear Filters button (only show if filters are active)
+            if total_filter_count > 0 {
+                if ui.button("Clear Filters").on_hover_text("Clear all tag and property filters").clicked() {
+                    // Clear all tag filters
+                    state.show_only_tagged = false;
+                    state.show_only_untagged = false;
+                    state.tag_filter_group = TagFilterGroup::new();
+
+                    // Clear all property filters
+                    state.property_filter_group =
+                        crate::app::resource_explorer::PropertyFilterGroup::new();
+
+                    tracing::info!("Cleared all filters (tags and properties)");
+                }
+            }
+        });
+    }
+
+    /// Render unified toolbar combining bookmarks menu and control buttons
+    /// Returns: (clicked_bookmark_id, show_add_dialog, show_manage_dialog, clear_clicked)
+    fn render_unified_toolbar(&self, ui: &mut Ui) -> (Option<String>, bool, bool, bool) {
         let mut clicked_bookmark_id: Option<String> = None;
         let mut show_add_dialog = false;
         let mut show_manage_dialog = false;
-        let mut reorder_action: Option<(usize, usize)> = None;
-        let mut navigate_to_folder: Option<Option<String>> = None;
-        let mut navigate_up = false;
-
-        // Render breadcrumb navigation if in a folder
-        if self.current_folder_id.is_some() {
-            ui.horizontal(|ui| {
-                ui.label("Location:");
-                ui.add_space(4.0);
-
-                // "All" (Top Folder) button
-                if ui.button("All").clicked() {
-                    navigate_to_folder = Some(None);
-                }
-
-                // Get folder path
-                let folder_path = self
-                    .bookmark_manager
-                    .get_folder_path(self.current_folder_id.as_ref());
-
-                for folder in folder_path {
-                    ui.label(">");
-                    if ui.button(&folder.name).clicked() {
-                        navigate_to_folder = Some(Some(folder.id.clone()));
-                    }
-                }
-            });
-            ui.add_space(4.0);
-        }
+        let mut clear_clicked = false;
 
         ui.horizontal(|ui| {
-            ui.label("Bookmarks:");
-            ui.add_space(8.0);
+            // Bookmarks menu (needs read-only state access)
+            if let Ok(state) = self.state.try_read() {
+                ui.menu_button("Bookmarks", |ui| {
+                    // Render top-level bookmarks and folders
+                    self.render_bookmark_menu_level(
+                        ui,
+                        None, // Top level (no parent folder)
+                        &state,
+                        &mut clicked_bookmark_id,
+                    );
 
-            // Get bookmarks in current folder - clone to avoid borrow issues
-            let bookmarks: Vec<Bookmark> = self
-                .bookmark_manager
-                .get_bookmarks_in_folder(self.current_folder_id.as_ref())
-                .iter()
-                .map(|b| (*b).clone())
-                .collect();
+                    // Separator before management actions
+                    ui.separator();
 
-            // Calculate available width for bookmarks
-            let available_width = ui.available_width();
-            // Reserve space for "+ Add" (~60px) + "Manage" (~80px) + overflow button (~100px) + padding (~50px)
-            let reserved_width = 290.0;
-            let bookmark_area_width = available_width - reserved_width;
-
-            // Estimate bookmark button width (~150px per bookmark including padding)
-            let estimated_bookmark_width = 150.0;
-            let max_visible =
-                ((bookmark_area_width / estimated_bookmark_width).floor() as usize).max(1);
-
-            // Show calculated number of bookmarks
-            let visible_count = max_visible.min(bookmarks.len());
-            let mut visible_bookmarks: Vec<Bookmark> =
-                bookmarks.iter().take(visible_count).cloned().collect();
-            let overflow_bookmarks: Vec<Bookmark> =
-                bookmarks.iter().skip(visible_count).cloned().collect();
-
-            // Render visible bookmarks with drag-and-drop support
-            let dnd_response = dnd(ui, "bookmark_bar_dnd").show_vec(
-                &mut visible_bookmarks,
-                |ui, bookmark, handle, _state| {
-                    // Drag handle - ASCII text only (NO EMOJIS)
-                    handle.ui(ui, |ui| {
-                        ui.label(":: ");
-                    });
-
-                    // Check if this bookmark matches current state
-                    let is_active = bookmark.matches_state(state);
-
-                    // Style active bookmark differently
-                    let button_text = if is_active {
-                        format!("* {}", bookmark.name)
-                    } else {
-                        bookmark.name.clone()
-                    };
-
-                    let button = if is_active {
-                        egui::Button::new(&button_text).fill(ui.visuals().selection.bg_fill)
-                    } else {
-                        egui::Button::new(&button_text)
-                    };
-
-                    let response = ui.add(button);
-
-                    if response.clicked() {
-                        clicked_bookmark_id = Some(bookmark.id.clone());
+                    // Management actions at bottom of menu
+                    if ui.button("Add Bookmark").clicked() {
+                        show_add_dialog = true;
+                        ui.close();
                     }
 
-                    // Show tooltip with bookmark details
-                    response.on_hover_ui(|ui| {
-                        ui.label(format!("Bookmark: {}", bookmark.name));
-                        if let Some(desc) = &bookmark.description {
-                            ui.label(format!("Description: {}", desc));
-                        }
-                        ui.separator();
-                        ui.label(format!("Accounts: {}", bookmark.account_ids.len()));
-                        ui.label(format!("Regions: {}", bookmark.region_codes.len()));
-                        ui.label(format!(
-                            "Resource Types: {}",
-                            bookmark.resource_type_ids.len()
-                        ));
-                        ui.label(format!("Grouping: {:?}", bookmark.grouping));
-                        ui.separator();
-                        ui.label(format!("Used {} times", bookmark.access_count));
-                    });
-                },
-            );
-
-            // Store reorder action to apply after ui.horizontal completes
-            if let Some(update) = dnd_response.final_update() {
-                reorder_action = Some((update.from, update.to));
-            }
-
-            // Render folders in current directory as dropdown menus
-            let folders = self
-                .bookmark_manager
-                .get_subfolders(self.current_folder_id.as_ref());
-            for folder in folders {
-                ui.add_space(4.0);
-
-                ui.menu_button(format!("\u{1F5C1} {}", folder.name), |ui| {
-                    // Render folder contents recursively
-                    self.render_folder_menu(ui, &folder.id, &mut clicked_bookmark_id);
-                });
-            }
-
-            // Show "Up" button if in a folder
-            if self.current_folder_id.is_some() {
-                ui.add_space(4.0);
-                if ui.button("Up").clicked() {
-                    navigate_up = true;
-                }
-            }
-
-            // Show overflow menu if there are more bookmarks
-            if !overflow_bookmarks.is_empty() {
-                ui.add_space(4.0);
-                ui.menu_button(format!("{} more", overflow_bookmarks.len()), |ui| {
-                    for bookmark in &overflow_bookmarks {
-                        let is_active = bookmark.matches_state(state);
-                        let button_text = if is_active {
-                            format!("* {}", bookmark.name)
-                        } else {
-                            bookmark.name.clone()
-                        };
-
-                        if ui.button(button_text).clicked() {
-                            clicked_bookmark_id = Some(bookmark.id.clone());
-                            ui.close();
-                        }
+                    if ui.button("Manage Bookmarks").clicked() {
+                        show_manage_dialog = true;
+                        ui.close();
                     }
                 });
             }
 
-            // Add bookmark button (Ctrl+D)
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("+ Add").clicked() {
-                    show_add_dialog = true;
+            // Separator between Bookmarks and control buttons
+            ui.separator();
+
+            // Toolbar buttons (need mutable state access for dialog flags)
+            if let Ok(mut state) = self.state.try_write() {
+                if ui.button("Add Account").clicked() {
+                    state.show_account_dialog = true;
                 }
 
-                // Manage bookmarks button
-                if ui.button("Manage").clicked() {
-                    show_manage_dialog = true;
+                if ui.button("Add Region").clicked() {
+                    state.show_region_dialog = true;
                 }
-            });
+
+                if ui.button("Add Resource").clicked() {
+                    state.show_resource_type_dialog = true;
+                }
+
+                ui.separator();
+
+                if ui.button("Refresh").clicked() {
+                    state.show_refresh_dialog = true;
+                }
+
+                if ui.button("Reset").on_hover_text("Reset all selections to default state").clicked() {
+                    clear_clicked = true;
+                }
+
+                // Show loading indicator if queries are active
+                if state.is_loading() {
+                    ui.separator();
+                    ui.spinner();
+                    ui.label(format!(
+                        "Loading... ({} queries)",
+                        state.loading_tasks.len()
+                    ));
+                }
+            }
         });
 
-        (
-            clicked_bookmark_id,
-            show_add_dialog,
-            show_manage_dialog,
-            reorder_action,
-            navigate_to_folder,
-            navigate_up,
-        )
+        (clicked_bookmark_id, show_add_dialog, show_manage_dialog, clear_clicked)
+    }
+
+    /// Recursively render a level of the bookmark menu hierarchy
+    fn render_bookmark_menu_level(
+        &self,
+        ui: &mut Ui,
+        parent_folder_id: Option<String>,
+        state: &ResourceExplorerState,
+        clicked_bookmark_id: &mut Option<String>,
+    ) {
+        // Get bookmarks at this level
+        let bookmarks = self
+            .bookmark_manager
+            .get_bookmarks_in_folder(parent_folder_id.as_ref());
+
+        // Render bookmarks
+        for bookmark in &bookmarks {
+            let is_active = bookmark.matches_state(state);
+            let button_text = if is_active {
+                format!("[Active] {}", bookmark.name)
+            } else {
+                bookmark.name.clone()
+            };
+
+            let response = if is_active {
+                ui.add(egui::Button::new(&button_text).fill(ui.visuals().selection.bg_fill))
+            } else {
+                ui.button(&button_text)
+            };
+
+            if response.clicked() {
+                *clicked_bookmark_id = Some(bookmark.id.clone());
+                ui.close();
+            }
+
+            // Show tooltip with bookmark details
+            response.on_hover_ui(|ui| {
+                ui.label(format!("Bookmark: {}", bookmark.name));
+                if let Some(desc) = &bookmark.description {
+                    ui.label(format!("Description: {}", desc));
+                }
+                ui.separator();
+                ui.label(format!("Accounts: {}", bookmark.account_ids.len()));
+                ui.label(format!("Regions: {}", bookmark.region_codes.len()));
+                ui.label(format!(
+                    "Resource Types: {}",
+                    bookmark.resource_type_ids.len()
+                ));
+                ui.label(format!("Grouping: {:?}", bookmark.grouping));
+                ui.separator();
+                ui.label(format!("Used {} times", bookmark.access_count));
+            });
+        }
+
+        // Get folders at this level
+        let folders = self
+            .bookmark_manager
+            .get_subfolders(parent_folder_id.as_ref());
+
+        // Show separator between bookmarks and folders if both exist
+        if !bookmarks.is_empty() && !folders.is_empty() {
+            ui.separator();
+        }
+
+        // Render folders as nested submenus
+        for folder in &folders {
+            ui.menu_button(format!("Folder: {}", folder.name), |ui| {
+                // Recursively render folder contents
+                self.render_bookmark_menu_level(
+                    ui,
+                    Some(folder.id.clone()),
+                    state,
+                    clicked_bookmark_id,
+                );
+            });
+        }
+
+        // Show "empty" message if no bookmarks or folders at this level
+        if bookmarks.is_empty() && folders.is_empty() {
+            ui.label(egui::RichText::new("(no bookmarks)").italics().weak());
+        }
     }
 
     /// Render bookmark creation dialog
@@ -2220,45 +2112,6 @@ impl ResourceExplorerWindow {
         // Handle window close via X button
         if response.is_none() {
             self.show_bookmark_manager = false;
-        }
-    }
-
-    /// Recursively render folder contents as a menu (for bookmark bar dropdown)
-    fn render_folder_menu(
-        &self,
-        ui: &mut Ui,
-        folder_id: &str,
-        clicked_bookmark_id: &mut Option<String>,
-    ) {
-        // Get bookmarks in this folder
-        let bookmarks = self
-            .bookmark_manager
-            .get_bookmarks_in_folder(Some(&folder_id.to_string()));
-        for bookmark in &bookmarks {
-            if ui.button(&bookmark.name).clicked() {
-                *clicked_bookmark_id = Some(bookmark.id.clone());
-                ui.close();
-            }
-        }
-
-        // Show separator if there are both bookmarks and subfolders
-        let subfolders = self
-            .bookmark_manager
-            .get_subfolders(Some(&folder_id.to_string()));
-        if !bookmarks.is_empty() && !subfolders.is_empty() {
-            ui.separator();
-        }
-
-        // Get subfolders and render them as nested menus
-        for subfolder in &subfolders {
-            ui.menu_button(format!("\u{1F5C1} {}", subfolder.name), |ui| {
-                self.render_folder_menu(ui, &subfolder.id, clicked_bookmark_id);
-            });
-        }
-
-        // Show "empty" message if no bookmarks or folders
-        if bookmarks.is_empty() && subfolders.is_empty() {
-            ui.label(egui::RichText::new("(empty)").italics().weak());
         }
     }
 

@@ -7,7 +7,7 @@ use std::thread;
 /// AWS Login window component
 pub struct AwsLoginWindow {
     pub open: bool,
-    identity_center_url: String,
+    identity_center_short_name: String, // Short name for Identity Center (e.g., "mycompany")
     identity_center_region: String,
     default_role_name: String,
     login_in_progress: bool,
@@ -15,7 +15,6 @@ pub struct AwsLoginWindow {
     error_message: Option<String>,
     aws_identity: Option<Arc<Mutex<AwsIdentityCenter>>>,
     pub accounts_window_open: bool,
-    pub credentials_debug_window_open: bool,
     pub logged_out: bool, // Flag to indicate that user has just logged out
     first_open: bool,     // Track if this is the first time opening the window
 }
@@ -24,7 +23,7 @@ impl Default for AwsLoginWindow {
     fn default() -> Self {
         Self {
             open: false,
-            identity_center_url: "https://XXXXXXX.awsapps.com/start/".to_string(),
+            identity_center_short_name: "your-org".to_string(),
             identity_center_region: "us-east-1".to_string(),
             default_role_name: "awsdash".to_string(),
             login_in_progress: false,
@@ -32,7 +31,6 @@ impl Default for AwsLoginWindow {
             error_message: None,
             aws_identity: None,
             accounts_window_open: false,
-            credentials_debug_window_open: false,
             logged_out: false,
             first_open: true,
         }
@@ -43,6 +41,46 @@ impl AwsLoginWindow {
     /// Reset the first_open flag to force centering on next open
     pub fn reset_position(&mut self) {
         self.first_open = true;
+    }
+
+    /// Extract short name from full URL or validate input
+    /// Quietly handles full URLs by extracting the short name
+    /// Returns cleaned short name with only alphanumeric and hyphens
+    fn validate_and_clean_short_name(input: &str) -> String {
+        // If input looks like a full URL, extract the short name
+        let cleaned = if input.starts_with("https://") || input.starts_with("http://") {
+            // Extract short name from full URL
+            if let Some(start) = input.find("://") {
+                let after_protocol = &input[start + 3..];
+                if let Some(dot_pos) = after_protocol.find('.') {
+                    after_protocol[..dot_pos].to_string()
+                } else {
+                    input.to_string()
+                }
+            } else {
+                input.to_string()
+            }
+        } else if input.contains(".awsapps.com") {
+            // Handle case where user pastes without protocol
+            if let Some(dot_pos) = input.find('.') {
+                input[..dot_pos].to_string()
+            } else {
+                input.to_string()
+            }
+        } else {
+            input.to_string()
+        };
+
+        // Only keep alphanumeric characters and hyphens
+        cleaned
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .collect()
+    }
+
+    /// Build full Identity Center URL from short name
+    fn build_full_url(&self) -> String {
+        format!("https://{}.awsapps.com/start/", self.identity_center_short_name)
     }
 
     /// Show the AWS Login window
@@ -109,17 +147,65 @@ impl AwsLoginWindow {
                     .striped(false)
                     .show(ui, |ui| {
                         ui.label("Identity Center URL:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.identity_center_url)
-                                .desired_width(300.0),
-                        );
+                        ui.horizontal(|ui| {
+                            // Text input for short name
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.identity_center_short_name)
+                                    .desired_width(150.0)
+                                    .hint_text("your-org"),
+                            );
+
+                            // Apply validation on text change
+                            if response.changed() {
+                                self.identity_center_short_name =
+                                    Self::validate_and_clean_short_name(&self.identity_center_short_name);
+                            }
+
+                            // Static suffix label
+                            ui.label(".awsapps.com/start/");
+                        });
                         ui.end_row();
 
                         ui.label("Region:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.identity_center_region)
-                                .desired_width(300.0),
-                        );
+                        egui::ComboBox::from_label("")
+                            .selected_text(&self.identity_center_region)
+                            .width(300.0)
+                            .show_ui(ui, |ui| {
+                                ui.label(RichText::new("Default Regions").strong());
+                                ui.selectable_value(&mut self.identity_center_region, "us-east-1".to_string(), "us-east-1 (US East N. Virginia)");
+                                ui.selectable_value(&mut self.identity_center_region, "us-east-2".to_string(), "us-east-2 (US East Ohio)");
+                                ui.selectable_value(&mut self.identity_center_region, "us-west-1".to_string(), "us-west-1 (US West N. California)");
+                                ui.selectable_value(&mut self.identity_center_region, "us-west-2".to_string(), "us-west-2 (US West Oregon)");
+                                ui.selectable_value(&mut self.identity_center_region, "ca-central-1".to_string(), "ca-central-1 (Canada Central)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-central-1".to_string(), "eu-central-1 (Europe Frankfurt)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-west-1".to_string(), "eu-west-1 (Europe Ireland)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-west-2".to_string(), "eu-west-2 (Europe London)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-west-3".to_string(), "eu-west-3 (Europe Paris)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-north-1".to_string(), "eu-north-1 (Europe Stockholm)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-south-1".to_string(), "ap-south-1 (Asia Pacific Mumbai)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-northeast-1".to_string(), "ap-northeast-1 (Asia Pacific Tokyo)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-northeast-2".to_string(), "ap-northeast-2 (Asia Pacific Seoul)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-southeast-1".to_string(), "ap-southeast-1 (Asia Pacific Singapore)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-southeast-2".to_string(), "ap-southeast-2 (Asia Pacific Sydney)");
+                                ui.selectable_value(&mut self.identity_center_region, "sa-east-1".to_string(), "sa-east-1 (South America Sao Paulo)");
+                                ui.selectable_value(&mut self.identity_center_region, "us-gov-west-1".to_string(), "us-gov-west-1 (AWS GovCloud US West)");
+                                ui.selectable_value(&mut self.identity_center_region, "us-gov-east-1".to_string(), "us-gov-east-1 (AWS GovCloud US East)");
+
+                                ui.separator();
+                                ui.label(RichText::new("Opt-in Regions").strong());
+                                ui.selectable_value(&mut self.identity_center_region, "af-south-1".to_string(), "af-south-1 (Africa Cape Town)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-east-1".to_string(), "ap-east-1 (Asia Pacific Hong Kong)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-south-2".to_string(), "ap-south-2 (Asia Pacific Hyderabad)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-southeast-3".to_string(), "ap-southeast-3 (Asia Pacific Jakarta)");
+                                ui.selectable_value(&mut self.identity_center_region, "ap-southeast-4".to_string(), "ap-southeast-4 (Asia Pacific Melbourne)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-central-2".to_string(), "eu-central-2 (Europe Zurich)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-south-1".to_string(), "eu-south-1 (Europe Milan)");
+                                ui.selectable_value(&mut self.identity_center_region, "eu-south-2".to_string(), "eu-south-2 (Europe Spain)");
+                                ui.selectable_value(&mut self.identity_center_region, "me-south-1".to_string(), "me-south-1 (Middle East Bahrain)");
+                                ui.selectable_value(&mut self.identity_center_region, "me-central-1".to_string(), "me-central-1 (Middle East UAE)");
+                                ui.selectable_value(&mut self.identity_center_region, "il-central-1".to_string(), "il-central-1 (Israel Tel Aviv)");
+                                ui.selectable_value(&mut self.identity_center_region, "ca-west-1".to_string(), "ca-west-1 (Canada West Calgary)");
+                            });
                         ui.end_row();
 
                         ui.label("Default Role:");
@@ -200,15 +286,20 @@ impl AwsLoginWindow {
 
                                         ui.label(format!("Verification code: {}", auth_data.user_code));
 
-                                        if let Some(uri_complete) = &auth_data.verification_uri_complete
-                                        {
-                                            ui.hyperlink_to("Open login page", uri_complete);
+                                        // Get the URL to use (prefer complete URI if available)
+                                        let login_url = if let Some(uri_complete) = &auth_data.verification_uri_complete {
+                                            uri_complete.clone()
                                         } else {
-                                            ui.hyperlink_to(
-                                                "Open login page",
-                                                &auth_data.verification_uri,
-                                            );
-                                        }
+                                            auth_data.verification_uri.clone()
+                                        };
+
+                                        // Show hyperlink and copy button on the same line
+                                        ui.horizontal(|ui| {
+                                            ui.hyperlink_to("Open login page", &login_url);
+                                            if ui.button("Copy Link").clicked() {
+                                                ui.ctx().copy_text(login_url);
+                                            }
+                                        });
 
                                         ui.add_space(10.0);
 
@@ -236,13 +327,6 @@ impl AwsLoginWindow {
                                     ui.horizontal(|ui| {
                                         if ui.button("View Accounts").clicked() {
                                             self.accounts_window_open = true;
-                                        }
-
-                                        if ui.button("View Credentials").clicked() {
-                                            self.credentials_debug_window_open = true;
-                                            tracing::info!(
-                                                "User manually opened credentials debug window"
-                                            );
                                         }
 
                                         if ui.button("Logout").clicked() {
@@ -300,16 +384,18 @@ impl AwsLoginWindow {
 
     /// Start the login process
     fn start_login(&mut self) {
+        let full_url = self.build_full_url();
+
         tracing::info!(
             "Starting login process with URL: {}, Region: {}, Role: {}",
-            self.identity_center_url,
+            full_url,
             self.identity_center_region,
             self.default_role_name
         );
 
-        if self.identity_center_url.is_empty() {
-            self.error_message = Some("Identity Center URL is required".to_string());
-            tracing::warn!("Login attempt with empty Identity Center URL");
+        if self.identity_center_short_name.is_empty() {
+            self.error_message = Some("Identity Center short name is required".to_string());
+            tracing::warn!("Login attempt with empty Identity Center short name");
             return;
         }
 
@@ -331,7 +417,7 @@ impl AwsLoginWindow {
 
         // Create a new identity center instance
         let mut identity_center = AwsIdentityCenter::new(
-            self.identity_center_url.clone(),
+            full_url,
             self.default_role_name.clone(),
             self.identity_center_region.clone(),
         );
@@ -381,45 +467,69 @@ impl AwsLoginWindow {
                 thread::sleep(std::time::Duration::from_millis(100));
 
                 tracing::info!("Starting thread to complete device authorization");
-                let mut identity_center = match aws_identity_clone.lock() {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        tracing::error!("Failed to lock AWS identity center: {}", e);
-                        return;
-                    }
-                };
 
-                match identity_center.complete_device_authorization() {
+                // Call complete_device_authorization WITHOUT holding the lock
+                // This prevents UI freeze since the operation blocks for 30+ seconds
+                let auth_result = {
+                    let mut identity_center = match aws_identity_clone.lock() {
+                        Ok(guard) => guard,
+                        Err(e) => {
+                            tracing::error!("Failed to lock AWS identity center for authorization: {}", e);
+                            return;
+                        }
+                    };
+
+                    // Call the blocking operation - lock is released when guard drops
+                    identity_center.complete_device_authorization()
+                }; // Lock released here - UI can now render spinner smoothly
+
+                // Process result and update state (re-acquire lock briefly)
+                match auth_result {
                     Ok(_) => {
-                        tracing::info!("Successfully completed login");
+                        tracing::info!("Device authorization completed successfully");
 
-                        // Try to get default role credentials
-                        match identity_center.get_default_role_credentials() {
-                            Ok(creds) => {
-                                tracing::info!("Successfully obtained default role credentials");
-                                if let Some(exp) = creds.expiration {
-                                    tracing::info!(
-                                        "Default role credentials expire at: {}",
-                                        exp.format("%Y-%m-%d %H:%M:%S UTC")
-                                    );
+                        // Re-acquire lock to get credentials
+                        if let Ok(mut identity_center) = aws_identity_clone.lock() {
+                            // Try to get default role credentials
+                            match identity_center.get_default_role_credentials() {
+                                Ok(creds) => {
+                                    tracing::info!("Successfully obtained default role credentials");
+                                    if let Some(exp) = creds.expiration {
+                                        tracing::info!(
+                                            "Default role credentials expire at: {}",
+                                            exp.format("%Y-%m-%d %H:%M:%S UTC")
+                                        );
+                                    }
+
+                                    // Store credentials directly
+                                    identity_center.default_role_credentials = Some(creds);
+
+                                    // Set LoggedIn state AFTER credentials are stored
+                                    // This ensures credentials are available when state says "logged in"
+                                    identity_center.login_state = LoginState::LoggedIn;
+                                    tracing::info!("Credentials stored and login state set to LoggedIn");
                                 }
-
-                                // Store credentials directly
-                                identity_center.default_role_credentials = Some(creds);
-                                tracing::info!(
-                                    "Credentials stored and debug window should open automatically"
-                                );
+                                Err(err) => {
+                                    tracing::error!("Failed to get default role credentials: {}", err);
+                                    // Set logged in anyway - credentials are optional for some operations
+                                    identity_center.login_state = LoginState::LoggedIn;
+                                    tracing::warn!("Login completed but credentials unavailable");
+                                }
                             }
-                            Err(err) => {
-                                tracing::error!("Failed to get default role credentials: {}", err);
-                                // Continue anyway, we still have a successful login
-                            }
+                        } else {
+                            tracing::error!("Failed to re-acquire lock for credential storage");
                         }
                     }
                     Err(err) => {
                         let error_msg = format!("Failed to complete login: {}", err);
                         tracing::error!("{}", error_msg);
-                        identity_center.login_state = LoginState::Error(error_msg);
+
+                        // Re-acquire lock to set error state
+                        if let Ok(mut identity_center) = aws_identity_clone.lock() {
+                            identity_center.login_state = LoginState::Error(error_msg);
+                        } else {
+                            tracing::error!("Failed to re-acquire lock for error state");
+                        }
                     }
                 }
             });
@@ -450,7 +560,6 @@ impl AwsLoginWindow {
             self.login_in_progress = false;
             self.completing_login = false;
             self.accounts_window_open = false;
-            self.credentials_debug_window_open = false;
             self.logged_out = true; // Set logged out flag so app.rs can detect logout
         } else {
             tracing::error!("Called logout but aws_identity is None");
@@ -504,161 +613,11 @@ impl AwsLoginWindow {
                                     ui.collapsing(
                                         format!("{} ({})", account.account_name, account.account_id),
                                         |ui| {
-                                            // Account details with console button
-                                            ui.horizontal(|ui| {
-                                                ui.vertical(|ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.label("Role:");
-                                                        ui.label(RichText::new(&account.role_name).strong());
-                                                    });
-                                                });
-                                            });
-
+                                            // Show email if available
                                             if let Some(email) = &account.account_email {
                                                 ui.horizontal(|ui| {
                                                     ui.label("Email:");
                                                     ui.label(email);
-                                                });
-                                            }
-
-                                            // Show available roles
-                                            let roles = {
-                                                let identity_center = aws_identity.lock().unwrap();
-                                                identity_center.get_account_roles(&account.account_id)
-                                            };
-
-                                            ui.collapsing("Available Roles", |ui| {
-                                                if roles.is_empty() {
-                                                    ui.label("No roles found");
-                                                } else {
-                                                    // Create a grid for role, assume button, and console button
-                                                    egui::Grid::new("available_roles_grid")
-                                                        .num_columns(3)
-                                                        .spacing([10.0, 6.0])
-                                                        .min_col_width(150.0)
-                                                        .show(ui, |ui| {
-                                                            // Add header row
-                                                            ui.label(RichText::new("Role Name").strong());
-                                                            ui.label(""); // Empty cell for assume button
-                                                            ui.label(""); // Empty cell for console button
-                                                            ui.end_row();
-
-                                                            for role in roles {
-                                                                // Role name in first column
-                                                                ui.label(&role);
-
-                                                                // Assume button in second column
-                                                                if ui.button("Assume").clicked() {
-                                                                    // Clone what we need for the thread
-                                                                    let aws_identity_clone = aws_identity.clone();
-                                                                    let account_id = account.account_id.clone();
-                                                                    let role_name = role.clone();
-
-                                                                    // Get credentials in a separate thread
-                                                                    tracing::info!("Attempting to assume role {} for account {}",
-                                                                                 role_name, account_id);
-                                                                    thread::spawn(move || {
-                                                                        let mut identity_center = match aws_identity_clone.lock() {
-                                                                            Ok(guard) => guard,
-                                                                            Err(e) => {
-                                                                                tracing::error!("Failed to lock AWS identity center for role assumption: {}", e);
-                                                                                return;
-                                                                            }
-                                                                        };
-
-                                                                        tracing::info!("Requesting credentials for account {} with role {}",
-                                                                                     account_id, role_name);
-                                                                        match identity_center.get_account_credentials(&account_id, &role_name) {
-                                                                            Ok(creds) => {
-                                                                                tracing::info!("Successfully assumed role {} for account {}",
-                                                                                             role_name, account_id);
-                                                                                if let Some(exp) = creds.expiration {
-                                                                                    tracing::info!("Credentials expire at: {}",
-                                                                                                 exp.format("%Y-%m-%d %H:%M:%S UTC"));
-                                                                                }
-                                                                            },
-                                                                            Err(err) => {
-                                                                                tracing::error!("Failed to get credentials: {}", err);
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                }
-
-                                                                // Console button in third column
-                                                                if ui.button("🌐 Console").clicked() {
-                                                                    // Clone what we need for the thread
-                                                                    let aws_identity_clone = aws_identity.clone();
-                                                                    let account_id = account.account_id.clone();
-                                                                    let role_name = role.clone();
-
-                                                                    // Open AWS console in a separate thread
-                                                                    tracing::info!("Opening AWS Console for account {} with role {}",
-                                                                                 account_id, role_name);
-                                                                    thread::spawn(move || {
-                                                                        let mut identity_center = match aws_identity_clone.lock() {
-                                                                            Ok(guard) => guard,
-                                                                            Err(e) => {
-                                                                                tracing::error!("Failed to lock AWS identity center for console access: {}", e);
-                                                                                return;
-                                                                            }
-                                                                        };
-
-                                                                        match identity_center.open_aws_console(&account_id, &role_name) {
-                                                                            Ok(_) => {
-                                                                                tracing::info!("Successfully opened AWS Console for account {} with role {}",
-                                                                                             account_id, role_name);
-                                                                            },
-                                                                            Err(err) => {
-                                                                                tracing::error!("Failed to open AWS Console: {}", err);
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                }
-
-                                                                ui.end_row();
-                                                            }
-                                                        });
-                                                }
-
-                                            });
-
-                                            // Show credentials if available
-                                            if let Some(credentials) = &account.credentials {
-                                                ui.collapsing("Credentials", |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.label("Access Key ID:");
-                                                        ui.label(RichText::new(&credentials.access_key_id).monospace());
-                                                    });
-
-                                                    ui.horizontal(|ui| {
-                                                        ui.label("Secret Access Key:");
-                                                        // Only show first few characters
-                                                        let secret = if credentials.secret_access_key.len() > 8 {
-                                                            format!("{}...", &credentials.secret_access_key[..8])
-                                                        } else {
-                                                            credentials.secret_access_key.clone()
-                                                        };
-                                                        ui.label(RichText::new(secret).monospace());
-                                                    });
-
-                                                    if let Some(expiration) = credentials.expiration {
-                                                        ui.horizontal(|ui| {
-                                                            ui.label("Expires:");
-                                                            ui.label(format!("{}", expiration.format("%Y-%m-%d %H:%M:%S UTC")));
-                                                        });
-                                                    }
-
-                                                    if let Some(token) = &credentials.session_token {
-                                                        ui.collapsing("Session Token", |ui| {
-                                                            // Show shortened token
-                                                            let short_token = if token.len() > 20 {
-                                                                format!("{}...", &token[..20])
-                                                            } else {
-                                                                token.clone()
-                                                            };
-                                                            ui.label(RichText::new(short_token).monospace());
-                                                        });
-                                                    }
                                                 });
                                             }
                                         }

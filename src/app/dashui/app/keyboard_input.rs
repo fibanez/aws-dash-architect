@@ -768,10 +768,6 @@ impl DashApp {
                 // Chat window removed
                 FocusedWindow::Chat
             }
-            9 => {
-                self.credentials_debug_window.open = true;
-                FocusedWindow::CredentialsDebug
-            }
             _ => return,
         };
 

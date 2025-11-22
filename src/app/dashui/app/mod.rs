@@ -13,7 +13,6 @@ use super::aws_login_window::AwsLoginWindow;
 use super::cloudwatch_logs_window::CloudWatchLogsWindow;
 use super::cloudtrail_events_window::CloudTrailEventsWindow;
 use super::command_palette::CommandPalette;
-use super::credentials_debug_window::CredentialsDebugWindow;
 use super::help_window::HelpWindow;
 use super::log_window::LogWindow;
 use super::verification_window::VerificationWindow;
@@ -95,7 +94,6 @@ pub enum FocusedWindow {
     Log,
     Chat,
     AgentManager,
-    CredentialsDebug,
     Verification,
     GuardViolations,
 }
@@ -119,8 +117,6 @@ pub struct DashApp {
     // V1 AgentManager removed - V2 agents managed directly in AgentManagerWindow
     #[serde(skip)]
     pub agent_manager_window: Option<crate::app::dashui::AgentManagerWindow>,
-    #[serde(skip)]
-    pub credentials_debug_window: CredentialsDebugWindow,
     #[serde(skip)]
     pub verification_window: VerificationWindow,
     #[serde(skip)]
@@ -204,7 +200,6 @@ impl Default for DashApp {
             help_window: HelpWindow::new(),
             log_window: LogWindow::new(),
             agent_manager_window: None,
-            credentials_debug_window: CredentialsDebugWindow::default(),
             verification_window: VerificationWindow::default(),
             cloudwatch_logs_windows: Vec::new(),
             cloudtrail_events_windows: Vec::new(),

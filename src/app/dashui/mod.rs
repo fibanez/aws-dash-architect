@@ -52,7 +52,6 @@
 //!
 //! ## Development Tools
 //! - **Log Viewer**: [`log_window::LogWindow`] for real-time application logging
-//! - **Credentials Debug**: [`credentials_debug_window::CredentialsDebugWindow`] for AWS credential troubleshooting
 //! - **Verification Tools**: [`verification_window::VerificationWindow`] for template validation
 //!
 //! # Window Categories
@@ -84,7 +83,6 @@ pub mod aws_login_window;
 pub mod cloudwatch_logs_window;
 pub mod cloudtrail_events_window;
 pub mod command_palette;
-pub mod credentials_debug_window;
 pub mod help_window;
 pub mod hint_mode;
 pub mod key_mapping;
@@ -104,7 +102,6 @@ pub use aws_login_window::AwsLoginWindow;
 pub use cloudwatch_logs_window::{CloudWatchLogsShowParams, CloudWatchLogsWindow};
 pub use cloudtrail_events_window::{CloudTrailEventsShowParams, CloudTrailEventsWindow};
 pub use command_palette::CommandPalette;
-pub use credentials_debug_window::CredentialsDebugWindow;
 pub use help_window::HelpWindow;
 pub use hint_mode::{HintConfig, HintGenerator, HintMarker, HintMode, HintOverlay};
 pub use key_mapping::{KeyBindingMap, KeyBindingSettings, KeyMapping, KeyMappingRegistry};

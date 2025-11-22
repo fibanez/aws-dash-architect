@@ -143,9 +143,6 @@ impl DashApp {
                         window.close();
                     }
                 }
-                FocusedWindow::CredentialsDebug => {
-                    self.credentials_debug_window.open = false;
-                }
                 FocusedWindow::Verification => {
                     self.verification_window.visible = false;
                 }
@@ -202,17 +199,6 @@ impl DashApp {
             self.window_selector.unregister_window("aws_login_window");
         }
 
-        // Track Credentials Debug Window
-        if self.credentials_debug_window.open {
-            self.window_selector.register_window(
-                "credentials_debug".to_string(),
-                "AWS Credentials Debug".to_string(),
-                WindowType::CredentialsDebug,
-            );
-        } else {
-            self.window_selector.unregister_window("credentials_debug");
-        }
-
         // Track Verification Window
         if self.verification_window.visible {
             self.window_selector.register_window(
@@ -260,10 +246,6 @@ impl DashApp {
             }
             "control_bridge" => {
                 // AgentControlWindow removed - using AgentManagerWindow instead
-            }
-            "credentials_debug" => {
-                self.credentials_debug_window.open = true;
-                self.set_focused_window(FocusedWindow::CredentialsDebug);
             }
             "template_sections" => {
                 // Resource/template editor windows removed

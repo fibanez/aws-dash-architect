@@ -73,9 +73,20 @@ impl DashApp {
 
                 // Proactively initialize ResourceExplorer with AWS Identity Center
                 // This ensures the AWS client is available for agent framework tools even if the window isn't open
-                self.resource_explorer
-                    .set_aws_identity_center(Some(aws_identity.clone()));
-                tracing::info!("🚀 ResourceExplorer proactively initialized for agent framework tools");
+                // But only if credentials are actually available (prevents race condition)
+                let has_credentials = if let Ok(identity) = aws_identity.lock() {
+                    identity.default_role_credentials.is_some()
+                } else {
+                    false
+                };
+
+                if has_credentials {
+                    self.resource_explorer
+                        .set_aws_identity_center(Some(aws_identity.clone()));
+                    tracing::info!("🚀 ResourceExplorer proactively initialized with credentials for agent framework tools");
+                } else {
+                    tracing::debug!("Waiting for credentials before initializing ResourceExplorer");
+                }
 
                 // Check if we just completed login
                 let is_logged_in_now = if let Ok(identity) = aws_identity.lock() {
@@ -110,17 +121,6 @@ impl DashApp {
             if self.aws_login_window.accounts_window_open {
                 self.set_focused_window(FocusedWindow::AwsAccounts);
             }
-
-            // Check if the credentials debug window should be opened
-            if self.aws_login_window.credentials_debug_window_open {
-                self.credentials_debug_window.open = true;
-                self.set_focused_window(FocusedWindow::CredentialsDebug);
-                // Trigger shake animation when credentials are ready and debug window opens
-                tracing::info!("AWS credentials obtained and debug window opened");
-                self.start_delayed_shake_animation();
-                // Reset the flag as we've handled it
-                self.aws_login_window.credentials_debug_window_open = false;
-            }
         }
     }
 
@@ -141,29 +141,9 @@ impl DashApp {
         // Chat window removed
     }
 
-    /// Handle the credentials debug window
-    pub(super) fn handle_credentials_debug_window(&mut self, ctx: &egui::Context) {
-        if self.credentials_debug_window.is_open() {
-            // Only set focus if this window is not already focused to avoid stealing focus every frame
-            if self.currently_focused_window != Some(FocusedWindow::CredentialsDebug) {
-                self.set_focused_window(FocusedWindow::CredentialsDebug);
-            }
-
-            // Check if this window should be brought to the front
-            let window_id = self.credentials_debug_window.window_id();
-            let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id);
-            if bring_to_front {
-                self.window_focus_manager.clear_bring_to_front(window_id);
-            }
-
-            // Show the window with AWS identity information
-            self.credentials_debug_window.show_with_focus(
-                ctx,
-                self.aws_identity_center.as_ref(),
-                None, // window position
-                bring_to_front,
-            );
-        }
+    /// Handle the credentials debug window - removed
+    pub(super) fn handle_credentials_debug_window(&mut self, _ctx: &egui::Context) {
+        // Credentials debug window removed
     }
 
     /// Handle the verification window

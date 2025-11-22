@@ -56,6 +56,39 @@ pub struct AccountCredentials {
 5. **Cache Update**: Store new credentials with expiration timestamp
 6. **AWS SDK Integration**: Convert to AWS SDK credential format
 
+**Login Credential Flow:**
+
+The login process follows a carefully orchestrated sequence to prevent race conditions:
+
+1. **Device Authorization**: Background thread calls `complete_device_authorization()` (30+ seconds)
+2. **Account Discovery**: AWS accounts loaded after authorization completes
+3. **Credential Fetch**: Default role credentials requested via `get_default_role_credentials()`
+4. **Credential Storage**: Credentials stored in `default_role_credentials` field
+5. **State Update**: `LoginState::LoggedIn` set only after credentials are stored
+6. **Explorer Initialization**: ResourceExplorer initialized only when credentials exist
+
+This sequence prevents a race condition where `LoginState::LoggedIn` could be set before credentials were available, causing Explorer and Agent to initialize with incomplete identity data.
+
+**Mutex Handling During Login:**
+
+The login process uses scoped blocks to release mutex locks before blocking operations:
+
+```rust
+// Call blocking operation without holding lock
+let auth_result = {
+    let mut identity_center = aws_identity.lock().unwrap();
+    identity_center.complete_device_authorization()
+}; // Lock released here - UI can continue rendering
+
+// Re-acquire lock briefly to store results
+if let Ok(mut identity_center) = aws_identity.lock() {
+    identity_center.default_role_credentials = Some(creds);
+    identity_center.login_state = LoginState::LoggedIn;
+}
+```
+
+This pattern prevents UI freezing during the 30+ second device authorization by allowing the UI thread to render (including spinner animation) while the background thread waits for AWS responses.
+
 **Thread-Safe Caching:**
 ```rust
 credential_cache: Arc<RwLock<HashMap<String, AccountCredentials>>>,

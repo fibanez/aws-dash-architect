@@ -13,6 +13,7 @@ This directory contains modular technical documentation for the AWS Dash project
 
 ## UI Features
 
+* [AWS Login Window](aws-login-window.md) - Identity Center authentication with simplified URL input and region selection
 * [Command Palette System](command-palette-system.md) - Command palette with keyboard shortcuts
 * [AWS Icon System](aws-icon-system.md) - Dynamic icon loading and caching for AWS service visualization
 
