@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
 
-use crate::app::agent_framework::{AgentId, AgentMetadata, AgentStatus};
+use crate::app::agent_framework::{AgentId, AgentMetadata, AgentStatus, AgentType};
 
 // Thread-local storage for current agent logger (used by tools to log to per-agent logs)
 thread_local! {
@@ -61,7 +61,11 @@ pub struct AgentLogger {
 
 impl AgentLogger {
     /// Create a new agent logger with dedicated log file
-    pub fn new(agent_id: AgentId, agent_name: String) -> Result<Self, std::io::Error> {
+    pub fn new(
+        agent_id: AgentId,
+        agent_name: String,
+        agent_type: &AgentType,
+    ) -> Result<Self, std::io::Error> {
         let log_path = Self::get_log_path(agent_id)?;
 
         // Ensure parent directory exists
@@ -87,6 +91,7 @@ impl AgentLogger {
         )?;
         writeln!(file_handle, "Agent ID: {}", agent_id)?;
         writeln!(file_handle, "Agent Name: {}", agent_name)?;
+        writeln!(file_handle, "Agent Type: {}", agent_type)?;
         writeln!(file_handle, "{}\n", "=".repeat(80))?;
         file_handle.flush()?;
 
@@ -135,60 +140,60 @@ impl AgentLogger {
     }
 
     /// Update agent name (when renamed via UI)
-    pub fn update_agent_name(&self, new_name: String) {
+    pub fn update_agent_name(&self, agent_type: &AgentType, new_name: String) {
         if let Ok(mut name) = self.agent_name.lock() {
             *name = new_name.clone();
         }
 
         self.write_event(&format!(
-            "[{}] 📝 AGENT_RENAMED\n    New Name: {}",
-            Self::timestamp(),
+            "{} 📝 AGENT_RENAMED\n    New Name: {}",
+            Self::timestamp_with_type(agent_type),
             new_name
         ));
     }
 
     /// Log agent creation event
-    pub fn log_agent_created(&self, metadata: &AgentMetadata) {
+    pub fn log_agent_created(&self, agent_type: &AgentType, metadata: &AgentMetadata) {
         self.write_event(&format!(
-            "[{}] 🚀 AGENT_CREATED\n    Model: {}\n    Description: {}",
-            Self::timestamp(),
+            "{} 🚀 AGENT_CREATED\n    Model: {}\n    Description: {}",
+            Self::timestamp_with_type(agent_type),
             metadata.model_id,
             metadata.description
         ));
     }
 
     /// Log user message
-    pub fn log_user_message(&self, message: &str) {
+    pub fn log_user_message(&self, agent_type: &AgentType, message: &str) {
         self.write_event(&format!(
-            "[{}] 👤 USER_MESSAGE\n    Message: \"{}\"",
-            Self::timestamp(),
+            "{} 👤 USER_MESSAGE\n    Message: \"{}\"",
+            Self::timestamp_with_type(agent_type),
             message
         ));
     }
 
     /// Log assistant response
-    pub fn log_assistant_response(&self, response: &str) {
+    pub fn log_assistant_response(&self, agent_type: &AgentType, response: &str) {
         self.write_event(&format!(
-            "[{}] ⚡ ASSISTANT_RESPONSE\n    Response:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
-            Self::timestamp(),
+            "{} ⚡ ASSISTANT_RESPONSE\n    Response:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
+            Self::timestamp_with_type(agent_type),
             Self::indent_lines(response, 4)
         ));
     }
 
     /// Log system message
-    pub fn log_system_message(&self, message: &str) {
+    pub fn log_system_message(&self, agent_type: &AgentType, message: &str) {
         self.write_event(&format!(
-            "[{}] ℹ SYSTEM_MESSAGE\n    Message: \"{}\"",
-            Self::timestamp(),
+            "{} ℹ SYSTEM_MESSAGE\n    Message: \"{}\"",
+            Self::timestamp_with_type(agent_type),
             message
         ));
     }
 
     /// Log error message
-    pub fn log_error(&self, error: &str) {
+    pub fn log_error(&self, agent_type: &AgentType, error: &str) {
         self.write_event(&format!(
-            "[{}] ❌ ERROR\n    Error: {}",
-            Self::timestamp(),
+            "{} ❌ ERROR\n    Error: {}",
+            Self::timestamp_with_type(agent_type),
             error
         ));
 
@@ -201,13 +206,14 @@ impl AgentLogger {
     /// Log model request sent
     pub fn log_model_request(
         &self,
+        agent_type: &AgentType,
         system_prompt: &str,
         user_message: &str,
         model_id: &str,
     ) {
         self.write_event(&format!(
-            "[{}] 📤 MODEL_REQUEST_SENT\n    Model: {}\n    User Message: \"{}\"\n    System Prompt:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
-            Self::timestamp(),
+            "{} 📤 MODEL_REQUEST_SENT\n    Model: {}\n    User Message: \"{}\"\n    System Prompt:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
+            Self::timestamp_with_type(agent_type),
             model_id,
             user_message,
             Self::indent_lines(system_prompt, 4) // No truncation - show full prompt
@@ -217,6 +223,7 @@ impl AgentLogger {
     /// Log model response received
     pub fn log_model_response(
         &self,
+        agent_type: &AgentType,
         response: &str,
         stop_reason: &str,
         duration_ms: u64,
@@ -232,8 +239,8 @@ impl AgentLogger {
         };
 
         self.write_event(&format!(
-            "[{}] 📥 MODEL_RESPONSE_RECEIVED\n    Stop Reason: {}\n    Duration: {}ms{}\n    Full Response:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
-            Self::timestamp(),
+            "{} 📥 MODEL_RESPONSE_RECEIVED\n    Stop Reason: {}\n    Duration: {}ms{}\n    Full Response:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
+            Self::timestamp_with_type(agent_type),
             stop_reason,
             duration_ms,
             token_info,
@@ -242,7 +249,7 @@ impl AgentLogger {
     }
 
     /// Log tool execution start
-    pub fn log_tool_start(&self, tool_name: &str, input: &Value) {
+    pub fn log_tool_start(&self, agent_type: &AgentType, tool_name: &str, input: &Value) {
         let formatted_input =
             serde_json::to_string_pretty(input).unwrap_or_else(|_| "Invalid JSON".to_string());
 
@@ -250,15 +257,15 @@ impl AgentLogger {
         let prettified_input = Self::prettify_json_for_display(&formatted_input, tool_name);
 
         self.write_event(&format!(
-            "[{}] 🔧 TOOL_START\n    Tool Name: {}\n    Input Parameters:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
-            Self::timestamp(),
+            "{} 🔧 TOOL_START\n    Tool Name: {}\n    Input Parameters:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
+            Self::timestamp_with_type(agent_type),
             tool_name,
             Self::indent_lines(&prettified_input, 4)
         ));
     }
 
     /// Log tool execution completion
-    pub fn log_tool_complete(&self, tool_name: &str, output: Option<&Value>, duration: Duration) {
+    pub fn log_tool_complete(&self, agent_type: &AgentType, tool_name: &str, output: Option<&Value>, duration: Duration) {
         let formatted_output = if let Some(out) = output {
             serde_json::to_string_pretty(out).unwrap_or_else(|_| "Invalid JSON".to_string())
         } else {
@@ -266,8 +273,8 @@ impl AgentLogger {
         };
 
         self.write_event(&format!(
-            "[{}] ✅ TOOL_COMPLETE\n    Tool Name: {}\n    Duration: {:.2}s\n    Output Result:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
-            Self::timestamp(),
+            "{} ✅ TOOL_COMPLETE\n    Tool Name: {}\n    Duration: {:.2}s\n    Output Result:\n    ┌─────────────────────────────────────────────────────────────────\n{}\n    └─────────────────────────────────────────────────────────────────",
+            Self::timestamp_with_type(agent_type),
             tool_name,
             duration.as_secs_f64(),
             Self::indent_lines(&formatted_output, 4)
@@ -275,10 +282,10 @@ impl AgentLogger {
     }
 
     /// Log tool execution failure
-    pub fn log_tool_failed(&self, tool_name: &str, error: &str, duration: Duration) {
+    pub fn log_tool_failed(&self, agent_type: &AgentType, tool_name: &str, error: &str, duration: Duration) {
         self.write_event(&format!(
-            "[{}] ❌ TOOL_FAILED\n    Tool Name: {}\n    Duration: {:.2}s\n    Error: {}",
-            Self::timestamp(),
+            "{} ❌ TOOL_FAILED\n    Tool Name: {}\n    Duration: {:.2}s\n    Error: {}",
+            Self::timestamp_with_type(agent_type),
             tool_name,
             duration.as_secs_f64(),
             error
@@ -288,14 +295,15 @@ impl AgentLogger {
     /// Log sub-task creation (create_task tool)
     pub fn log_subtask_created(
         &self,
+        agent_type: &AgentType,
         task_id: &str,
         description: &str,
         accounts: &[String],
         regions: &[String],
     ) {
         self.write_event(&format!(
-            "[{}] 🎯 SUBTASK_CREATED\n    Task ID: {}\n    Description: \"{}\"\n    Accounts: {:?}\n    Regions: {:?}",
-            Self::timestamp(),
+            "{} 🎯 SUBTASK_CREATED\n    Task ID: {}\n    Description: \"{}\"\n    Accounts: {:?}\n    Regions: {:?}",
+            Self::timestamp_with_type(agent_type),
             task_id,
             description,
             accounts,
@@ -304,23 +312,23 @@ impl AgentLogger {
     }
 
     /// Log model change
-    pub fn log_model_changed(&self, old_model: &str, new_model: &str) {
+    pub fn log_model_changed(&self, agent_type: &AgentType, old_model: &str, new_model: &str) {
         self.write_event(&format!(
-            "[{}] 🔄 MODEL_CHANGED\n    Old Model: {}\n    New Model: {}",
-            Self::timestamp(),
+            "{} 🔄 MODEL_CHANGED\n    Old Model: {}\n    New Model: {}",
+            Self::timestamp_with_type(agent_type),
             old_model,
             new_model
         ));
     }
 
     /// Log agent termination
-    pub fn log_agent_terminated(&self, final_status: &AgentStatus) {
+    pub fn log_agent_terminated(&self, agent_type: &AgentType, final_status: &AgentStatus) {
         let status_text = match final_status {
             AgentStatus::Completed => "Completed Successfully",
             AgentStatus::Failed(err) => {
                 self.write_event(&format!(
-                    "[{}] 🏁 AGENT_TERMINATED\n    Status: Failed\n    Error: {}",
-                    Self::timestamp(),
+                    "{} 🏁 AGENT_TERMINATED\n    Status: Failed\n    Error: {}",
+                    Self::timestamp_with_type(agent_type),
                     err
                 ));
 
@@ -339,8 +347,8 @@ impl AgentLogger {
             .num_milliseconds();
 
         self.write_event(&format!(
-            "[{}] 🏁 AGENT_TERMINATED\n    Status: {}\n    Total Duration: {}ms\n    {}",
-            Self::timestamp(),
+            "{} 🏁 AGENT_TERMINATED\n    Status: {}\n    Total Duration: {}ms\n    {}",
+            Self::timestamp_with_type(agent_type),
             status_text,
             session_duration,
             "=".repeat(80)
@@ -373,9 +381,22 @@ impl AgentLogger {
         }
     }
 
+    /// Get agent type label for log entries
+    fn agent_type_label(agent_type: &AgentType) -> &str {
+        match agent_type {
+            AgentType::TaskManager => "MANAGER",
+            AgentType::TaskWorker { .. } => "TASK WORKER",
+        }
+    }
+
     /// Get current timestamp for logging
     fn timestamp() -> String {
         Utc::now().format("%H:%M:%S").to_string()
+    }
+
+    /// Get timestamp with agent type label
+    fn timestamp_with_type(agent_type: &AgentType) -> String {
+        format!("[{}] [{}]", Self::timestamp(), Self::agent_type_label(agent_type))
     }
 
     /// Prettify JSON for display - specifically handles JavaScript code with escaped newlines
@@ -437,6 +458,141 @@ impl AgentLogger {
 
         result.join("\n")
     }
+
+    /// Clean up old agent log files, keeping only the N most recent
+    ///
+    /// This helps prevent the logs directory from growing indefinitely.
+    /// By default, keeps the 50 most recent agent log files.
+    ///
+    /// Returns the number of files deleted.
+    pub fn cleanup_old_logs(keep_count: usize) -> Result<usize, std::io::Error> {
+        let log_dir = if let Some(proj_dirs) = directories::ProjectDirs::from("com", "", "awsdash")
+        {
+            proj_dirs.data_dir().join("logs").join("agents")
+        } else {
+            return Ok(0); // Can't determine log directory
+        };
+
+        if !log_dir.exists() {
+            return Ok(0); // Nothing to clean up
+        }
+
+        // Collect all agent log files with their metadata
+        let mut log_files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+
+        for entry in std::fs::read_dir(&log_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process agent log files (not debug logs)
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                    if filename.ends_with(".log")
+                        && !filename.ends_with("-debug.log")
+                        && filename.contains("Agent-")
+                    {
+                        if let Ok(metadata) = entry.metadata() {
+                            if let Ok(modified) = metadata.modified() {
+                                log_files.push((path, modified));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by modification time (newest first)
+        log_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Delete files beyond keep_count
+        let mut deleted = 0;
+        for (path, _) in log_files.iter().skip(keep_count) {
+            match std::fs::remove_file(path) {
+                Ok(_) => {
+                    deleted += 1;
+                    tracing::info!(
+                        "Deleted old agent log: {}",
+                        path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to delete old agent log {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(deleted)
+    }
+
+    /// Clean up old debug log files, keeping only the N most recent
+    ///
+    /// Similar to cleanup_old_logs but specifically for debug logs.
+    pub fn cleanup_old_debug_logs(keep_count: usize) -> Result<usize, std::io::Error> {
+        let log_dir = if let Some(proj_dirs) = directories::ProjectDirs::from("com", "", "awsdash")
+        {
+            proj_dirs.data_dir().join("logs").join("agents")
+        } else {
+            return Ok(0);
+        };
+
+        if !log_dir.exists() {
+            return Ok(0);
+        }
+
+        // Collect all debug log files with their metadata
+        let mut debug_files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+
+        for entry in std::fs::read_dir(&log_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                    if filename.ends_with("-debug.log") && filename.contains("Agent-") {
+                        if let Ok(metadata) = entry.metadata() {
+                            if let Ok(modified) = metadata.modified() {
+                                debug_files.push((path, modified));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by modification time (newest first)
+        debug_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Delete files beyond keep_count
+        let mut deleted = 0;
+        for (path, _) in debug_files.iter().skip(keep_count) {
+            match std::fs::remove_file(path) {
+                Ok(_) => {
+                    deleted += 1;
+                    tracing::info!(
+                        "Deleted old debug log: {}",
+                        path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to delete old debug log {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]
@@ -446,8 +602,9 @@ mod tests {
     #[test]
     fn test_agent_logger_creation() {
         let agent_id = AgentId::new();
+        let agent_type = AgentType::TaskManager;
         let logger =
-            AgentLogger::new(agent_id, "Test Agent".to_string()).expect("Failed to create logger");
+            AgentLogger::new(agent_id, "Test Agent".to_string(), &agent_type).expect("Failed to create logger");
 
         // Verify log path exists
         assert!(logger.log_path().exists());

@@ -36,15 +36,6 @@ static GLOBAL_MODEL_CONFIG: RwLock<Option<String>> = RwLock::new(None);
 pub fn set_global_aws_client(client: Option<Arc<AWSResourceClient>>) {
     match GLOBAL_AWS_CLIENT.write() {
         Ok(mut guard) => {
-            let client_status = if client.is_some() {
-                "✅ Set"
-            } else {
-                "❌ Cleared"
-            };
-            info!(
-                "🔧 Global AWS client updated for agent framework tools: {}",
-                client_status
-            );
             *guard = client;
         }
         Err(e) => {

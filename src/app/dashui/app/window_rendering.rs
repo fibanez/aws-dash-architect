@@ -71,9 +71,7 @@ impl DashApp {
                     tracing::info!("🚀 AgentManagerWindow (V2) initialized");
                 }
 
-                // Proactively initialize ResourceExplorer with AWS Identity Center
-                // This ensures the AWS client is available for agent framework tools even if the window isn't open
-                // But only if credentials are actually available (prevents race condition)
+                // Check if credentials are actually available (prevents race condition)
                 let has_credentials = if let Ok(identity) = aws_identity.lock() {
                     identity.default_role_credentials.is_some()
                 } else {
@@ -81,11 +79,18 @@ impl DashApp {
                 };
 
                 if has_credentials {
+                    // Set AWS identity on AgentManagerWindow
+                    if let Some(agent_window) = &mut self.agent_manager_window {
+                        agent_window.set_aws_identity(aws_identity.clone());
+                        tracing::debug!("AgentManagerWindow AWS identity set");
+                    }
+
+                    // Proactively initialize ResourceExplorer with AWS Identity Center
+                    // This ensures the AWS client is available for agent framework tools even if the window isn't open
                     self.resource_explorer
                         .set_aws_identity_center(Some(aws_identity.clone()));
-                    tracing::info!("🚀 ResourceExplorer proactively initialized with credentials for agent framework tools");
                 } else {
-                    tracing::debug!("Waiting for credentials before initializing ResourceExplorer");
+                    tracing::debug!("Waiting for credentials before initializing windows");
                 }
 
                 // Check if we just completed login
@@ -101,6 +106,7 @@ impl DashApp {
                 // Log when transitioning from not logged in to logged in
                 if !was_logged_in_before && is_logged_in_now {
                     tracing::info!("AWS login successful");
+                    tracing::info!("ResourceExplorer and AgentManagerWindow initialized with credentials");
                     // Note: Shake animation now triggered when credentials debug window opens
                 }
             } else if self.aws_identity_center.is_some() && self.aws_login_window.logged_out {
@@ -333,13 +339,6 @@ impl DashApp {
         // Clear bring to front flag
         if bring_to_front {
             self.window_focus_manager.clear_bring_to_front(window_id);
-        }
-
-        // Set AWS Identity for agent execution
-        if let Some(window) = &mut self.agent_manager_window {
-            if let Some(aws_identity) = &self.aws_identity_center {
-                window.set_aws_identity(aws_identity.clone());
-            }
         }
 
         // Show the window using the trait

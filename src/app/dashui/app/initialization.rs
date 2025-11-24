@@ -15,6 +15,13 @@ impl DashApp {
             Self::default()
         };
 
+        // Disable egui's internal UI state persistence (collapsibles, scroll positions, etc.)
+        // This keeps app.ron small - only app state (theme) is saved, not all UI state
+        cc.egui_ctx.memory_mut(|mem| {
+            // Clear the persisted UI state data (collapsible headers, scroll positions, text cursors, etc.)
+            mem.data.clear();
+        });
+
         // Apply the saved theme
         app.apply_theme(&cc.egui_ctx);
 

@@ -189,7 +189,11 @@ Available JavaScript APIs:
   Returns: Array<{ code: string, name: string }>
 - queryResources(options): Query AWS resources across accounts/regions/types
   Parameters: { accounts: string[]|null, regions: string[]|null, resourceTypes: string[] }
-  Returns: Array<{ resourceType, accountId, region, resourceId, displayName, status, properties, tags }>
+  Returns: Array<{ resourceType, accountId, region, resourceId, displayName, status, properties, rawProperties, detailedProperties, tags }>
+  **CRITICAL**: Use 'rawProperties' for filtering/sorting by AWS-specific fields!
+    - properties: Minimal normalized fields (id, arn, created_date ONLY)
+    - rawProperties: Full AWS API response (InstanceType, Runtime, Engine, VpcId, etc.)
+    - detailedProperties: Additional Describe API data (if available)
   Examples: AWS::EC2::Instance, AWS::S3::Bucket, AWS::IAM::Role, AWS::Lambda::Function, we support 93 services and 183 resource types
 - queryCloudWatchLogEvents(params): Query CloudWatch Logs for analysis and monitoring
   Parameters: { logGroupName: string, accountId: string, region: string, startTime?: number, endTime?: number, filterPattern?: string, limit?: number, logStreamNames?: string[], startFromHead?: boolean }
@@ -206,6 +210,35 @@ Available JavaScript APIs:
   Common Event Names: RunInstances, TerminateInstances, CreateBucket, DeleteBucket, PutBucketPolicy, CreateFunction, UpdateFunctionCode
   Default Behavior: Automatically fetches at least 100 events (2 pages) for better coverage
   CloudTrail Delay: Events appear 5-15 minutes after the API call
+
+**PROPERTY ACCESS GUIDELINES** (queryResources):
+The 'properties' field is MINIMAL (only id/arn/created_date). Use 'rawProperties' for AWS-specific fields:
+
+1. EC2 Instances (AWS::EC2::Instance) - rawProperties fields:
+   InstanceType, State, VpcId, SubnetId, PrivateIpAddress, PublicIpAddress, LaunchTime
+   Example: resources.filter(r => r.rawProperties.InstanceType === 't3.micro')
+
+2. Lambda Functions (AWS::Lambda::Function) - rawProperties fields:
+   FunctionName, Runtime, Handler, MemorySize, Timeout, State, LastModified
+   Example: resources.filter(r => r.rawProperties.Runtime === 'python3.11')
+
+3. S3 Buckets (AWS::S3::Bucket) - rawProperties fields:
+   Name, CreationDate
+   Example: resources.filter(r => r.rawProperties.Name.includes('prod'))
+
+4. RDS Instances (AWS::RDS::DBInstance) - rawProperties fields:
+   DBInstanceIdentifier, DBInstanceClass, Engine, EngineVersion, DBInstanceStatus
+   Example: resources.filter(r => r.rawProperties.Engine === 'postgres')
+
+5. IAM Roles (AWS::IAM::Role) - rawProperties fields:
+   RoleName, Path, Arn, CreateDate, MaxSessionDuration
+   Example: resources.filter(r => r.rawProperties.Path === '/service-role/')
+
+**Common Patterns**:
+❌ WRONG: resources.filter(r => r.properties.InstanceType === 't3.micro')
+✅ CORRECT: resources.filter(r => r.rawProperties.InstanceType === 't3.micro')
+✅ Use 'status' field: resources.filter(r => r.status === 'running')
+✅ Use 'tags' array: resources.filter(r => r.tags.some(t => t.key === 'Environment'))
 
 Input Parameters:
 - code: JavaScript code string to execute
@@ -236,8 +269,8 @@ Examples:
 6. Query EC2 instances:
    {"code": "const instances = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); instances;"}
 
-7. Find running instances:
-   {"code": "const instances = queryResources({ accounts: null, regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance'] }); instances.filter(i => i.status === 'running');"}
+7. Find t3.micro instances:
+   {"code": "const instances = queryResources({ accounts: null, regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance'] }); instances.filter(i => i.rawProperties.InstanceType === 't3.micro');"}
 
 8. Query multiple resource types:
    {"code": "const resources = queryResources({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance', 'AWS::S3::Bucket'] }); resources;"}
@@ -253,6 +286,18 @@ Examples:
 
 12. Find CloudTrail security events (failed API calls):
    {"code": "const events = getCloudTrailEvents({ accountId: '123456789012', region: 'us-east-1', startTime: Date.now() - (24 * 60 * 60 * 1000) }); events.events.filter(e => e.errorCode).map(e => ({ event: e.eventName, error: e.errorCode, user: e.username }));"}
+
+13. Find Lambda functions by runtime:
+   {"code": "const fns = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::Lambda::Function'] }); fns.filter(f => f.rawProperties.Runtime === 'python3.11');"}
+
+14. Find RDS PostgreSQL databases:
+   {"code": "const dbs = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::RDS::DBInstance'] }); dbs.filter(d => d.rawProperties.Engine === 'postgres');"}
+
+15. Sort instances by launch time:
+   {"code": "const instances = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); instances.sort((a, b) => new Date(a.rawProperties.LaunchTime) - new Date(b.rawProperties.LaunchTime));"}
+
+16. Filter S3 buckets by creation date:
+   {"code": "const buckets = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); buckets.filter(b => new Date(b.rawProperties.CreationDate) > new Date('2024-01-01'));"}
 
 Return Values:
 - Use the last expression as the return value (no 'return' statement needed)
@@ -315,7 +360,9 @@ Return Values:
         // Log to per-agent log if available
         if let Some(logger) = crate::app::agent_framework::agent_logger::get_current_agent_logger()
         {
-            logger.log_tool_start("execute_javascript", &params);
+            if let Some(agent_type) = crate::app::agent_framework::get_current_agent_type() {
+                logger.log_tool_start(&agent_type, "execute_javascript", &params);
+            }
         }
 
         // Execute JavaScript with error handling
@@ -377,13 +424,15 @@ Return Values:
         // Log completion/failure to per-agent log if available
         if let Some(logger) = crate::app::agent_framework::agent_logger::get_current_agent_logger()
         {
-            if tool_result.success {
-                logger.log_tool_complete("execute_javascript", Some(&tool_result.content), elapsed);
-            } else {
-                if let Some(error_msg) = tool_result.error.as_ref() {
-                    logger.log_tool_failed("execute_javascript", error_msg, elapsed);
+            if let Some(agent_type) = crate::app::agent_framework::get_current_agent_type() {
+                if tool_result.success {
+                    logger.log_tool_complete(&agent_type, "execute_javascript", Some(&tool_result.content), elapsed);
                 } else {
-                    logger.log_tool_failed("execute_javascript", "Unknown error", elapsed);
+                    if let Some(error_msg) = tool_result.error.as_ref() {
+                        logger.log_tool_failed(&agent_type, "execute_javascript", error_msg, elapsed);
+                    } else {
+                        logger.log_tool_failed(&agent_type, "execute_javascript", "Unknown error", elapsed);
+                    }
                 }
             }
         }

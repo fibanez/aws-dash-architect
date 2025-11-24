@@ -46,7 +46,7 @@ pub fn render_agent_chat(
         .show(ui, |ui| {
             // No placeholder message - just show empty space when no messages
             for message in &messages {
-                ui.add_space(6.0);
+                //ui.add_space(6.0);
                 render_message(ui, message);
                 ui.add_space(1.0);
             }
@@ -110,32 +110,43 @@ pub fn render_agent_chat(
     // Controls section (included here to prevent window growth)
     ui.add_space(10.0);
 
-    // Model selection dropdown
+    // Model selection dropdown (editable for TaskManager, read-only for workers)
     let mut model_changed_to = None;
-    ui.horizontal(|ui| {
-        ui.label("Model:");
 
-        let available_models = crate::app::agent_framework::ModelConfig::default_models();
-        let current_model_id = &agent.metadata().model_id;
-        let current_display_name = available_models
-            .iter()
-            .find(|m| &m.model_id == current_model_id)
-            .map(|m| m.display_name.as_str())
-            .unwrap_or("Unknown Model");
+    let available_models = crate::app::agent_framework::ModelConfig::default_models();
+    let current_model_id = &agent.metadata().model_id;
+    let current_display_name = available_models
+        .iter()
+        .find(|m| &m.model_id == current_model_id)
+        .map(|m| m.display_name.as_str())
+        .unwrap_or("Unknown Model");
 
-        egui::ComboBox::from_id_salt(("model_selector", agent_id))
-            .selected_text(current_display_name)
-            .show_ui(ui, |ui| {
-                for model in &available_models {
-                    if ui
-                        .selectable_label(&model.model_id == current_model_id, &model.display_name)
-                        .clicked()
-                    {
-                        model_changed_to = Some(model.model_id.clone());
+    // Only show model selector for TaskManager agents
+    if agent.agent_type().is_task_manager() {
+        ui.horizontal(|ui| {
+            ui.label("Model:");
+
+            egui::ComboBox::from_id_salt(("model_selector", agent_id))
+                .selected_text(current_display_name)
+                .show_ui(ui, |ui| {
+                    for model in &available_models {
+                        if ui
+                            .selectable_label(&model.model_id == current_model_id, &model.display_name)
+                            .clicked()
+                        {
+                            model_changed_to = Some(model.model_id.clone());
+                        }
                     }
-                }
-            });
-    });
+                });
+        });
+    } else {
+        // For workers, show model read-only
+        ui.horizontal(|ui| {
+            ui.label("Model:");
+            ui.label(current_display_name)
+                .on_hover_text("Worker model inherited from parent manager");
+        });
+    }
 
     ui.add_space(5.0);
 

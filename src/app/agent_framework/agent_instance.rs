@@ -9,8 +9,9 @@ use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::app::agent_framework::agent_logger::AgentLogger;
-use crate::app::agent_framework::agent_types::{AgentId, AgentMetadata, AgentStatus};
+use crate::app::agent_framework::agent_types::{AgentId, AgentMetadata, AgentStatus, AgentType};
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationResponse};
+use crate::app::agent_framework::tools::TodoItem;
 
 /// Standalone Agent Instance
 ///
@@ -28,6 +29,8 @@ pub struct AgentInstance {
     metadata: AgentMetadata,
     /// Current execution status
     status: AgentStatus,
+    /// Type of agent (determines tools and prompts)
+    agent_type: AgentType,
 
     // Stood integration (lazy initialization)
     /// The stood agent (None until first message sent)
@@ -47,6 +50,8 @@ pub struct AgentInstance {
     processing: bool,
     /// Optional status message for future callback support
     status_message: Option<String>,
+    /// Todo list for task-manager agents (shared with tools)
+    todo_list_shared: Arc<Mutex<Vec<TodoItem>>>,
 
     // Integration
     /// Logger for comprehensive debugging (separate from UI)
@@ -60,18 +65,24 @@ impl AgentInstance {
     ///
     /// Note: The stood agent is not created until the first message is sent.
     /// This allows credential loading and setup to happen asynchronously.
-    pub fn new(metadata: AgentMetadata) -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - Agent metadata (name, description, model)
+    /// * `agent_type` - Type of agent (TaskManager or TaskWorker)
+    pub fn new(metadata: AgentMetadata, agent_type: AgentType) -> Self {
         let id = AgentId::new();
         let (tx, rx) = mpsc::channel();
 
         // Create logger for this agent
         let logger = Arc::new(
-            AgentLogger::new(id, metadata.name.clone())
+            AgentLogger::new(id, metadata.name.clone(), &agent_type)
                 .expect("Failed to create agent logger"),
         );
 
-        // Log agent creation
-        logger.log_agent_created(&metadata);
+        // Log agent creation with type
+        logger.log_agent_created(&agent_type, &metadata);
+        logger.log_system_message(&agent_type, &format!("Agent type: {}", agent_type));
 
         // Create dedicated tokio runtime for this agent
         let runtime =
@@ -81,11 +92,63 @@ impl AgentInstance {
             id,
             metadata,
             status: AgentStatus::Running,
+            agent_type,
             stood_agent: Arc::new(Mutex::new(None)),
             response_channel: (tx, rx),
             messages: VecDeque::new(),
             processing: false,
             status_message: None,
+            todo_list_shared: Arc::new(Mutex::new(Vec::new())),
+            logger,
+            runtime,
+        }
+    }
+
+    /// Create a new agent instance that shares its parent's logger
+    ///
+    /// This is used for task-worker agents that should log to their parent
+    /// task-manager's log file, allowing the complete conversation flow to
+    /// be tracked in a single file.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - Agent metadata (name, description, model)
+    /// * `agent_type` - Type of agent (TaskWorker)
+    /// * `parent_logger` - Parent agent's logger to share
+    pub fn new_with_parent_logger(
+        metadata: AgentMetadata,
+        agent_type: AgentType,
+        parent_logger: Arc<AgentLogger>,
+    ) -> Self {
+        let id = AgentId::new();
+        let (tx, rx) = mpsc::channel();
+
+        // Use parent's logger instead of creating new one
+        let logger = parent_logger;
+
+        // Log worker creation to parent's log with section header
+        logger.log_system_message(&agent_type, &format!(
+            "\n====== Worker Agent: {} ({}) ======",
+            metadata.name, id
+        ));
+        logger.log_agent_created(&agent_type, &metadata);
+        logger.log_system_message(&agent_type, &format!("Agent type: {}", agent_type));
+
+        // Create dedicated tokio runtime for this agent
+        let runtime =
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"));
+
+        Self {
+            id,
+            metadata,
+            status: AgentStatus::Running,
+            agent_type,
+            stood_agent: Arc::new(Mutex::new(None)),
+            response_channel: (tx, rx),
+            messages: VecDeque::new(),
+            processing: false,
+            status_message: None,
+            todo_list_shared: Arc::new(Mutex::new(Vec::new())),
             logger,
             runtime,
         }
@@ -99,6 +162,26 @@ impl AgentInstance {
     /// Get the agent's metadata
     pub fn metadata(&self) -> &AgentMetadata {
         &self.metadata
+    }
+
+    /// Get the agent's type
+    pub fn agent_type(&self) -> AgentType {
+        self.agent_type
+    }
+
+    /// Get the current todo list (for display/testing)
+    pub fn todo_list(&self) -> Vec<TodoItem> {
+        self.todo_list_shared.lock().unwrap().clone()
+    }
+
+    /// Set the todo list (for testing)
+    pub fn set_todo_list(&mut self, todos: Vec<TodoItem>) {
+        *self.todo_list_shared.lock().unwrap() = todos;
+    }
+
+    /// Clear the todo list
+    pub fn clear_todo_list(&mut self) {
+        self.todo_list_shared.lock().unwrap().clear();
     }
 
     /// Get the agent's current status
@@ -124,6 +207,78 @@ impl AgentInstance {
     /// Get reference to the agent's logger
     pub fn logger(&self) -> &Arc<AgentLogger> {
         &self.logger
+    }
+
+    /// Get tools based on agent type
+    ///
+    /// Tool configuration:
+    /// - TaskManager: think, todo-write, todo-read, start-task tools
+    /// - TaskWorker: execute_javascript tool
+    fn get_tools_for_type(&self) -> Vec<Box<dyn stood::tools::Tool>> {
+        match self.agent_type {
+            AgentType::TaskManager => {
+                // Task-manager agents get planning and orchestration tools
+                let _todo_list_ref = Arc::clone(&self.todo_list_shared);
+
+                // Think tool (no callback needed)
+                let think_tool = Box::new(crate::app::agent_framework::tools::ThinkTool::new());
+
+                // Todo tools commented out - not needed for task management
+                // // Todo-write tool with callback
+                // let todo_write_callback = {
+                //     let todo_ref = Arc::clone(&todo_list_ref);
+                //     move |todos: Vec<TodoItem>| {
+                //         *todo_ref.lock().unwrap() = todos;
+                //     }
+                // };
+                // let todo_write_tool = Box::new(
+                //     crate::app::agent_framework::tools::TodoWriteTool::new()
+                //         .with_callback(todo_write_callback),
+                // );
+
+                // // Todo-read tool with callback
+                // let todo_read_callback = {
+                //     let todo_ref = Arc::clone(&todo_list_ref);
+                //     move || todo_ref.lock().unwrap().clone()
+                // };
+                // let todo_read_tool = Box::new(
+                //     crate::app::agent_framework::tools::TodoReadTool::new()
+                //         .with_callback(todo_read_callback),
+                // );
+
+                // Start-task tool for spawning worker agents
+                let start_task_tool =
+                    Box::new(crate::app::agent_framework::tools::StartTaskTool::new());
+
+                vec![
+                    think_tool as Box<dyn stood::tools::Tool>,
+                    // todo_write_tool as Box<dyn stood::tools::Tool>,
+                    // todo_read_tool as Box<dyn stood::tools::Tool>,
+                    start_task_tool as Box<dyn stood::tools::Tool>,
+                ]
+            }
+            AgentType::TaskWorker { .. } => {
+                vec![crate::app::agent_framework::execute_javascript_tool()]
+            }
+        }
+    }
+
+    /// Get system prompt based on agent type
+    fn get_system_prompt_for_type(&self) -> String {
+        use chrono::Utc;
+
+        let prompt = match self.agent_type {
+            AgentType::TaskManager => {
+                crate::app::agent_framework::TASK_MANAGER_PROMPT.to_string()
+            }
+            AgentType::TaskWorker { .. } => {
+                crate::app::agent_framework::TASK_WORKER_PROMPT.to_string()
+            }
+        };
+
+        // Replace {{CURRENT_DATETIME}} placeholder with actual current date and time
+        let current_datetime = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        prompt.replace("{{CURRENT_DATETIME}}", &current_datetime)
     }
 
     /// Create and configure the stood Agent
@@ -160,36 +315,20 @@ impl AgentInstance {
 
         // Log agent initialization
         self.logger
-            .log_system_message("Agent initialization started");
+            .log_system_message(&self.agent_type, "Agent initialization started");
         self.logger
-            .log_system_message(&format!("Using model: {}", self.metadata.model_id));
+            .log_system_message(&self.agent_type, &format!("Using model: {}", self.metadata.model_id));
 
         // Configure agent with Claude Sonnet 3.5
         // Note: We can't use async in this context, so build synchronously
 
-        // Build system prompt with API documentation
-        let api_docs = crate::app::agent_framework::v8_bindings::get_api_documentation();
-        let system_prompt = format!(
-            "You are an AWS infrastructure agent. Think about all the steps needed to accomplish the goal and use the execute_javascript tool and available APIs to solve problems by writing JavaScript code. If no AWS account is provided use listAccounts() to pick one.  If no region is provided assume us-east-1\n\n\
-            {}\n\n\
-            Important: Always use the last expression in your JavaScript code as the return value. Do not use 'return' statements.\n\n\
-            Note: You are specialized for AWS operations only. For non-AWS questions, politely respond that you only assist with AWS-related tasks.\n\n\
-            <critical_rules>\n\
-            These rules MUST be followed for all query responses:\n\
-            1. Show me the exact query results without interpretation\n\
-            2. Only include resources that are explicitly returned in the query data\n\
-            </critical_rules>",
-            api_docs
-        );
+        // Get system prompt based on agent type
+        let system_prompt = self.get_system_prompt_for_type();
 
-        // Debug: Log the system prompt to verify it includes API docs
+        // Debug: Log the system prompt
         log::info!(
             "System prompt length: {} chars",
             system_prompt.len()
-        );
-        log::info!(
-            "API docs include listRegions: {}",
-            api_docs.contains("listRegions")
         );
         log::info!(
             "System prompt preview: {}...",
@@ -201,7 +340,7 @@ impl AgentInstance {
             .system_prompt(&system_prompt)
             .with_streaming(false) // Disable streaming to avoid hang issues
             .with_credentials(access_key, secret_key, session_token, region)
-            .tools(vec![crate::app::agent_framework::execute_javascript_tool()]);
+            .tools(self.get_tools_for_type());
 
         // We need to build async, so wrap in runtime
         let agent = self
@@ -210,7 +349,7 @@ impl AgentInstance {
             .map_err(|e| format!("Failed to build agent: {}", e))?;
 
         self.logger
-            .log_system_message("Agent successfully created");
+            .log_system_message(&self.agent_type, "Agent successfully created");
         Ok(agent)
     }
 
@@ -221,11 +360,7 @@ impl AgentInstance {
     /// - Lazily initializes stood agent if needed
     /// - Spawns background thread for execution
     /// - Sets processing flag
-    pub fn send_message(
-        &mut self,
-        user_message: String,
-        _aws_identity: &Arc<std::sync::Mutex<crate::app::aws_identity::AwsIdentityCenter>>,
-    ) {
+    pub fn send_message(&mut self, user_message: String) {
         // Log message being sent (with preview)
         let message_preview = if user_message.len() > 100 {
             format!("{}...", &user_message[..100])
@@ -233,7 +368,7 @@ impl AgentInstance {
             user_message.clone()
         };
         self.logger
-            .log_system_message(&format!("Sending message: {}", message_preview));
+            .log_system_message(&self.agent_type, &format!("Sending message: {}", message_preview));
 
         // Add user message to conversation
         self.messages
@@ -242,13 +377,15 @@ impl AgentInstance {
         self.status_message = Some("Processing...".to_string());
 
         // Log message
-        self.logger.log_user_message(&user_message);
+        self.logger.log_user_message(&self.agent_type, &user_message);
 
         // Clone what we need for the background thread
         let stood_agent = Arc::clone(&self.stood_agent);
         let sender = self.response_channel.0.clone();
         let logger = Arc::clone(&self.logger);
         let runtime = Arc::clone(&self.runtime);
+        let agent_id = self.id;
+        let agent_type = self.agent_type;
 
         // Spawn background thread
         std::thread::spawn(move || {
@@ -257,14 +394,20 @@ impl AgentInstance {
                 &logger,
             )));
 
+            // Set the current agent ID for this thread (so tools can access parent agent context)
+            crate::app::agent_framework::set_current_agent_id(agent_id);
+
+            // Set the current agent type for this thread (so tools can pass it to logger methods)
+            crate::app::agent_framework::set_current_agent_type(agent_type);
+
             // Execute agent in tokio runtime
             runtime.block_on(async move {
-                logger.log_system_message("Background execution started");
+                logger.log_system_message(&agent_type, "Background execution started");
 
                 // Lazy initialization of stood agent
                 let mut agent_guard = stood_agent.lock().unwrap();
                 if agent_guard.is_none() {
-                    logger.log_system_message("Creating stood agent (lazy initialization)");
+                    logger.log_system_message(&agent_type, "Creating stood agent (lazy initialization)");
 
                     // Note: We can't create the agent here without aws_identity
                     // This will be handled differently - agent must be created before first send
@@ -304,11 +447,11 @@ Query result presentation:
                 let full_message = format!("{}{}", instruction_template, user_message);
 
                 // Execute agent with full message (instructions + user query)
-                logger.log_system_message("Executing agent...");
+                logger.log_system_message(&agent_type, "Executing agent...");
                 match agent.execute(&full_message).await {
                     Ok(_) => {
                         let exec_completed_at = std::time::Instant::now();
-                        logger.log_system_message("Agent execution completed");
+                        logger.log_system_message(&agent_type, "Agent execution completed");
 
                         // Get final response from conversation
                         if let Some(last_message) = agent.conversation().messages().last() {
@@ -316,7 +459,7 @@ Query result presentation:
                                 let before_log = std::time::Instant::now();
                                 log::info!("[TIMING] Before log_assistant_response at {:?}", before_log);
 
-                                logger.log_assistant_response(&text);
+                                logger.log_assistant_response(&agent_type, &text);
 
                                 let after_log = std::time::Instant::now();
                                 let log_duration = after_log.duration_since(before_log);
@@ -342,18 +485,18 @@ Query result presentation:
                                 );
                             } else {
                                 let error_msg = "Agent response had no text content".to_string();
-                                logger.log_error(&error_msg);
+                                logger.log_error(&agent_type, &error_msg);
                                 let _ = sender.send(ConversationResponse::Error(error_msg));
                             }
                         } else {
                             let error_msg = "Agent produced no response".to_string();
-                            logger.log_error(&error_msg);
+                            logger.log_error(&agent_type, &error_msg);
                             let _ = sender.send(ConversationResponse::Error(error_msg));
                         }
                     }
                     Err(e) => {
                         let error_msg = format!("Agent execution failed: {}", e);
-                        logger.log_error(&error_msg);
+                        logger.log_error(&agent_type, &error_msg);
                         let _ = sender.send(ConversationResponse::Error(error_msg));
                     }
                 }
@@ -370,7 +513,7 @@ Query result presentation:
             Ok(response) => {
                 let response_received_at = std::time::Instant::now();
                 self.logger
-                    .log_system_message("Response received from background thread");
+                    .log_system_message(&self.agent_type, "Response received from background thread");
                 self.processing = false;
                 self.status_message = None;
 
@@ -383,7 +526,7 @@ Query result presentation:
                             text.clone()
                         };
                         self.logger
-                            .log_system_message(&format!("Success response: {}", text_preview));
+                            .log_system_message(&self.agent_type, &format!("Success response: {}", text_preview));
                         let msg = ConversationMessage::assistant(text);
                         let message_timestamp = msg.timestamp;
                         self.messages.push_back(msg);
@@ -393,7 +536,7 @@ Query result presentation:
                             response_received_at,
                             message_timestamp.format("%H:%M:%S%.3f")
                         );
-                        self.logger.log_system_message(&format!(
+                        self.logger.log_system_message(&self.agent_type, &format!(
                             "Response added at {} (timestamp: {})",
                             response_received_at.elapsed().as_millis(),
                             message_timestamp.format("%H:%M:%S%.3f")
@@ -402,8 +545,14 @@ Query result presentation:
                     ConversationResponse::Error(error) => {
                         self.messages
                             .push_back(ConversationMessage::assistant(format!("Error: {}", error)));
-                        self.logger.log_error(&format!("Agent error: {}", error));
+                        self.logger.log_error(&self.agent_type, &format!("Agent error: {}", error));
                         self.status = AgentStatus::Failed(error);
+                    }
+                    ConversationResponse::StatusUpdate(status) => {
+                        // Update status message without finishing processing
+                        self.status_message = Some(status);
+                        self.processing = true; // Keep processing state
+                        return false; // Don't mark as complete, continue polling
                     }
                 }
                 true
@@ -412,7 +561,7 @@ Query result presentation:
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.processing = false;
                 self.status_message = None;
-                self.logger.log_error("Response channel disconnected");
+                self.logger.log_error(&self.agent_type, "Response channel disconnected");
                 false
             }
         }
@@ -431,7 +580,7 @@ Query result presentation:
         *guard = Some(agent);
 
         self.logger
-            .log_system_message("Agent fully initialized and ready");
+            .log_system_message(&self.agent_type, "Agent fully initialized and ready");
         Ok(())
     }
 
@@ -447,12 +596,12 @@ Query result presentation:
         self.metadata.updated_at = chrono::Utc::now();
 
         // Log model change
-        self.logger.log_model_changed(&old_model, &new_model_id);
+        self.logger.log_model_changed(&self.agent_type, &old_model, &new_model_id);
 
         // Clear stood agent - will be re-created with new model on next initialize()
         *self.stood_agent.lock().unwrap() = None;
 
-        self.logger.log_system_message(&format!(
+        self.logger.log_system_message(&self.agent_type, &format!(
             "Model changed from {} to {}. Agent will re-initialize on next message.",
             old_model, new_model_id
         ));
@@ -473,7 +622,7 @@ Query result presentation:
 
         // Log the clear operation
         self.logger
-            .log_system_message("Conversation cleared by user");
+            .log_system_message(&self.agent_type, "Conversation cleared by user");
 
         // Reset stood agent (will be re-initialized on next message)
         *self.stood_agent.lock().unwrap() = None;
@@ -490,13 +639,14 @@ Query result presentation:
     pub fn terminate(&mut self) {
         self.status = AgentStatus::Cancelled;
         self.processing = false;
-        self.logger.log_system_message("Agent terminated");
+        self.logger.log_system_message(&self.agent_type, "Agent terminated");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_framework::TodoStatus;
     use chrono::Utc;
 
     fn create_test_metadata() -> AgentMetadata {
@@ -510,23 +660,66 @@ mod tests {
     }
 
     #[test]
-    fn test_create_agent_instance() {
+    fn test_create_task_manager_agent() {
         let metadata = create_test_metadata();
-        let agent = AgentInstance::new(metadata.clone());
+        let agent = AgentInstance::new(metadata.clone(), AgentType::TaskManager);
 
         assert_eq!(agent.metadata().name, metadata.name);
+        assert_eq!(agent.agent_type(), AgentType::TaskManager);
         assert_eq!(agent.status(), &AgentStatus::Running);
         assert!(!agent.is_processing());
         assert_eq!(agent.messages().len(), 0);
     }
 
     #[test]
+    fn test_create_task_worker_agent() {
+        let metadata = create_test_metadata();
+        let parent_id = AgentId::new();
+        let agent = AgentInstance::new(metadata.clone(), AgentType::TaskWorker { parent_id });
+
+        assert_eq!(agent.metadata().name, metadata.name);
+        assert_eq!(agent.agent_type(), AgentType::TaskWorker { parent_id });
+        assert_eq!(agent.agent_type().parent_id(), Some(parent_id));
+        assert!(!agent.agent_type().is_task_manager());
+    }
+
+    #[test]
+    fn test_agent_type_accessor() {
+        let metadata = create_test_metadata();
+
+        let task_manager = AgentInstance::new(metadata.clone(), AgentType::TaskManager);
+        assert!(task_manager.agent_type().is_task_manager());
+
+        let parent_id = AgentId::new();
+        let task_worker = AgentInstance::new(metadata, AgentType::TaskWorker { parent_id });
+        assert!(!task_worker.agent_type().is_task_manager());
+        assert_eq!(task_worker.agent_type().parent_id(), Some(parent_id));
+    }
+
+    #[test]
     fn test_agent_id_unique() {
         let metadata = create_test_metadata();
-        let agent1 = AgentInstance::new(metadata.clone());
-        let agent2 = AgentInstance::new(metadata);
+        let agent1 = AgentInstance::new(metadata.clone(), AgentType::TaskManager);
+        let agent2 = AgentInstance::new(metadata, AgentType::TaskManager);
 
         assert_ne!(agent1.id(), agent2.id());
+    }
+
+    #[test]
+    fn test_agent_lifecycle() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        assert_eq!(agent.status(), &AgentStatus::Running);
+        assert!(!agent.is_processing());
+    }
+
+    #[test]
+    fn test_agent_messages_empty_on_creation() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        assert_eq!(agent.messages().len(), 0);
     }
 
     #[test]
@@ -535,5 +728,62 @@ mod tests {
         let display = format!("{}", id);
         // Should be a valid UUID string
         assert_eq!(display.len(), 36); // UUID format: 8-4-4-4-12
+    }
+
+    #[test]
+    fn test_todo_list_operations() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Initially empty
+        assert_eq!(agent.todo_list().len(), 0);
+
+        // Add todos
+        let todos = vec![
+            TodoItem::new(
+                "Task 1".to_string(),
+                "Doing task 1".to_string(),
+                TodoStatus::Pending,
+            ),
+            TodoItem::new(
+                "Task 2".to_string(),
+                "Doing task 2".to_string(),
+                TodoStatus::InProgress,
+            ),
+        ];
+        agent.set_todo_list(todos.clone());
+        assert_eq!(agent.todo_list().len(), 2);
+        assert_eq!(agent.todo_list()[0].content, "Task 1");
+
+        // Clear todos
+        agent.clear_todo_list();
+        assert_eq!(agent.todo_list().len(), 0);
+    }
+
+    #[test]
+    fn test_task_manager_has_planning_tools() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+        let tools = agent.get_tools_for_type();
+
+        // TaskManager should have 2 tools: think, start_task
+        // (todo_write and todo_read are commented out as of this implementation)
+        assert_eq!(tools.len(), 2);
+
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(tool_names.contains(&"think"));
+        assert!(tool_names.contains(&"start_task"));
+    }
+
+    #[test]
+    fn test_task_worker_has_execution_tools() {
+        let metadata = create_test_metadata();
+        let parent_id = AgentId::new();
+        let agent = AgentInstance::new(metadata, AgentType::TaskWorker { parent_id });
+        let tools = agent.get_tools_for_type();
+
+        // TaskWorker should have 1 tool: execute_javascript
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "execute_javascript");
     }
 }

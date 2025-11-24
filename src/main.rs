@@ -35,9 +35,9 @@ fn init_logging() {
 
         // Configure tracing to use the same file as log
         // Enable MAXIMUM AWS SDK logging for debugging CloudFormation deployment issues
-        // Enable Stood agent library debugging for agent execution visibility (can be toggled via UI)
+        // Stood agent library set to INFO by default (use RUST_LOG=stood=debug for more detail)
         let filter = tracing_subscriber::EnvFilter::builder()
-            .parse("awsdash=trace,stood=trace,aws_sdk_cloudformation=trace,aws_sdk_bedrockruntime=trace,aws_config=trace,aws_sigv4=trace,aws_smithy_runtime=trace,aws_smithy_runtime_api=trace,hyper=trace,aws_smithy_http=trace,aws_endpoint=trace")
+            .parse("awsdash=info,stood=info,aws_sdk_cloudformation=info,aws_sdk_bedrockruntime=info,aws_config=warn,aws_sigv4=warn,aws_smithy_runtime=warn,aws_smithy_runtime_api=warn,hyper=warn,aws_smithy_http=warn,aws_endpoint=warn")
             .expect("Failed to parse env filter");
 
         let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(filter);
@@ -58,26 +58,42 @@ fn init_logging() {
         awsdash::set_tracing_reload_handle(reload_handle);
 
         tracing::info!("Tracing initialized to log file: {:?}", log_path);
-        tracing::info!(
-            "MAXIMUM AWS SDK TRACE logging enabled for CloudFormation deployment troubleshooting"
-        );
-        tracing::warn!(
-            "🚨 SECURITY WARNING: TRACE level logging may expose AWS credentials in logs"
-        );
+        tracing::info!("Log levels: awsdash=info, stood=info, AWS SDKs=info/warn");
+        tracing::info!("To increase verbosity: RUST_LOG=stood=debug cargo run");
         eprintln!("Both logging and tracing going to: {:?}", log_path);
 
-        // Note: stood library debug traces are already captured by the tracing subscriber above
-        // with stood=trace enabled. All stood internal operations, tool executions, and
-        // agent lifecycle events are logged to the same file.
-        // The RUST_LOG environment variable controls the verbosity (stood=trace for full debug).
+        // Note: stood library logs at INFO level by default
+        // Set RUST_LOG=stood=debug or stood=trace for more detailed agent execution logs
         tracing::info!(
-            "Stood agent framework logging enabled via tracing subscriber (RUST_LOG controls verbosity)"
+            "Stood agent framework logging enabled (set RUST_LOG=stood=debug for verbose output)"
         );
     }
 }
 
 fn main() -> eframe::Result {
     init_logging();
+
+    // Clean up old agent log files (keep 50 most recent)
+    match awsdash::app::agent_framework::AgentLogger::cleanup_old_logs(50) {
+        Ok(deleted) if deleted > 0 => {
+            tracing::info!("Cleaned up {} old agent log files", deleted);
+        }
+        Ok(_) => {} // No files deleted
+        Err(e) => {
+            tracing::warn!("Failed to clean up old agent logs: {}", e);
+        }
+    }
+
+    // Clean up old debug log files (keep 20 most recent)
+    match awsdash::app::agent_framework::AgentLogger::cleanup_old_debug_logs(20) {
+        Ok(deleted) if deleted > 0 => {
+            tracing::info!("Cleaned up {} old debug log files", deleted);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!("Failed to clean up old debug logs: {}", e);
+        }
+    }
 
     // Initialize V8 platform (required for JavaScript execution)
     awsdash::app::agent_framework::initialize_v8_platform()
@@ -95,7 +111,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "AWS Dash Architect",
+        "AWS Dash",
         native_options,
         Box::new(|cc| {
             // Install image loaders to support SVG and other image formats
