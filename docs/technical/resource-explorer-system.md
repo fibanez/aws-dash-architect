@@ -123,6 +123,4 @@ The Light luminosity setting prevents overly bright colors (particularly pink fo
 - **Credential Strategy**: Session-based approach minimizes Identity Center API calls
 
 **References:**
-- [Window Focus System](window-focus-system.md) - Integration with application focus management
 - [Credential Management](credential-management.md) - AWS authentication and multi-account access
-- [Trait Patterns](trait-patterns.md) - Common patterns used throughout the system

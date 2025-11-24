@@ -166,4 +166,3 @@ normalized.insert("created_date".to_string(), creation_timestamp);
 **References:**
 - [Resource Explorer System](resource-explorer-system.md) - Integration with resource discovery
 - [AWS Service Integration Patterns](aws-service-integration-patterns.md) - Service integration templates
-- [Trait Patterns](trait-patterns.md) - ResourceNormalizer trait implementation patterns

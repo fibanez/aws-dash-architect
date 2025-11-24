@@ -56,24 +56,6 @@ Pseudocode:
 
 ## Major Codebase Components
 
-### CLOUDFORMATION
-**Core template system**: Template parsing, resource definitions, intrinsic
-functions, dependency graphs (DAG), and resource type specifications.
-
-**Key Files**:
-- `src/app/cfn_template.rs` - Template structure and validation
-- `src/app/cfn_resources.rs` - AWS resource type management
-- `src/app/cfn_dag.rs` - Dependency graph and topological analysis
-- `src/app/cfn_intrinsic_functions.rs` - Ref, GetAtt, Sub, etc.
-- `src/app/cfn_resource_icons.rs` - Icon mappings for 86+ AWS services
-
-### PROJECTS
-**Multi-environment project management**: Project persistence, environment
-configurations (Dev/Staging/Prod), resource tracking, and template import/export.
-
-**Key Files**:
-- `src/app/projects.rs` - Project structure, environments, serialization
-
 ### AWS_IDENTITY
 **AWS authentication and credential management**: Identity Center integration,
 device authorization flow, multi-account credential handling, and SSO.
@@ -81,20 +63,13 @@ device authorization flow, multi-account credential handling, and SSO.
 **Key Files**:
 - `src/app/aws_identity.rs` - OAuth flow, credential caching, account enumeration
 
-### BEDROCK
-**AI integration via AWS Bedrock**: Model configuration, request/response handling,
-and chat interface support.
-
-**Key Files**:
-- `src/app/bedrock_client.rs` - Bedrock API client and model management
-
 ### EXPLORER
 **AWS resource discovery system**: Multi-account resource querying, cross-region
-discovery, service-specific clients (86 AWS services), and data normalization.
+discovery, service-specific clients, and data normalization.
 
 **Key Files**:
-- [[src/app/resource_explorer/aws_client|src/app/resource_explorer/aws_client.rs]] - Multi-account resource discovery
-- `src/app/resource_explorer/services/*.rs` - 86 AWS service clients
+- `src/app/resource_explorer/aws_client.rs` - Multi-account resource discovery
+- `src/app/resource_explorer/services/*.rs` - AWS service clients
 - `src/app/resource_explorer/normalizers/*.rs` - Service-specific data formatting
 - `src/app/resource_explorer/window.rs` - Explorer UI
 - `src/app/resource_explorer/tree.rs` - Hierarchical resource organization
@@ -109,61 +84,33 @@ command palettes, and focusable window trait system.
 - `src/app/dashui/keyboard_navigation.rs` - Vimium-like navigation
 - `src/app/dashui/hint_mode.rs` - Visual hint system
 - `src/app/dashui/command_palette.rs` - Global command search
-- `src/app/dashui/*_window.rs` - 38+ specialized windows
-
-### CFN_MANAGER
-**CloudFormation deployment system**: Stack deployment orchestration, parameter
-management, validation, and resource lookup integration.
-
-**Key Files**:
-- `src/app/cloudformation_manager/manager.rs` - Stack deployment orchestration
-- `src/app/cloudformation_manager/deployment.rs` - Stack event tracking
-- `src/app/cloudformation_manager/parameters.rs` - Parameter discovery
-- `src/app/cloudformation_manager/parameter_dialog.rs` - User input collection
-- `src/app/cloudformation_manager/secrets_manager.rs` - Secrets integration
-- `src/app/cloudformation_manager/resource_lookup.rs` - Existing resource discovery
+- `src/app/dashui/*_window.rs` - Specialized windows
 
 ### AGENT FRAMEWORK
 **AI agent system**: Task agents for AWS operations, tool registry, natural
 language to AWS operation translation, and agent-tool communication.
 
 **Key Files**:
+- `src/app/agent_framework/agents/orchestration_agent.rs` - Main orchestration agent
 - `src/app/agent_framework/agents/task_agent.rs` - Specialized AWS task agent
 - `src/app/agent_framework/tools_registry.rs` - Tool registration and discovery
-- `src/app/agent_framework/tools/*.rs` - 12 AWS operation tools
+- `src/app/agent_framework/tools/*.rs` - AWS operation tools
 - `src/app/agent_framework/model_config.rs` - Model configuration
-- `src/app/agent_framework/debug_logger.rs` - AI operation logging
+- `src/app/agent_framework/agent_logger.rs` - Agent operation logging
 
-### GUARD
-**Compliance validation system**: CloudFormation Guard integration, rule
-repository management, compliance program support (NIST, PCI-DSS, HIPAA, etc.),
-and violation reporting.
-
-**Key Files**:
-- `src/app/cfn_guard.rs` - Guard validation engine integration
-- `src/app/guard_repository_manager.rs` - Git-based rule repository
-- `src/app/compliance_discovery.rs` - Compliance program discovery
-- `src/app/repository_recovery.rs` - Error recovery mechanisms
-
-### EVALUATION
-**Agent evaluation framework**: Template-based evaluations, session logging,
-hot prompt loading, and bridge message monitoring.
+### DATA_PLANE
+**AWS data plane integration**: Direct AWS service API calls, resource
+management, and service-specific operations.
 
 **Key Files**:
-- `src/app/evaluation/template.rs` - Evaluation template definitions
-- `src/app/evaluation/session_logging.rs` - Session-based logging
-- `src/app/evaluation/prompt_loader.rs` - Hot prompt reloading
-- `src/app/evaluation/bridge_message_monitor.rs` - Pattern matching
+- `src/app/data_plane/mod.rs` - Data plane module coordination
+- `src/app/data_plane/*/` - Service-specific implementations
 
-### NAVIGATION
-**Keyboard navigation system**: Vimium-like shortcuts, hint mode, key mapping,
-and navigable widget system.
+### NOTIFICATIONS
+**Notification system**: User notifications, toast messages, and alert management.
 
 **Key Files**:
-- `src/app/dashui/keyboard_navigation.rs` - Navigation state machine
-- `src/app/dashui/hint_mode.rs` - Visual element hints
-- `src/app/dashui/key_mapping.rs` - Key binding configuration
-- `src/app/dashui/navigable_widgets.rs` - Focusable widget trait
+- `src/app/notifications/mod.rs` - Notification system
 
 ---
 
@@ -204,8 +151,8 @@ and navigable widget system.
 See individual component reference files for concrete examples of the methodology
 in practice. Start with commonly referenced modules like:
 
-- `reference/src/app/cfn_template.md` - CloudFormation template parsing
-- `reference/src/app/projects.md` - Project serialization and persistence
+- `reference/src/app/resource_explorer/aws_client.md` - Resource discovery
+- `reference/src/app/agent_framework/agents/orchestration_agent.md` - Agent orchestration
 - `reference/src/app/dashui/window_focus.md` - Window focus trait system
 
 ---

@@ -1,6 +1,6 @@
 # <img src="dash-icon.png" width="160" height="160" align="left" padding="20" alt="Dash Architect Icon"> AWS Dash
 
-**AI-powered AWS environment exploration and operations**
+AI-powered desktop app for natural language AWS operations and resource exploration across multi-account, multi-region environments.
 <div align="right">
 Powered by <a href="https://github.com/fibanez/stood">Stood Agent Library</a> <img src="https://github.com/fibanez/stood/raw/main/stood-icon.png" width="15" height="15">
 </div>
@@ -9,7 +9,6 @@ Powered by <a href="https://github.com/fibanez/stood">Stood Agent Library</a> <i
 AWS Dash provides AI-assisted AWS environment exploration and operations through an intuitive desktop interface. Explore resources across multiple AWS accounts and regions, and leverage AI agents powered by the Stood library to perform intelligent operations for different domains, including infrastructure, security, system administration.
 &nbsp;<br>
 
-# <img src="aws-dash-architect-1.png" width="800" align="center" padding="20" alt="AWS Dash Desktop">
 > ⚠️ **Alpha Release**: AWS Dash is currently in active development. Features and APIs may change as we work toward the first stable release.
 
 &nbsp;<br>
@@ -97,4 +96,3 @@ AWS Dash is licensed under the [Apache License 2.0](LICENSE).
 
 **Explore AWS resources intelligently. Operate with AI assistance. Manage multi-account environments effortlessly.**
 
-*AWS Dash - AI-powered AWS resource exploration and operations.*

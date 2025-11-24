@@ -310,7 +310,4 @@ impl MyWindow {
 
 ## Related Documentation
 
-* [Window Focus System Overview](window-focus-system.md)
-* [Trait Design Patterns](trait-patterns.md)
-* [Parameter Patterns](parameter-patterns.md)
 * [UI Component Testing](ui-component-testing.md)
