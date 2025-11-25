@@ -130,9 +130,6 @@ pub struct AgentManagerWindow {
 
     // Agent creation request receiver
     agent_creation_receiver: Arc<Mutex<Receiver<AgentCreationRequest>>>,
-
-    // Track last logged message count per agent to debounce UI render logs
-    last_logged_message_count: HashMap<AgentId, usize>,
 }
 
 impl AgentManagerWindow {
@@ -151,7 +148,6 @@ impl AgentManagerWindow {
             stood_traces_enabled: true, // Default: enabled (matches main.rs init_logging)
             ui_event_receiver: get_ui_event_receiver(), // UI event channel
             agent_creation_receiver: get_agent_creation_receiver(), // Agent creation channel
-            last_logged_message_count: HashMap::new(), // Debounce UI render logs
         }
     }
 
@@ -817,29 +813,6 @@ impl AgentManagerWindow {
             if clear_clicked {
                 agent.clear_conversation();
                 log::info!("Agent {} conversation cleared", agent_id);
-            }
-
-            // Note: poll_response() is now called globally in poll_agent_responses()
-            // But we still track when messages are displayed in the UI
-            let message_count = agent.messages().len();
-
-            // Debounced logging: only log when message count changes
-            let last_count = self.last_logged_message_count.get(&agent_id).copied().unwrap_or(0);
-            if message_count != last_count {
-                if let Some(last_msg) = agent.messages().back() {
-                    let now_utc = chrono::Utc::now();
-                    let msg_created_at = last_msg.timestamp;
-                    let delay_ms = (now_utc - msg_created_at).num_milliseconds();
-
-                    log::debug!(
-                        "[V2 UI RENDER] Agent {} displaying {} messages | Last message created: {} | Delay from creation: {}ms",
-                        agent_id,
-                        message_count,
-                        msg_created_at.format("%H:%M:%S%.3f"),
-                        delay_ms
-                    );
-                }
-                self.last_logged_message_count.insert(agent_id, message_count);
             }
 
             // All controls are now inside render_agent_chat to prevent window growth
