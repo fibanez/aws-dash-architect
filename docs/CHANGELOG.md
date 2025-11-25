@@ -3,6 +3,11 @@
 ## [Unreleased] - 0.1.0
 
 ### November 2025
+- **Multi-Agent Task Orchestration**: Implemented task orchestration system for coordinating multiple specialized agents
+- **Login UX Improvements**: Fixed credential race condition and improved button layout with centered 4-column design
+- **Documentation Cleanup**: Removed broken relative links and updated reference documentation structure
+- **Performance**: Removed per-frame UI render logging that was causing excessive log output
+
 - **Agent Framework V2**
   - Implemented simplified agent system using Stood library directly with lazy initialization and background execution
   - Integrated V8 JavaScript runtime with AWS API bindings for intelligent infrastructure operations
