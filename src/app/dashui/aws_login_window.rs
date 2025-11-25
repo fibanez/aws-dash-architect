@@ -119,6 +119,7 @@ impl AwsLoginWindow {
             .open(&mut window_open)
             .resizable(true)
             .min_width(450.0)
+            .default_size(egui::Vec2::new(450.0, 400.0))
             .collapsible(false);
 
         // Bring to front if requested
@@ -293,12 +294,21 @@ impl AwsLoginWindow {
                                             auth_data.verification_uri.clone()
                                         };
 
-                                        // Show hyperlink and copy button on the same line
-                                        ui.horizontal(|ui| {
-                                            ui.hyperlink_to("Open login page", &login_url);
-                                            if ui.button("Copy Link").clicked() {
-                                                ui.ctx().copy_text(login_url);
-                                            }
+                                        // Show buttons centered and close together using 4 columns
+                                        // Buttons in middle two columns (1 and 2), leaving 0 and 3 empty
+                                        ui.columns(4, |columns| {
+                                            // Column 0: empty (provides left spacing)
+                                            columns[1].vertical_centered(|ui| {
+                                                if ui.button("Open login page").clicked() {
+                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(&login_url));
+                                                }
+                                            });
+                                            columns[2].vertical_centered(|ui| {
+                                                if ui.button("Copy Link").clicked() {
+                                                    ui.ctx().copy_text(login_url);
+                                                }
+                                            });
+                                            // Column 3: empty (provides right spacing)
                                         });
 
                                         ui.add_space(10.0);

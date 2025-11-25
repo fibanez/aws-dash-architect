@@ -70,21 +70,44 @@ Comprehensive dropdown with all AWS regions:
 
 **Clipboard Integration:**
 
-"Copy Link" button copies the complete login URL to clipboard for:
+Both "Open login page" and "Copy Link" buttons provide easy access to the login URL:
 
-- Opening in a different browser
-- Sharing with team members for collaborative login
-- Pasting into password managers
-- Documentation or troubleshooting
+- **Open login page**: Opens the AWS Identity Center login in a new browser tab
+- **Copy Link**: Copies the complete URL to clipboard for sharing or opening in different browser
+- **Centered layout**: Both buttons use columns layout for proper horizontal centering
+- **Consistent styling**: Regular buttons instead of mixed hyperlink/button styles
 
 ```rust
-// Clipboard integration
-ui.horizontal(|ui| {
-    ui.hyperlink_to("Open login page", &login_url);
-    if ui.button("Copy Link").clicked() {
-        ui.ctx().copy_text(login_url);
-    }
+// Buttons with centered layout using columns
+ui.columns(2, |columns| {
+    columns[0].vertical_centered(|ui| {
+        if ui.button("Open login page").clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(&login_url));
+        }
+    });
+    columns[1].vertical_centered(|ui| {
+        if ui.button("Copy Link").clicked() {
+            ui.ctx().copy_text(login_url);
+        }
+    });
 });
+```
+
+**Window Size Management:**
+
+The login window uses a default size to prevent unwanted vertical growth:
+
+- **Default size**: 450x400 pixels
+- **Resizable**: Users can resize as needed
+- **Consistent layout**: Window maintains predictable dimensions when content changes
+- **No jumping**: Adding buttons during device authorization does not expand window vertically
+
+```rust
+let mut window = egui::Window::new("AWS Identity Center Login")
+    .resizable(true)
+    .min_width(450.0)
+    .default_size(egui::Vec2::new(450.0, 400.0))
+    .collapsible(false);
 ```
 
 **Background Thread Credential Fetch:**
@@ -181,8 +204,8 @@ if has_credentials {
 
 **Device Authorization:**
 - Verification code display
-- "Open login page" hyperlink
-- "Copy Link" clipboard button
+- "Open login page" button (opens in new tab)
+- "Copy Link" button (centered alongside Open button)
 - "I've completed the login" action button
 - Spinner animation during credential fetch
 
