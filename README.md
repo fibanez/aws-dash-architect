@@ -2,10 +2,9 @@
 
 See all your AWS accounts, all your regions, in one window.
 
-<div align="right">
-Powered by <a href="https://github.com/fibanez/stood">Stood Agent Library</a> <img src="https://github.com/fibanez/stood/raw/main/stood-icon.png" width="15" height="15">
-</div>
-<br clear="left">
+<br clear="left"></br>
+&nbsp;
+<p></p>
 
 > **Alpha Release**: AWS Dash is in active development. Features may change as we work toward stable release.
 
@@ -19,7 +18,7 @@ AWS Dash brings everything into one place. Browse resources across accounts and 
 
 ### Talk to your infrastructure
 
-Describe what you want in plain English. AI agents handle the rest—finding resources, analyzing configurations, executing multi-step operations. They understand your environment and work across account boundaries.
+Describe what you want in plain English. AI agents handle the rest—finding resources, analyzing configurations, executing multi-step operations. They understand your environment and work across account and region boundaries.
 
 &nbsp;
 
