@@ -2,6 +2,10 @@
 
 ## [Unreleased] - 0.1.0
 
+### December 2025
+- **Unified Querying System**: Cross-service resource search with unified query API and two-phase loading pattern across 30+ AWS services
+- **Agent Model Selection**: Type-safe model selection with AgentModel enum and markdown rendering for LLM responses
+
 ### November 2025
 - **Multi-Agent Task Orchestration**: Implemented task orchestration system for coordinating multiple specialized agents
 - **Login UX Improvements**: Fixed credential race condition and improved button layout with centered 4-column design
