@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -38,25 +38,17 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::Connect::Instance", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::Connect::Instance {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Connect::Instance {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -108,8 +100,7 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
                 }
                 "AWS::Lambda::Function" => {
                     // Connect can integrate with Lambda functions for call flows
-                    if resource.account_id == entry.account_id 
-                        && resource.region == entry.region {
+                    if resource.account_id == entry.account_id && resource.region == entry.region {
                         relationships.push(ResourceRelationship {
                             relationship_type: RelationshipType::Uses,
                             target_resource_id: resource.resource_id.clone(),
@@ -119,9 +110,10 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
                 }
                 "AWS::Logs::LogGroup" => {
                     // Connect instances can log to CloudWatch
-                    if resource.account_id == entry.account_id 
-                        && resource.region == entry.region 
-                        && resource.resource_id.contains("connect") {
+                    if resource.account_id == entry.account_id
+                        && resource.region == entry.region
+                        && resource.resource_id.contains("connect")
+                    {
                         relationships.push(ResourceRelationship {
                             relationship_type: RelationshipType::Uses,
                             target_resource_id: resource.resource_id.clone(),
@@ -140,4 +132,3 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
         "AWS::Connect::Instance"
     }
 }
-

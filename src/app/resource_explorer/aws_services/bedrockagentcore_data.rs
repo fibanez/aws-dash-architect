@@ -81,7 +81,10 @@ impl BedrockAgentCoreDataService {
             .iter()
             .map(|ns| serde_json::Value::String(ns.clone()))
             .collect();
-        json.insert("Namespaces".to_string(), serde_json::Value::Array(namespaces));
+        json.insert(
+            "Namespaces".to_string(),
+            serde_json::Value::Array(namespaces),
+        );
 
         json.insert(
             "CreatedAt".to_string(),
@@ -96,7 +99,9 @@ impl BedrockAgentCoreDataService {
         if let Some(score) = record.score {
             json.insert(
                 "Score".to_string(),
-                serde_json::Value::Number(serde_json::Number::from_f64(score).unwrap_or(serde_json::Number::from(0))),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(score).unwrap_or(serde_json::Number::from(0)),
+                ),
             );
         }
 
@@ -140,10 +145,7 @@ impl BedrockAgentCoreDataService {
         Ok(events)
     }
 
-    fn event_to_json(
-        &self,
-        event: &agentcore_data::types::Event,
-    ) -> serde_json::Value {
+    fn event_to_json(&self, event: &agentcore_data::types::Event) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -249,10 +251,7 @@ impl BedrockAgentCoreDataService {
         );
 
         if let Some(name) = &session.name {
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(name.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         json.insert(
@@ -319,7 +318,9 @@ impl BedrockAgentCoreDataService {
             let response = request.send().await?;
 
             for session in response.items {
-                sessions.push(self.code_interpreter_session_to_json(&session, code_interpreter_identifier));
+                sessions.push(
+                    self.code_interpreter_session_to_json(&session, code_interpreter_identifier),
+                );
             }
 
             next_token = response.next_token;
@@ -354,10 +355,7 @@ impl BedrockAgentCoreDataService {
         );
 
         if let Some(name) = &session.name {
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(name.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         json.insert(

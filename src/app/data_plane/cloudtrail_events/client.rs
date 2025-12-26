@@ -7,8 +7,8 @@ use aws_sdk_cloudtrail as cloudtrail_sdk;
 use aws_smithy_types::DateTime;
 use std::sync::Arc;
 
-use crate::app::resource_explorer::credentials::CredentialCoordinator;
 use super::types::{CloudTrailEvent, EventResource, LookupAttribute, LookupOptions, LookupResult};
+use crate::app::resource_explorer::credentials::CredentialCoordinator;
 
 /// Client for querying AWS CloudTrail Events
 #[derive(Clone)]
@@ -146,10 +146,7 @@ impl CloudTrailEventsClient {
             })
             .collect();
 
-        let result = LookupResult::new(
-            events,
-            response.next_token().map(|t| t.to_string()),
-        );
+        let result = LookupResult::new(events, response.next_token().map(|t| t.to_string()));
 
         Ok(result)
     }
@@ -190,16 +187,14 @@ impl CloudTrailEventsClient {
         const MIN_PAGES: i32 = 2;
 
         loop {
-            // Determine page size (CloudTrail max is 50 per request)
-            let page_size = ((target_events - all_events.len() as i32).min(50)).max(50);
+            // CloudTrail max is 50 events per request
+            let page_size = 50;
 
             let options = LookupOptions::new()
                 .with_max_results(page_size)
                 .with_next_token(next_token.unwrap_or_default());
 
-            let result = self
-                .lookup_events(account_id, region, options)
-                .await?;
+            let result = self.lookup_events(account_id, region, options).await?;
 
             all_events.extend(result.events);
             next_token = result.next_token;
@@ -208,10 +203,10 @@ impl CloudTrailEventsClient {
             // Stop if:
             // 1. We've fetched at least MIN_PAGES pages AND
             // 2. Either we've reached our target or there are no more events
-            if pages_fetched >= MIN_PAGES {
-                if all_events.len() >= target_events as usize || next_token.is_none() {
-                    break;
-                }
+            if pages_fetched >= MIN_PAGES
+                && (all_events.len() >= target_events as usize || next_token.is_none())
+            {
+                break;
             }
 
             // Safety: stop after 10 pages (500 events max)
@@ -264,7 +259,8 @@ impl CloudTrailEventsClient {
         );
 
         loop {
-            let page_size = ((limit - all_events.len() as i32).min(50)).max(50);
+            // CloudTrail max is 50 events per request
+            let page_size = 50;
 
             // Use ONLY ResourceName filter (CloudTrail limitation: only 1 attribute allowed)
             // We cannot filter by both ResourceType AND ResourceName
@@ -276,19 +272,17 @@ impl CloudTrailEventsClient {
                 options = options.with_next_token(token);
             }
 
-            let result = self
-                .lookup_events(account_id, region, options)
-                .await?;
+            let result = self.lookup_events(account_id, region, options).await?;
 
             all_events.extend(result.events);
             next_token = result.next_token;
             pages_fetched += 1;
 
             // Stop conditions (same as get_recent_events)
-            if pages_fetched >= MIN_PAGES {
-                if all_events.len() >= limit as usize || next_token.is_none() {
-                    break;
-                }
+            if pages_fetched >= MIN_PAGES
+                && (all_events.len() >= limit as usize || next_token.is_none())
+            {
+                break;
             }
 
             if pages_fetched >= 10 {

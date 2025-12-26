@@ -61,7 +61,6 @@ impl AsyncResourceNormalizer for OrganizationsRootNormalizer {
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::Root".to_string(),
             account_id: account.to_string(),
@@ -77,7 +76,7 @@ impl AsyncResourceNormalizer for OrganizationsRootNormalizer {
             relationships: Vec::new(), // Will be populated by extract_relationships
             parent_resource_id: None,  // Could be Organization ID in future enhancement
             parent_resource_type: None, // Could be AWS::Organizations::Organization in future enhancement
-            is_child_resource: true,   // Roots are children of the Organization
+            is_child_resource: true,    // Roots are children of the Organization
             account_color,
             region_color,
             query_timestamp,
@@ -88,7 +87,12 @@ impl AsyncResourceNormalizer for OrganizationsRootNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

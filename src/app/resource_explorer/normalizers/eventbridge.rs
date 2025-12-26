@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for EventBridgeEventBusNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Events::EventBus", &event_bus_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Events::EventBus {}: {}", event_bus_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Events::EventBus {}: {}",
+                    event_bus_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -103,17 +102,16 @@ impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Events::Rule", &rule_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Events::Rule {}: {}", rule_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Events::Rule {}: {}",
+                    rule_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -175,4 +173,3 @@ impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
         "AWS::Events::Rule"
     }
 }
-

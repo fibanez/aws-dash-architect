@@ -4,17 +4,14 @@
 //! with AWS resource operations through natural language requests.
 
 pub mod agent_creation;
-pub mod agent_debug_logger;
 pub mod agent_instance;
 pub mod agent_logger;
+pub mod agent_tracing;
 pub mod agent_types;
 pub mod agent_ui;
 pub mod cancellation;
 pub mod conversation;
-pub mod debug_logger;
-pub mod message;
-pub mod model_config;
-pub mod performance;
+pub mod model_selection;
 pub mod prompts;
 pub mod skills;
 pub mod tool_context;
@@ -24,21 +21,15 @@ pub mod ui_events;
 pub mod v8_bindings;
 pub mod worker_completion;
 
-#[cfg(test)]
-mod debug_logger_test;
-
 pub use agent_creation::*;
-pub use agent_debug_logger::*;
 pub use agent_instance::*;
 pub use agent_logger::*;
+pub use agent_tracing::*;
 pub use agent_types::*;
 pub use agent_ui::*;
 pub use cancellation::*;
 pub use conversation::*;
-pub use debug_logger::*;
-pub use message::*;
-pub use model_config::*;
-pub use performance::*;
+pub use model_selection::*;
 // Prompts for different agent types
 pub use prompts::{TASK_MANAGER_PROMPT, TASK_WORKER_PROMPT};
 pub use skills::*;

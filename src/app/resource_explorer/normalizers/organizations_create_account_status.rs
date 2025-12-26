@@ -34,7 +34,12 @@ impl AsyncResourceNormalizer for OrganizationsCreateAccountStatusNormalizer {
             .get("State")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .or_else(|| raw_response.get("Status").and_then(|v| v.as_str()).map(|s| s.to_string()));
+            .or_else(|| {
+                raw_response
+                    .get("Status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
 
         // Extract basic properties for normalized view
         let mut properties = serde_json::Map::new();
@@ -59,15 +64,24 @@ impl AsyncResourceNormalizer for OrganizationsCreateAccountStatusNormalizer {
         }
 
         if let Some(requested_timestamp) = raw_response.get("RequestedTimestamp") {
-            properties.insert("requested_timestamp".to_string(), requested_timestamp.clone());
+            properties.insert(
+                "requested_timestamp".to_string(),
+                requested_timestamp.clone(),
+            );
         }
 
         if let Some(completed_timestamp) = raw_response.get("CompletedTimestamp") {
-            properties.insert("completed_timestamp".to_string(), completed_timestamp.clone());
+            properties.insert(
+                "completed_timestamp".to_string(),
+                completed_timestamp.clone(),
+            );
         }
 
         if let Some(gov_cloud_account_id) = raw_response.get("GovCloudAccountId") {
-            properties.insert("gov_cloud_account_id".to_string(), gov_cloud_account_id.clone());
+            properties.insert(
+                "gov_cloud_account_id".to_string(),
+                gov_cloud_account_id.clone(),
+            );
         }
 
         if let Some(failure_reason) = raw_response.get("FailureReason") {
@@ -76,7 +90,6 @@ impl AsyncResourceNormalizer for OrganizationsCreateAccountStatusNormalizer {
 
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
-
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::CreateAccountStatus".to_string(),
@@ -104,7 +117,12 @@ impl AsyncResourceNormalizer for OrganizationsCreateAccountStatusNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

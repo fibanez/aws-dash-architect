@@ -1,4 +1,4 @@
-use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
+use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -41,25 +41,22 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
-            .fetch_tags_for_resource("AWS::ElasticLoadBalancingV2::LoadBalancer", &lb_arn, account, region)
-
-
+            .fetch_tags_for_resource(
+                "AWS::ElasticLoadBalancingV2::LoadBalancer",
+                &lb_arn,
+                account,
+                region,
+            )
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancingV2::LoadBalancer {}: {}", lb_arn, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::ElasticLoadBalancingV2::LoadBalancer {}: {}",
+                    lb_arn,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -185,25 +182,22 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
-            .fetch_tags_for_resource("AWS::ElasticLoadBalancingV2::TargetGroup", &tg_arn, account, region)
-
-
+            .fetch_tags_for_resource(
+                "AWS::ElasticLoadBalancingV2::TargetGroup",
+                &tg_arn,
+                account,
+                region,
+            )
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancingV2::TargetGroup {}: {}", tg_arn, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::ElasticLoadBalancingV2::TargetGroup {}: {}",
+                    tg_arn,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -270,4 +264,3 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
         "AWS::ElasticLoadBalancingV2::TargetGroup"
     }
 }
-

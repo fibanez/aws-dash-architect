@@ -28,17 +28,21 @@ impl AsyncResourceNormalizer for RDSDBInstanceNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::RDS::DBInstance", &db_instance_identifier, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::RDS::DBInstance",
+                &db_instance_identifier,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::RDS::DBInstance {}: {}", db_instance_identifier, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::RDS::DBInstance {}: {}",
+                    db_instance_identifier,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract creation time
@@ -133,17 +137,21 @@ impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::RDS::DBCluster", &db_cluster_identifier, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::RDS::DBCluster",
+                &db_cluster_identifier,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::RDS::DBCluster {}: {}", db_cluster_identifier, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::RDS::DBCluster {}: {}",
+                    db_cluster_identifier,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract creation time
@@ -255,17 +263,21 @@ impl AsyncResourceNormalizer for RDSDBSnapshotNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::RDS::DBSnapshot", &snapshot_identifier, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::RDS::DBSnapshot",
+                &snapshot_identifier,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::RDS::DBSnapshot {}: {}", snapshot_identifier, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::RDS::DBSnapshot {}: {}",
+                    snapshot_identifier,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract creation time
@@ -354,20 +366,24 @@ impl AsyncResourceNormalizer for RDSDBParameterGroupNormalizer {
 
         let display_name = extract_display_name(&raw_response, &parameter_group_name);
         let status = Some("Available".to_string()); // Parameter groups don't have status
-        // Fetch tags asynchronously from AWS API with caching
+                                                    // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::RDS::DBParameterGroup", &parameter_group_name, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::RDS::DBParameterGroup",
+                &parameter_group_name,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::RDS::DBParameterGroup {}: {}", parameter_group_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::RDS::DBParameterGroup {}: {}",
+                    parameter_group_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -435,17 +451,21 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::RDS::DBSubnetGroup", &subnet_group_name, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::RDS::DBSubnetGroup",
+                &subnet_group_name,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::RDS::DBSubnetGroup {}: {}", subnet_group_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::RDS::DBSubnetGroup {}: {}",
+                    subnet_group_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -521,4 +541,3 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
         "AWS::RDS::DBSubnetGroup"
     }
 }
-

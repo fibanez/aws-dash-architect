@@ -1,4 +1,4 @@
-use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
+use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -30,7 +30,11 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
             .fetch_tags_for_resource("AWS::EC2::Instance", &instance_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for EC2 instance {}: {}", instance_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for EC2 instance {}: {}",
+                    instance_id,
+                    e
+                );
                 Vec::new() // Graceful degradation
             });
 
@@ -99,7 +103,6 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
     }
 }
 
-
 pub struct EC2SecurityGroupNormalizer;
 
 #[async_trait]
@@ -132,25 +135,17 @@ impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::EC2::SecurityGroup", &group_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::SecurityGroup {}: {}", group_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::SecurityGroup {}: {}",
+                    group_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -200,7 +195,6 @@ impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
     }
 }
 
-
 pub struct EC2VPCNormalizer;
 
 #[async_trait]
@@ -219,7 +213,12 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
             .unwrap_or("unknown-vpc")
             .to_string();
 
-        tracing::debug!("🔍 EC2VPCNormalizer: Starting normalization for VPC {} in account {} region {}", vpc_id, account, region);
+        tracing::debug!(
+            "🔍 EC2VPCNormalizer: Starting normalization for VPC {} in account {} region {}",
+            vpc_id,
+            account,
+            region
+        );
 
         let display_name = extract_display_name(&raw_response, &vpc_id);
         let status = raw_response
@@ -227,10 +226,18 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - display_name={}, status={:?}", vpc_id, display_name, status);
+        tracing::debug!(
+            "🔍 EC2VPCNormalizer: VPC {} - display_name={}, status={:?}",
+            vpc_id,
+            display_name,
+            status
+        );
 
         // Fetch tags asynchronously from AWS API with caching
-        tracing::debug!("🔍 EC2VPCNormalizer: Fetching tags for VPC {} using async AWS client", vpc_id);
+        tracing::debug!(
+            "🔍 EC2VPCNormalizer: Fetching tags for VPC {} using async AWS client",
+            vpc_id
+        );
 
         let tags = aws_client
             .fetch_tags_for_resource("AWS::EC2::VPC", &vpc_id, account, region)
@@ -240,9 +247,18 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
                 Vec::new()
             });
 
-        tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - fetched {} tags", vpc_id, tags.len());
+        tracing::debug!(
+            "🔍 EC2VPCNormalizer: VPC {} - fetched {} tags",
+            vpc_id,
+            tags.len()
+        );
         for tag in &tags {
-            tracing::debug!("🔍 EC2VPCNormalizer: VPC {} - tag: {}={}", vpc_id, tag.key, tag.value);
+            tracing::debug!(
+                "🔍 EC2VPCNormalizer: VPC {} - tag: {}={}",
+                vpc_id,
+                tag.key,
+                tag.value
+            );
         }
 
         let properties = create_normalized_properties(&raw_response);
@@ -268,7 +284,11 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
             query_timestamp,
         };
 
-        tracing::debug!("🔍 EC2VPCNormalizer: Successfully normalized VPC {} - resource_type={}", vpc_id, entry.resource_type);
+        tracing::debug!(
+            "🔍 EC2VPCNormalizer: Successfully normalized VPC {} - resource_type={}",
+            vpc_id,
+            entry.resource_type
+        );
 
         Ok(entry)
     }
@@ -286,7 +306,6 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
         "AWS::EC2::VPC"
     }
 }
-
 
 /// Normalizer for EBS Volumes
 pub struct EC2VolumeNormalizer;
@@ -312,17 +331,16 @@ impl AsyncResourceNormalizer for EC2VolumeNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::Volume", &volume_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::Volume {}: {}", volume_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::Volume {}: {}",
+                    volume_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -386,7 +404,6 @@ impl AsyncResourceNormalizer for EC2VolumeNormalizer {
     }
 }
 
-
 /// Normalizer for EBS Snapshots
 pub struct EC2SnapshotNormalizer;
 
@@ -411,17 +428,16 @@ impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::Snapshot", &snapshot_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::Snapshot {}: {}", snapshot_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::Snapshot {}: {}",
+                    snapshot_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract start time
@@ -488,7 +504,6 @@ impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
     }
 }
 
-
 /// Normalizer for AMIs
 pub struct EC2ImageNormalizer;
 
@@ -513,17 +528,16 @@ impl AsyncResourceNormalizer for EC2ImageNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::Image", &image_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::Image {}: {}", image_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::Image {}: {}",
+                    image_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract creation date
@@ -571,7 +585,6 @@ impl AsyncResourceNormalizer for EC2ImageNormalizer {
     }
 }
 
-
 /// Normalizer for Subnets
 pub struct EC2SubnetNormalizer;
 
@@ -596,17 +609,16 @@ impl AsyncResourceNormalizer for EC2SubnetNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::Subnet", &subnet_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::Subnet {}: {}", subnet_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::Subnet {}: {}",
+                    subnet_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         let properties = create_normalized_properties(&raw_response);
@@ -661,7 +673,6 @@ impl AsyncResourceNormalizer for EC2SubnetNormalizer {
     }
 }
 
-
 /// Normalizer for Internet Gateways
 pub struct EC2InternetGatewayNormalizer;
 
@@ -686,17 +697,16 @@ impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::InternetGateway", &igw_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::InternetGateway {}: {}", igw_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::InternetGateway {}: {}",
+                    igw_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         let properties = create_normalized_properties(&raw_response);
@@ -760,7 +770,6 @@ impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
     }
 }
 
-
 pub struct EC2RouteTableNormalizer;
 
 #[async_trait]
@@ -781,20 +790,19 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
 
         let display_name = extract_display_name(&raw_response, &route_table_id);
         let status = Some("available".to_string()); // Route tables don't have status in the same way as instances
-        // Fetch tags asynchronously from AWS API with caching
+                                                    // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::RouteTable", &route_table_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::RouteTable {}: {}", route_table_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::RouteTable {}: {}",
+                    route_table_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -886,7 +894,6 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
     }
 }
 
-
 pub struct EC2NatGatewayNormalizer;
 
 #[async_trait]
@@ -913,17 +920,16 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::NatGateway", &nat_gateway_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::NatGateway {}: {}", nat_gateway_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::NatGateway {}: {}",
+                    nat_gateway_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -1020,7 +1026,6 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
     }
 }
 
-
 #[async_trait]
 impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
     async fn normalize(
@@ -1042,7 +1047,6 @@ impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
-
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::EC2::Instance".to_string(),
@@ -1070,7 +1074,12 @@ impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1114,7 +1123,6 @@ impl AsyncResourceNormalizer for EC2VPCEndpointNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::EC2::Instance".to_string(),
             account_id: account.to_string(),
@@ -1141,7 +1149,12 @@ impl AsyncResourceNormalizer for EC2VPCEndpointNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1183,20 +1196,19 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
 
         let display_name = extract_display_name(&raw_response, &network_acl_id);
         let status = Some("available".to_string()); // Network ACLs don't have a status field like instances
-        // Fetch tags asynchronously from AWS API with caching
+                                                    // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::NetworkAcl", &network_acl_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::NetworkAcl {}: {}", network_acl_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::NetworkAcl {}: {}",
+                    network_acl_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -1273,7 +1285,6 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
     }
 }
 
-
 pub struct EC2KeyPairNormalizer;
 
 #[async_trait]
@@ -1294,20 +1305,19 @@ impl AsyncResourceNormalizer for EC2KeyPairNormalizer {
 
         let display_name = extract_display_name(&raw_response, &key_name);
         let status = Some("available".to_string()); // Key pairs don't have status like instances
-        // Fetch tags asynchronously from AWS API with caching
+                                                    // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::KeyPair", &key_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::KeyPair {}: {}", key_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::KeyPair {}: {}",
+                    key_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -1347,5 +1357,3 @@ impl AsyncResourceNormalizer for EC2KeyPairNormalizer {
         "AWS::EC2::KeyPair"
     }
 }
-
-

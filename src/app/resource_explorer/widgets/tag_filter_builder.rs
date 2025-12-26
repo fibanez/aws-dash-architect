@@ -1,4 +1,6 @@
-use crate::app::resource_explorer::state::{BooleanOperator, TagFilter, TagFilterGroup, TagFilterType};
+use crate::app::resource_explorer::state::{
+    BooleanOperator, TagFilter, TagFilterGroup, TagFilterType,
+};
 use crate::app::resource_explorer::tag_discovery::TagDiscovery;
 use egui::Ui;
 
@@ -41,7 +43,13 @@ impl TagFilterBuilderWidget {
             ui.add_space(8.0);
 
             // Render the main filter group
-            Self::render_filter_group_static(ui, &mut self.filter_group, &self.tag_discovery, 0, &[]);
+            Self::render_filter_group_static(
+                ui,
+                &mut self.filter_group,
+                &self.tag_discovery,
+                0,
+                &[],
+            );
         });
 
         self.filter_group.clone()
@@ -53,6 +61,7 @@ impl TagFilterBuilderWidget {
     }
 
     /// Format the filter group as a parenthesized expression for logging
+    #[allow(clippy::only_used_in_recursion)]
     pub fn format_filter_expression(group: &TagFilterGroup, depth: usize) -> String {
         let mut parts = Vec::new();
         let empty_string = String::new();
@@ -64,45 +73,45 @@ impl TagFilterBuilderWidget {
             } else {
                 match filter.filter_type {
                     TagFilterType::Equals => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} = {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::NotEquals => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} != {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::Contains => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} contains {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::NotContains => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} not-contains {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::StartsWith => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} starts-with {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::EndsWith => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} ends-with {}", filter.tag_key, value)
-                    },
+                    }
                     TagFilterType::In => {
                         format!("{} in [{}]", filter.tag_key, filter.values.join(", "))
-                    },
+                    }
                     TagFilterType::NotIn => {
                         format!("{} not-in [{}]", filter.tag_key, filter.values.join(", "))
-                    },
+                    }
                     TagFilterType::Exists => {
                         format!("{} exists", filter.tag_key)
-                    },
+                    }
                     TagFilterType::NotExists => {
                         format!("{} not-exists", filter.tag_key)
-                    },
+                    }
                     TagFilterType::Regex => {
-                        let value = filter.values.get(0).unwrap_or(&empty_string);
+                        let value = filter.values.first().unwrap_or(&empty_string);
                         format!("{} matches /{}/", filter.tag_key, value)
-                    },
+                    }
                 }
             };
             parts.push(filter_expr);
@@ -129,7 +138,13 @@ impl TagFilterBuilderWidget {
     }
 
     /// Render a filter group with all its filters and sub-groups
-    fn render_filter_group_static(ui: &mut Ui, group: &mut TagFilterGroup, tag_discovery: &TagDiscovery, depth: usize, group_path: &[usize]) {
+    fn render_filter_group_static(
+        ui: &mut Ui,
+        group: &mut TagFilterGroup,
+        tag_discovery: &TagDiscovery,
+        depth: usize,
+        group_path: &[usize],
+    ) {
         // Visual grouping with indentation
         let indent = depth as f32 * 20.0;
         ui.add_space(4.0);
@@ -161,7 +176,14 @@ impl TagFilterBuilderWidget {
                 ui.add_space(indent);
 
                 // Render the filter row with depth, group_path, and index for unique IDs
-                if Self::render_filter_row_static(ui, filter, tag_discovery, depth, group_path, index) {
+                if Self::render_filter_row_static(
+                    ui,
+                    filter,
+                    tag_discovery,
+                    depth,
+                    group_path,
+                    index,
+                ) {
                     filters_to_remove.push(index);
                 }
             });
@@ -204,7 +226,13 @@ impl TagFilterBuilderWidget {
 
             ui.group(|ui| {
                 ui.add_space(4.0);
-                Self::render_filter_group_static(ui, sub_group, tag_discovery, depth + 1, &new_path);
+                Self::render_filter_group_static(
+                    ui,
+                    sub_group,
+                    tag_discovery,
+                    depth + 1,
+                    &new_path,
+                );
 
                 ui.horizontal(|ui| {
                     ui.add_space(indent + 20.0);
@@ -237,9 +265,15 @@ impl TagFilterBuilderWidget {
         let id_suffix = if group_path.is_empty() {
             format!("{}", filter_index)
         } else {
-            format!("{}_{}",
-                group_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("_"),
-                filter_index)
+            format!(
+                "{}_{}",
+                group_path
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+                filter_index
+            )
         };
 
         // Tag key dropdown with stable index-based ID (no visible label)
@@ -256,7 +290,10 @@ impl TagFilterBuilderWidget {
             .show_ui(ui, |ui| {
                 for (tag_key, count) in tag_keys.iter().take(20) {
                     let label = format!("{} ({})", tag_key, count);
-                    if ui.selectable_label(filter.tag_key == *tag_key, label).clicked() {
+                    if ui
+                        .selectable_label(filter.tag_key == *tag_key, label)
+                        .clicked()
+                    {
                         tracing::info!("🔍 ✅ Tag key SELECTED: {}", tag_key);
                         filter.tag_key = tag_key.clone();
                     }
@@ -356,10 +393,9 @@ impl TagFilterBuilderWidget {
                         if ui.text_edit_singleline(&mut custom_value).lost_focus()
                             && ui.input(|i| i.key_pressed(egui::Key::Enter))
                             && !custom_value.is_empty()
+                            && !filter.values.contains(&custom_value)
                         {
-                            if !filter.values.contains(&custom_value) {
-                                filter.values.push(custom_value);
-                            }
+                            filter.values.push(custom_value);
                         }
                     });
             }
@@ -391,7 +427,10 @@ impl TagFilterBuilderWidget {
                         .show_ui(ui, |ui| {
                             // Show discovered values
                             for value in discovered_values.iter().take(20) {
-                                if ui.selectable_label(filter.values[0] == *value, value).clicked() {
+                                if ui
+                                    .selectable_label(filter.values[0] == *value, value)
+                                    .clicked()
+                                {
                                     tracing::info!("🔍 ✅ Single value SELECTED: {}", value);
                                     filter.values[0] = value.clone();
                                 }

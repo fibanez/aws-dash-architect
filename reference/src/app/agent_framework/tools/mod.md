@@ -3,11 +3,11 @@
 ## Component Overview
 
 Module exports for Agent Framework tool implementations. Each tool provides
-specific AWS operation capabilities to agents through the stood::tools::Tool trait.
+specific capabilities to agents through the stood::tools::Tool trait.
 
 **Pattern**: Module organization with re-exports
-**External**: stood::tools::Tool, AWS SDK clients
-**Purpose**: Tool implementations for agent-driven AWS operations
+**External**: stood::tools::Tool, V8 JavaScript engine
+**Purpose**: Tool implementations for agent-driven AWS operations and orchestration
 
 ---
 
@@ -15,72 +15,79 @@ specific AWS operation capabilities to agents through the stood::tools::Tool tra
 
 ### Tool Implementations
 - `mod.rs` - This file: tool module exports
-- `aws_list_resources.rs` - AwsListResourcesTool
-- `aws_describe_resource.rs` - AwsDescribeResourceTool
-- `aws_find_account.rs` - AwsFindAccountTool, AccountSearchResult
-- `aws_find_region.rs` - AwsFindRegionTool, RegionSearchResult
-- `aws_describe_log_groups.rs` - AwsDescribeLogGroupsTool
-- `aws_get_log_events.rs` - AwsGetLogEventsTool
-- `aws_cloudtrail_lookup_events.rs` - AwsCloudTrailLookupEventsTool
-- `create_task.rs` - CreateTaskTool, ActiveTask
+- `execute_javascript.rs` - ExecuteJavaScriptTool (V8 engine with AWS API bindings)
+- `start_task.rs` - StartTaskTool (worker agent spawning)
+- `think.rs` - ThinkTool (reasoning/planning)
 - `todo_read.rs` - TodoReadTool
-- `todo_write.rs` - TodoWriteTool, TodoItem, TodoPriority, TodoStatus
+- `todo_write.rs` - TodoWriteTool
+- `todo_types.rs` - TodoItem, TodoStatus
+- `file_security.rs` - File security validation utilities
 
 ---
 
 ## Public API Exports
 
 ```rust
-pub use aws_cloudtrail_lookup_events::AwsCloudTrailLookupEventsTool;
-pub use aws_describe_log_groups::AwsDescribeLogGroupsTool;
-pub use aws_describe_resource::AwsDescribeResourceTool;
-pub use aws_find_account::{set_global_aws_identity, AccountSearchResult, AwsFindAccountTool};
-pub use aws_find_region::{AwsFindRegionTool, RegionSearchResult};
-pub use aws_get_log_events::AwsGetLogEventsTool;
-pub use aws_list_resources::AwsListResourcesTool;
-pub use create_task::{ActiveTask, CreateTaskTool};
+pub use execute_javascript::ExecuteJavaScriptTool;
+pub use start_task::StartTaskTool;
+pub use think::ThinkTool;
 pub use todo_read::TodoReadTool;
-pub use todo_write::{TodoItem, TodoPriority, TodoStatus, TodoWriteTool};
+pub use todo_types::{TodoItem, TodoStatus};
+pub use todo_write::TodoWriteTool;
 ```
 
 ---
 
 ## Tool Categories
 
-### AWS Resource Tools
-Query and describe AWS resources across accounts/regions:
-- **AwsListResourcesTool** - List resources by type, account, region
-- **AwsDescribeResourceTool** - Get detailed resource information
-- **AwsFindAccountTool** - Search available AWS accounts
-- **AwsFindRegionTool** - Search AWS regions
-
-### AWS Observability Tools
-CloudWatch Logs and CloudTrail querying:
-- **AwsDescribeLogGroupsTool** - List CloudWatch log groups
-- **AwsGetLogEventsTool** - Retrieve log events from log streams
-- **AwsCloudTrailLookupEventsTool** - Search CloudTrail audit events
+### JavaScript Execution (Primary Worker Tool)
+Execute JavaScript code with AWS API bindings:
+- **ExecuteJavaScriptTool** - V8 sandbox with AWS API access
+  - listAccounts(), listRegions(), queryResources()
+  - queryCloudWatchLogEvents(), getCloudTrailEvents()
+  - Console output capture, timeout/memory limits
 
 ### Agent Coordination Tools
-Multi-agent orchestration and task tracking:
-- **CreateTaskTool** - Spawn specialized task agents
-- **TodoWriteTool** - Create/update shared TODO lists
+Multi-agent orchestration:
+- **StartTaskTool** - Spawn TaskWorker agents, wait for results
+- **ThinkTool** - Reasoning/planning (logs thoughts, no operation)
+
+### Task Tracking Tools
+Shared TODO list management:
+- **TodoWriteTool** - Create/update shared TODO items
 - **TodoReadTool** - Query shared TODO items
+
+---
+
+## Tool Assignment by Agent Type
+
+### TaskManager Agent
+Uses these tools for orchestration:
+- **think** - Planning and analysis
+- **start_task** - Spawn workers
+
+### TaskWorker Agent
+Uses this tool for execution:
+- **execute_javascript** - JavaScript with AWS API bindings
 
 ---
 
 ## Tool Registration
 
-Tools are registered with agents via constructor functions in `tools_registry.rs`:
-- `aws_list_resources_tool()` → Box&lt;dyn Tool&gt;
-- `aws_describe_resource_tool()` → Box&lt;dyn Tool&gt;
-- `create_task_tool()` → Box&lt;dyn Tool&gt;
-- etc.
+Tools are registered with agents during stood::Agent builder configuration.
 
-Agents receive tools during stood::Agent builder configuration:
+### TaskManager Tools
 ```rust
 Agent::builder()
-    .add_tool(aws_list_resources_tool(client))
-    .add_tool(create_task_tool())
+    .add_tool(Box::new(ThinkTool::new()))
+    .add_tool(Box::new(StartTaskTool::new()))
+    .build()
+```
+
+### TaskWorker Tools
+```rust
+Agent::builder()
+    .add_tool(Box::new(ExecuteJavaScriptTool::new()))
     .build()
 ```
 
@@ -88,17 +95,20 @@ Agent::builder()
 
 ## Implementation Notes
 
-### Global State Access
-Most tools access global state from `tools_registry.rs`:
-- GLOBAL_AWS_CLIENT: For AWS SDK operations
-- GLOBAL_TODO_STORAGE: For cross-agent TODO synchronization
-- GLOBAL_CANCELLATION_MANAGER: For sub-agent cancellation
+### JavaScript Execution Model
+ExecuteJavaScriptTool is the primary tool for TaskWorker agents:
+- V8 sandbox with memory limits (256MB default)
+- Timeout enforcement (30s default)
+- AWS API bindings for resource queries
+- Console output capture (stdout/stderr)
+- JSON serialization of results
 
-### Tool Parameter Patterns
-Tools accept Optional&lt;Arc&lt;AWSResourceClient&gt;&gt;:
-- If provided: use local client
-- If None: fall back to get_global_aws_client()
-- If both None: return user-friendly error
+### Global State Access
+Tools access global state from `tools_registry.rs`:
+- GLOBAL_AWS_CLIENT: For AWS SDK operations
+- GLOBAL_AWS_CREDENTIALS: For standalone agent AWS access
+- GLOBAL_CANCELLATION_MANAGER: For agent stop signals
+- GLOBAL_MODEL_CONFIG: For agent model configuration
 
 ### Error Handling
 Tools return ToolError with user-friendly messages:
@@ -108,5 +118,5 @@ Tools return ToolError with user-friendly messages:
 
 ---
 
-**Last Updated**: 2025-01-28
+**Last Updated**: 2025-12-22
 **Status**: Accurately reflects tools/mod.rs structure

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod global_services_tests {
     use awsdash::app::resource_explorer::global_services::{
-        is_global_service, get_global_query_region, GlobalServiceRegistry
+        get_global_query_region, is_global_service, GlobalServiceRegistry,
     };
 
     #[test]
@@ -47,16 +47,16 @@ mod global_services_tests {
     #[test]
     fn test_registry_instance() {
         let registry = GlobalServiceRegistry::new();
-        
+
         // Test a few key global services
         assert!(registry.is_global("AWS::IAM::Role"));
         assert!(registry.is_global("AWS::CloudFront::Distribution"));
         assert!(registry.is_global("AWS::Route53::HostedZone"));
-        
+
         // Test regional services
         assert!(!registry.is_global("AWS::EC2::Instance"));
         assert!(!registry.is_global("AWS::Lambda::Function"));
-        
+
         // Test query region
         assert_eq!(registry.get_query_region(), "us-east-1");
     }

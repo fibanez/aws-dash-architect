@@ -164,9 +164,8 @@ impl Tool for TodoWriteTool {
             })?;
 
         // Validate: only one in_progress
-        Self::validate_single_in_progress(&input.todos).map_err(|e| ToolError::InvalidParameters {
-            message: e,
-        })?;
+        Self::validate_single_in_progress(&input.todos)
+            .map_err(|e| ToolError::InvalidParameters { message: e })?;
 
         // Update via callback if available
         if let Some(ref callback) = self.update_callback {
@@ -205,7 +204,10 @@ mod tests {
         let schema = tool.parameters_schema();
 
         assert_eq!(schema["type"], "object");
-        assert!(schema["required"].as_array().unwrap().contains(&json!("todos")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("todos")));
         assert_eq!(schema["properties"]["todos"]["type"], "array");
     }
 

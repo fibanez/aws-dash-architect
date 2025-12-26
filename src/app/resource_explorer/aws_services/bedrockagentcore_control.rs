@@ -76,10 +76,7 @@ impl BedrockAgentCoreControlService {
         Ok(self.agent_runtime_details_to_json(&response))
     }
 
-    fn agent_runtime_to_json(
-        &self,
-        runtime: &agentcore::types::AgentRuntime,
-    ) -> serde_json::Value {
+    fn agent_runtime_to_json(&self, runtime: &agentcore::types::AgentRuntime) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -461,10 +458,7 @@ impl BedrockAgentCoreControlService {
         Ok(self.memory_details_to_json(&response))
     }
 
-    fn memory_to_json(
-        &self,
-        memory: &agentcore::types::MemorySummary,
-    ) -> serde_json::Value {
+    fn memory_to_json(&self, memory: &agentcore::types::MemorySummary) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &memory.id {
@@ -631,10 +625,7 @@ impl BedrockAgentCoreControlService {
         Ok(self.gateway_details_to_json(&response))
     }
 
-    fn gateway_to_json(
-        &self,
-        gateway: &agentcore::types::GatewaySummary,
-    ) -> serde_json::Value {
+    fn gateway_to_json(&self, gateway: &agentcore::types::GatewaySummary) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -801,19 +792,12 @@ impl BedrockAgentCoreControlService {
             })?;
 
         let client = agentcore::Client::new(&aws_config);
-        let response = client
-            .get_browser()
-            .browser_id(browser_id)
-            .send()
-            .await?;
+        let response = client.get_browser().browser_id(browser_id).send().await?;
 
         Ok(self.browser_details_to_json(&response))
     }
 
-    fn browser_to_json(
-        &self,
-        browser: &agentcore::types::BrowserSummary,
-    ) -> serde_json::Value {
+    fn browser_to_json(&self, browser: &agentcore::types::BrowserSummary) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -1011,10 +995,7 @@ impl BedrockAgentCoreControlService {
         );
 
         if let Some(name) = &interpreter.name {
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(name.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(description) = &interpreter.description {

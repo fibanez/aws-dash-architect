@@ -34,17 +34,16 @@ impl AsyncResourceNormalizer for CloudFormationStackNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::CloudFormation::Stack", &_stack_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::CloudFormation::Stack {}: {}", _stack_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::CloudFormation::Stack {}: {}",
+                    _stack_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         // Extract creation time
@@ -92,4 +91,3 @@ impl AsyncResourceNormalizer for CloudFormationStackNormalizer {
         "AWS::CloudFormation::Stack"
     }
 }
-

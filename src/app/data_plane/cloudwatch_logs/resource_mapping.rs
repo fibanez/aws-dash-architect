@@ -52,7 +52,11 @@ pub fn has_cloudwatch_logs(resource_type: &str) -> bool {
 ///
 /// Returns a log group name if the resource type has a standard pattern.
 /// For some resource types, the log group name can be derived from the resource ARN or name.
-pub fn get_log_group_name(resource_type: &str, resource_name: &str, _resource_arn: Option<&str>) -> Option<String> {
+pub fn get_log_group_name(
+    resource_type: &str,
+    resource_name: &str,
+    _resource_arn: Option<&str>,
+) -> Option<String> {
     match resource_type {
         "AWS::Logs::LogGroup" => {
             // CloudWatch Log Group: the resource name IS the log group name
@@ -110,7 +114,10 @@ pub fn get_log_group_name(resource_type: &str, resource_name: &str, _resource_ar
         }
         "AWS::ECS::Service" => {
             // ECS Service: Similar to Task, often /ecs/{cluster-name} or /aws/ecs/{service-name}
-            Some(format!("/aws/ecs/containerinsights/{}/performance", resource_name))
+            Some(format!(
+                "/aws/ecs/containerinsights/{}/performance",
+                resource_name
+            ))
         }
         "AWS::AppSync::GraphQLApi" => {
             // AppSync: /aws/appsync/apis/{api-id}
@@ -224,48 +231,32 @@ mod tests {
 
     #[test]
     fn test_get_log_group_name_log_group() {
-        let log_group = get_log_group_name(
-            "AWS::Logs::LogGroup",
-            "/aws/lambda/my-function",
-            None,
-        );
+        let log_group = get_log_group_name("AWS::Logs::LogGroup", "/aws/lambda/my-function", None);
         assert_eq!(log_group, Some("/aws/lambda/my-function".to_string()));
 
         // Test with another pattern
-        let log_group2 = get_log_group_name(
-            "AWS::Logs::LogGroup",
-            "/custom/app/logs",
-            None,
-        );
+        let log_group2 = get_log_group_name("AWS::Logs::LogGroup", "/custom/app/logs", None);
         assert_eq!(log_group2, Some("/custom/app/logs".to_string()));
     }
 
     #[test]
     fn test_get_log_group_name_lambda() {
-        let log_group = get_log_group_name(
-            "AWS::Lambda::Function",
-            "my-function",
-            None,
-        );
+        let log_group = get_log_group_name("AWS::Lambda::Function", "my-function", None);
         assert_eq!(log_group, Some("/aws/lambda/my-function".to_string()));
     }
 
     #[test]
     fn test_get_log_group_name_rds() {
-        let log_group = get_log_group_name(
-            "AWS::RDS::DBInstance",
-            "my-db-instance",
-            None,
+        let log_group = get_log_group_name("AWS::RDS::DBInstance", "my-db-instance", None);
+        assert_eq!(
+            log_group,
+            Some("/aws/rds/instance/my-db-instance/error".to_string())
         );
-        assert_eq!(log_group, Some("/aws/rds/instance/my-db-instance/error".to_string()));
     }
 
     #[test]
     fn test_get_all_log_group_patterns_rds() {
-        let patterns = get_all_log_group_patterns(
-            "AWS::RDS::DBInstance",
-            "my-db",
-        );
+        let patterns = get_all_log_group_patterns("AWS::RDS::DBInstance", "my-db");
         assert_eq!(patterns.len(), 3);
         assert!(patterns.contains(&"/aws/rds/instance/my-db/error".to_string()));
         assert!(patterns.contains(&"/aws/rds/instance/my-db/slowquery".to_string()));
@@ -274,10 +265,7 @@ mod tests {
 
     #[test]
     fn test_get_all_log_group_patterns_lambda() {
-        let patterns = get_all_log_group_patterns(
-            "AWS::Lambda::Function",
-            "my-function",
-        );
+        let patterns = get_all_log_group_patterns("AWS::Lambda::Function", "my-function");
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0], "/aws/lambda/my-function");
     }
@@ -285,7 +273,13 @@ mod tests {
     #[test]
     fn test_unsupported_resource_type() {
         assert!(!has_cloudwatch_logs("AWS::S3::Bucket"));
-        assert_eq!(get_log_group_name("AWS::S3::Bucket", "my-bucket", None), None);
-        assert_eq!(get_all_log_group_patterns("AWS::S3::Bucket", "my-bucket").len(), 0);
+        assert_eq!(
+            get_log_group_name("AWS::S3::Bucket", "my-bucket", None),
+            None
+        );
+        assert_eq!(
+            get_all_log_group_patterns("AWS::S3::Bucket", "my-bucket").len(),
+            0
+        );
     }
 }

@@ -22,7 +22,6 @@ impl PropertyHierarchyBuilderWidget {
         }
     }
 
-
     /// Render the hierarchy builder UI
     /// Returns: (hierarchy, apply_clicked, cancel_clicked)
     pub fn show(&mut self, ui: &mut Ui) -> (Vec<String>, bool, bool) {
@@ -74,7 +73,11 @@ impl PropertyHierarchyBuilderWidget {
             cancel_clicked = cancel;
         });
 
-        (self.selected_hierarchy.clone(), apply_clicked, cancel_clicked)
+        (
+            self.selected_hierarchy.clone(),
+            apply_clicked,
+            cancel_clicked,
+        )
     }
 
     /// Render the left panel with available properties
@@ -88,7 +91,10 @@ impl PropertyHierarchyBuilderWidget {
                 ui.label("Search:");
                 let search_response = ui.text_edit_singleline(&mut self.search_filter);
                 if search_response.changed() {
-                    tracing::debug!("Property search filter changed to: '{}'", self.search_filter);
+                    tracing::debug!(
+                        "Property search filter changed to: '{}'",
+                        self.search_filter
+                    );
                 }
             });
             ui.add_space(4.0);
@@ -96,20 +102,22 @@ impl PropertyHierarchyBuilderWidget {
             // Scrollable list of available properties
             egui::ScrollArea::vertical()
                 .max_height(300.0)
-                .auto_shrink([false, false])  // Ensure scroll area always shows
+                .auto_shrink([false, false]) // Ensure scroll area always shows
                 .show(ui, |ui| {
-                    let property_keys: Vec<_> = self.property_catalog.get_keys_sorted()
+                    let property_keys: Vec<_> = self
+                        .property_catalog
+                        .get_keys_sorted()
                         .into_iter()
                         .filter(|key| {
                             // Filter out unwanted root-level internal properties only
                             // Allow nested properties like "detailed_properties.CidrBlock"
-                            key.path != "account_color" &&
-                            key.path != "account_id" &&
-                            key.path != "detailed_properties" &&
-                            key.path != "detailed_timestamp" &&
-                            key.path != "display_name" &&
-                            key.path != "raw_properties" &&
-                            key.path != "properties"
+                            key.path != "account_color"
+                                && key.path != "account_id"
+                                && key.path != "detailed_properties"
+                                && key.path != "detailed_timestamp"
+                                && key.path != "display_name"
+                                && key.path != "raw_properties"
+                                && key.path != "properties"
                         })
                         .take(100)
                         .collect();
@@ -117,7 +125,10 @@ impl PropertyHierarchyBuilderWidget {
                     for prop_key in property_keys {
                         // Apply search filter
                         if !self.search_filter.is_empty()
-                            && !prop_key.path.to_lowercase().contains(&self.search_filter.to_lowercase())
+                            && !prop_key
+                                .path
+                                .to_lowercase()
+                                .contains(&self.search_filter.to_lowercase())
                         {
                             continue;
                         }
@@ -130,10 +141,9 @@ impl PropertyHierarchyBuilderWidget {
 
                         // Format label
                         let type_name = prop_key.value_type.display_name();
-                        let label = format!("{} ({}, {} resources)",
-                            display_path,
-                            type_name,
-                            prop_key.frequency
+                        let label = format!(
+                            "{} ({}, {} resources)",
+                            display_path, type_name, prop_key.frequency
                         );
 
                         // Show as drag source
@@ -143,18 +153,22 @@ impl PropertyHierarchyBuilderWidget {
                             |ui| {
                                 ui.horizontal(|ui| {
                                     if is_selected {
-                                        ui.add_enabled(false, egui::Label::new(
-                                            egui::RichText::new(&label).weak()
-                                        ));
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Label::new(egui::RichText::new(&label).weak()),
+                                        );
                                     } else {
                                         ui.label(&label);
                                     }
                                 });
-                            }
+                            },
                         );
 
                         // Double-click to add
-                        if response.response.double_clicked() && !is_selected && self.selected_hierarchy.len() < 5 {
+                        if response.response.double_clicked()
+                            && !is_selected
+                            && self.selected_hierarchy.len() < 5
+                        {
                             self.selected_hierarchy.push(prop_key.path.clone());
                             tracing::info!("Added property to hierarchy: {}", prop_key.path);
                         }
@@ -173,7 +187,10 @@ impl PropertyHierarchyBuilderWidget {
                 ui.label("No properties selected");
                 ui.label("Drag properties from the left or double-click to add");
             } else {
-                ui.label(format!("{} level(s) selected (max 5)", self.selected_hierarchy.len()));
+                ui.label(format!(
+                    "{} level(s) selected (max 5)",
+                    self.selected_hierarchy.len()
+                ));
             }
 
             ui.add_space(4.0);
@@ -186,22 +203,28 @@ impl PropertyHierarchyBuilderWidget {
 
                     dnd(ui, "property_hierarchy_dnd")
                         .with_animation_time(0.2)
-                        .show_vec(&mut self.selected_hierarchy, |ui, property_path, handle, state| {
-                            handle.ui(ui, |ui| {
-                                ui.label(":::");
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}.", state.index + 1));
-                                ui.label(property_path.as_str());
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button("X").clicked() {
-                                        items_to_remove.push(state.index);
-                                    }
+                        .show_vec(
+                            &mut self.selected_hierarchy,
+                            |ui, property_path, handle, state| {
+                                handle.ui(ui, |ui| {
+                                    ui.label(":::");
                                 });
-                            });
-                        });
+
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("{}.", state.index + 1));
+                                    ui.label(property_path.as_str());
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button("X").clicked() {
+                                                items_to_remove.push(state.index);
+                                            }
+                                        },
+                                    );
+                                });
+                            },
+                        );
 
                     // Remove marked items (in reverse to maintain indices)
                     for index in items_to_remove.iter().rev() {
@@ -216,16 +239,14 @@ impl PropertyHierarchyBuilderWidget {
                             .stroke(egui::Stroke::new(1.0, ui.visuals().weak_text_color()))
                             .fill(ui.visuals().faint_bg_color),
                         |ui| {
-                            ui.label(
-                                egui::RichText::new("Drop here to add")
-                                    .weak()
-                                    .size(14.0)
-                            );
-                        }
+                            ui.label(egui::RichText::new("Drop here to add").weak().size(14.0));
+                        },
                     );
 
                     if let Some(property_path) = payload {
-                        if !self.selected_hierarchy.contains(&property_path) && self.selected_hierarchy.len() < 5 {
+                        if !self.selected_hierarchy.contains(&property_path)
+                            && self.selected_hierarchy.len() < 5
+                        {
                             self.selected_hierarchy.push(property_path.as_ref().clone());
                             tracing::info!("Dropped property into hierarchy: {}", property_path);
                         }

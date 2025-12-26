@@ -60,7 +60,10 @@ impl AsyncResourceNormalizer for OrganizationsDelegatedAdministratorNormalizer {
         }
 
         if let Some(delegation_enabled_date) = raw_response.get("DelegationEnabledDate") {
-            properties.insert("delegation_enabled_date".to_string(), delegation_enabled_date.clone());
+            properties.insert(
+                "delegation_enabled_date".to_string(),
+                delegation_enabled_date.clone(),
+            );
         }
 
         if let Some(joined_method) = raw_response.get("JoinedMethod") {
@@ -73,7 +76,6 @@ impl AsyncResourceNormalizer for OrganizationsDelegatedAdministratorNormalizer {
 
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
-
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::DelegatedAdministrator".to_string(),
@@ -101,7 +103,12 @@ impl AsyncResourceNormalizer for OrganizationsDelegatedAdministratorNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

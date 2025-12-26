@@ -1,8 +1,6 @@
 use super::*;
 use crate::app::resource_explorer::normalizers::utils::create_normalized_properties;
-use crate::app::resource_explorer::state::{
-    RelationshipType, ResourceEntry, ResourceRelationship,
-};
+use crate::app::resource_explorer::state::{RelationshipType, ResourceEntry, ResourceRelationship};
 use crate::app::resource_explorer::{assign_account_color, assign_region_color};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -43,17 +41,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::AgentRuntime", &runtime_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::AgentRuntime",
+                &runtime_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntime {}: {}", runtime_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntime {}: {}",
+                    runtime_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -162,17 +164,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeEndpointNormalizer 
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::AgentRuntimeEndpoint", &endpoint_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::AgentRuntimeEndpoint",
+                &endpoint_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntimeEndpoint {}: {}", endpoint_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntimeEndpoint {}: {}",
+                    endpoint_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -264,17 +270,16 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::BedrockAgentCore::Memory", &memory_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::Memory {}: {}", memory_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::Memory {}: {}",
+                    memory_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -348,17 +353,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::Gateway", &gateway_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::Gateway",
+                &gateway_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::Gateway {}: {}", gateway_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::Gateway {}: {}",
+                    gateway_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -432,17 +441,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::Browser", &browser_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::Browser",
+                &browser_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::Browser {}: {}", browser_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::Browser {}: {}",
+                    browser_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -516,17 +529,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::CodeInterpreter", &interpreter_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::CodeInterpreter",
+                &interpreter_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::CodeInterpreter {}: {}", interpreter_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::CodeInterpreter {}: {}",
+                    interpreter_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -741,17 +758,21 @@ impl AsyncResourceNormalizer for BedrockAgentCoreWorkloadIdentityNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::WorkloadIdentity", &name, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::WorkloadIdentity",
+                &name,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::WorkloadIdentity {}: {}", name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::WorkloadIdentity {}: {}",
+                    name,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
@@ -816,7 +837,8 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeVersionNormalizer {
             .unwrap_or("unknown-version")
             .to_string();
 
-        let display_name = format!("{} (v{})",
+        let display_name = format!(
+            "{} (v{})",
             raw_response
                 .get("AgentRuntimeName")
                 .and_then(|v| v.as_str())
@@ -838,24 +860,32 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeVersionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::AgentRuntimeVersion", &runtime_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::AgentRuntimeVersion",
+                &runtime_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntimeVersion {}: {}", runtime_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::AgentRuntimeVersion {}: {}",
+                    runtime_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::AgentRuntimeVersion".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", parent_runtime_id.as_ref().unwrap_or(&"unknown".to_string()), version),
+            resource_id: format!(
+                "{}#{}",
+                parent_runtime_id.as_ref().unwrap_or(&"unknown".to_string()),
+                version
+            ),
             display_name,
             status,
             properties,
@@ -943,24 +973,32 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayTargetNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::GatewayTarget", &target_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::GatewayTarget",
+                &target_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::GatewayTarget {}: {}", target_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::GatewayTarget {}: {}",
+                    target_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::GatewayTarget".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", parent_gateway_id.as_ref().unwrap_or(&"unknown".to_string()), target_id),
+            resource_id: format!(
+                "{}#{}",
+                parent_gateway_id.as_ref().unwrap_or(&"unknown".to_string()),
+                target_id
+            ),
             display_name,
             status,
             properties,
@@ -1041,24 +1079,32 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryRecordNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::MemoryRecord", &record_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::MemoryRecord",
+                &record_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::MemoryRecord {}: {}", record_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::MemoryRecord {}: {}",
+                    record_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::MemoryRecord".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", parent_memory_id.as_ref().unwrap_or(&"unknown".to_string()), record_id),
+            resource_id: format!(
+                "{}#{}",
+                parent_memory_id.as_ref().unwrap_or(&"unknown".to_string()),
+                record_id
+            ),
             display_name,
             status: None,
             properties,
@@ -1136,30 +1182,37 @@ impl AsyncResourceNormalizer for BedrockAgentCoreEventNormalizer {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown-session");
 
-        let display_name = format!("Event {} (Session: {})", &event_id[..event_id.len().min(8)], &session_id[..session_id.len().min(8)]);
+        let display_name = format!(
+            "Event {} (Session: {})",
+            &event_id[..event_id.len().min(8)],
+            &session_id[..session_id.len().min(8)]
+        );
 
         let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::BedrockAgentCore::Event", &event_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::Event {}: {}", event_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::Event {}: {}",
+                    event_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::Event".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", memory_id.as_ref().unwrap_or(&"unknown".to_string()), event_id),
+            resource_id: format!(
+                "{}#{}",
+                memory_id.as_ref().unwrap_or(&"unknown".to_string()),
+                event_id
+            ),
             display_name,
             status: None,
             properties,
@@ -1236,7 +1289,9 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserSessionNormalizer {
             .get("Name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("Browser Session {}", &session_id[..session_id.len().min(8)]));
+            .unwrap_or_else(|| {
+                format!("Browser Session {}", &session_id[..session_id.len().min(8)])
+            });
 
         let status = raw_response
             .get("Status")
@@ -1247,24 +1302,32 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserSessionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::BrowserSession", &session_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::BrowserSession",
+                &session_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::BrowserSession {}: {}", session_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::BrowserSession {}: {}",
+                    session_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::BrowserSession".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", parent_browser_id.as_ref().unwrap_or(&"unknown".to_string()), session_id),
+            resource_id: format!(
+                "{}#{}",
+                parent_browser_id.as_ref().unwrap_or(&"unknown".to_string()),
+                session_id
+            ),
             display_name,
             status,
             properties,
@@ -1341,7 +1404,12 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterSessionNormalize
             .get("Name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("Code Interpreter Session {}", &session_id[..session_id.len().min(8)]));
+            .unwrap_or_else(|| {
+                format!(
+                    "Code Interpreter Session {}",
+                    &session_id[..session_id.len().min(8)]
+                )
+            });
 
         let status = raw_response
             .get("Status")
@@ -1352,24 +1420,34 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterSessionNormalize
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::BedrockAgentCore::CodeInterpreterSession", &session_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::BedrockAgentCore::CodeInterpreterSession",
+                &session_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::BedrockAgentCore::CodeInterpreterSession {}: {}", session_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::BedrockAgentCore::CodeInterpreterSession {}: {}",
+                    session_id,
+                    e
+                );
 
                 Vec::new()
-
             });
 
         Ok(ResourceEntry {
             resource_type: "AWS::BedrockAgentCore::CodeInterpreterSession".to_string(),
             account_id: account.to_string(),
             region: region.to_string(),
-            resource_id: format!("{}#{}", parent_interpreter_id.as_ref().unwrap_or(&"unknown".to_string()), session_id),
+            resource_id: format!(
+                "{}#{}",
+                parent_interpreter_id
+                    .as_ref()
+                    .unwrap_or(&"unknown".to_string()),
+                session_id
+            ),
             display_name,
             status,
             properties,
@@ -1416,4 +1494,3 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterSessionNormalize
         "AWS::BedrockAgentCore::CodeInterpreterSession"
     }
 }
-

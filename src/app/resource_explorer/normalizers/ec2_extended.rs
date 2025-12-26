@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::TransitGateway", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::TransitGateway {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::TransitGateway {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -70,7 +69,7 @@ impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // Transit Gateways connect to VPCs through attachments
         for resource in all_resources {
             if resource.resource_type == "AWS::EC2::VPC" {
@@ -82,7 +81,7 @@ impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
                 });
             }
         }
-        
+
         relationships
     }
 
@@ -115,17 +114,21 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::EC2::VPCPeeringConnection", &resource_id, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::EC2::VPCPeeringConnection",
+                &resource_id,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::VPCPeeringConnection {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::VPCPeeringConnection {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -157,15 +160,17 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // Extract VPC IDs from the peering connection
-        let accepter_vpc_id = entry.raw_properties
+        let accepter_vpc_id = entry
+            .raw_properties
             .get("AccepterVpcId")
             .and_then(|v| v.as_str());
-        let requester_vpc_id = entry.raw_properties
+        let requester_vpc_id = entry
+            .raw_properties
             .get("RequesterVpcId")
             .and_then(|v| v.as_str());
-        
+
         // Find related VPCs
         for resource in all_resources {
             if resource.resource_type == "AWS::EC2::VPC" {
@@ -189,7 +194,7 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
                 }
             }
         }
-        
+
         relationships
     }
 
@@ -222,17 +227,16 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::FlowLog", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::FlowLog {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::FlowLog {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -264,12 +268,13 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // Flow logs can be attached to VPCs, subnets, or network interfaces
-        if let Some(attached_resource_id) = entry.raw_properties
+        if let Some(attached_resource_id) = entry
+            .raw_properties
             .get("AttachedResourceId")
-            .and_then(|v| v.as_str()) {
-            
+            .and_then(|v| v.as_str())
+        {
             for resource in all_resources {
                 if resource.resource_id == attached_resource_id {
                     relationships.push(ResourceRelationship {
@@ -281,7 +286,7 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
                 }
             }
         }
-        
+
         relationships
     }
 
@@ -314,17 +319,16 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EC2::VolumeAttachment", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EC2::VolumeAttachment {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EC2::VolumeAttachment {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -356,15 +360,17 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // Extract volume and instance IDs from the attachment
-        let volume_id = entry.raw_properties
+        let volume_id = entry
+            .raw_properties
             .get("VolumeId")
             .and_then(|v| v.as_str());
-        let instance_id = entry.raw_properties
+        let instance_id = entry
+            .raw_properties
             .get("InstanceId")
             .and_then(|v| v.as_str());
-        
+
         // Find related EC2 instances and EBS volumes
         for resource in all_resources {
             match resource.resource_type.as_str() {
@@ -393,7 +399,7 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
                 _ => {}
             }
         }
-        
+
         relationships
     }
 
@@ -401,4 +407,3 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
         "AWS::EC2::VolumeAttachment"
     }
 }
-

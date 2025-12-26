@@ -1,4 +1,4 @@
-use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
+use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,25 +32,22 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
-            .fetch_tags_for_resource("AWS::ElasticLoadBalancing::LoadBalancer", &lb_name, account, region)
-
-
+            .fetch_tags_for_resource(
+                "AWS::ElasticLoadBalancing::LoadBalancer",
+                &lb_name,
+                account,
+                region,
+            )
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::ElasticLoadBalancing::LoadBalancer {}: {}", lb_name, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::ElasticLoadBalancing::LoadBalancer {}: {}",
+                    lb_name,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -150,4 +147,3 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
         "AWS::ElasticLoadBalancing::LoadBalancer"
     }
 }
-

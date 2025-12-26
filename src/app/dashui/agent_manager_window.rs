@@ -16,11 +16,12 @@ use super::agent_log_window::AgentLogWindow;
 use super::window_focus::FocusableWindow;
 use crate::app::agent_framework::{
     get_agent_creation_receiver, get_ui_event_receiver, render_agent_chat, AgentCreationRequest,
-    AgentId, AgentInstance, AgentType, AgentUIEvent,
+    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, StoodLogLevel,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
 use eframe::egui;
 use egui::{Context, RichText, ScrollArea, Ui};
+use egui_commonmark::CommonMarkCache;
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -122,14 +123,26 @@ pub struct AgentManagerWindow {
     agents: HashMap<AgentId, AgentInstance>,
     input_text: String,
 
-    // Stood library debug traces toggle
-    stood_traces_enabled: bool,
+    // Model selection for new agents
+    selected_model: AgentModel,
+
+    // Stood library log level for all agents
+    stood_log_level: StoodLogLevel,
 
     // UI event receiver for agent framework events
     ui_event_receiver: Arc<Mutex<Receiver<AgentUIEvent>>>,
 
     // Agent creation request receiver
     agent_creation_receiver: Arc<Mutex<Receiver<AgentCreationRequest>>>,
+
+    // Markdown rendering cache (shared across all agents)
+    markdown_cache: CommonMarkCache,
+}
+
+impl Default for AgentManagerWindow {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentManagerWindow {
@@ -145,9 +158,11 @@ impl AgentManagerWindow {
             agent_log_window: AgentLogWindow::new(),
             agents: HashMap::new(),
             input_text: String::new(),
-            stood_traces_enabled: true, // Default: enabled (matches main.rs init_logging)
+            selected_model: AgentModel::default(),
+            stood_log_level: StoodLogLevel::default(), // Default: Debug level
             ui_event_receiver: get_ui_event_receiver(), // UI event channel
             agent_creation_receiver: get_agent_creation_receiver(), // Agent creation channel
+            markdown_cache: CommonMarkCache::default(),
         }
     }
 
@@ -224,20 +239,71 @@ impl AgentManagerWindow {
                 strip.cell(|ui| {
                     ui.heading(RichText::new("Agents").size(14.0));
 
-                    // Stood traces toggle checkbox
+                    // Stood log level dropdown
                     ui.horizontal(|ui| {
-                        if ui
-                            .checkbox(&mut self.stood_traces_enabled, "Stood Debug")
-                            .on_hover_text("Toggle stood library debug traces in application log")
-                            .changed()
-                        {
-                            // Call toggle function from main.rs
-                            crate::toggle_stood_traces(self.stood_traces_enabled);
-                            tracing::info!("Stood traces toggled: {}", self.stood_traces_enabled);
-                        }
+                        ui.label("Logs:");
+                        let current_level = self.stood_log_level;
+                        egui::ComboBox::from_id_salt("stood_log_level")
+                            .selected_text(current_level.display_name())
+                            .width(60.0)
+                            .show_ui(ui, |ui| {
+                                for level in StoodLogLevel::all() {
+                                    if ui
+                                        .selectable_label(
+                                            self.stood_log_level == *level,
+                                            level.display_name(),
+                                        )
+                                        .clicked()
+                                        && self.stood_log_level != *level
+                                    {
+                                        let old_level = self.stood_log_level;
+                                        self.stood_log_level = *level;
+
+                                        // Update global tracing filter
+                                        crate::set_stood_log_level(*level);
+
+                                        // Update all agents with new log level
+                                        for agent in self.agents.values_mut() {
+                                            agent.set_stood_log_level(*level);
+                                        }
+
+                                        tracing::info!(
+                                            old_level = %old_level.display_name(),
+                                            new_level = %level.display_name(),
+                                            "Stood log level changed"
+                                        );
+                                    }
+                                }
+                            });
                     });
 
                     ui.add_space(5.0);
+
+                    // Model selection dropdown
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("model_selector")
+                            .selected_text(self.selected_model.display_name())
+                            .show_ui(ui, |ui| {
+                                for model in AgentModel::all_models() {
+                                    ui.selectable_value(
+                                        &mut self.selected_model,
+                                        *model,
+                                        model.display_name(),
+                                    );
+                                }
+                            });
+                    });
+
+                    ui.add_space(5.0);
+
+                    // [+] New Agent button
+                    if ui.button("+ New Agent").clicked() {
+                        log::info!("New Agent button clicked");
+                        self.create_new_agent();
+                    }
+
+                    // Separator after New Agent button
+                    ui.separator();
 
                     // Collect agent info
                     let agent_list: Vec<(AgentId, String)> = self
@@ -248,13 +314,9 @@ impl AgentManagerWindow {
 
                     let mut clicked_agent_id: Option<AgentId> = None;
 
-                    // Agent list scroll area - takes remaining vertical space automatically
-                    // Reserve space for [+] button at bottom
-                    let scroll_height = ui.available_height() - 40.0;
-
+                    // Agent list scroll area - takes remaining vertical space
                     ScrollArea::vertical()
                         .id_salt("agent_list_scroll")
-                        .max_height(scroll_height)
                         .show(ui, |ui| {
                             if agent_list.is_empty() {
                                 ui.label(RichText::new("No agents").weak());
@@ -275,12 +337,6 @@ impl AgentManagerWindow {
                     // Handle selection after scroll area
                     if let Some(agent_id) = clicked_agent_id {
                         self.select_agent(agent_id);
-                    }
-
-                    // [+] New Agent button at bottom
-                    if ui.button("+ New Agent").clicked() {
-                        log::info!("New Agent button clicked");
-                        self.create_new_agent();
                     }
                 });
 
@@ -303,12 +359,17 @@ impl AgentManagerWindow {
         let agent_count = self.agents.len();
         let default_name = format!("Agent {}", agent_count + 1);
 
-        log::info!("Creating new agent: {} (current agent count: {})", default_name, agent_count);
+        log::info!(
+            "Creating new agent: {} with model {} (current agent count: {})",
+            default_name,
+            self.selected_model,
+            agent_count
+        );
 
         let metadata = AgentMetadata {
             name: default_name.clone(),
             description: "New agent".to_string(),
-            model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(), // Claude Sonnet 3.5 (same as V1)
+            model: self.selected_model,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -318,10 +379,13 @@ impl AgentManagerWindow {
         let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
         let agent_id = agent.id();
 
+        // Set the current stood log level on new agent
+        agent.set_stood_log_level(self.stood_log_level);
+
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
             // Extract result first to drop lock before using self
-            let init_result = agent.initialize(&mut *aws_identity.lock().unwrap());
+            let init_result = agent.initialize(&mut aws_identity.lock().unwrap());
             match init_result {
                 Ok(_) => {
                     log::info!(
@@ -454,8 +518,7 @@ impl AgentManagerWindow {
                 Err(error) => {
                     // Send error response
                     if let Some(response_sender) = take_response_channel(request.request_id) {
-                        let response =
-                            AgentCreationResponse::error(AgentId::new(), error.clone());
+                        let response = AgentCreationResponse::error(AgentId::new(), error.clone());
                         if let Err(e) = response_sender.send(response) {
                             tracing::error!(
                                 target: "agent::creation",
@@ -481,16 +544,13 @@ impl AgentManagerWindow {
         use crate::app::agent_framework::AgentMetadata;
         use chrono::Utc;
 
-        // Verify parent agent exists
-        if !self.agents.contains_key(&request.parent_id) {
-            return Err(format!("Parent agent {} not found", request.parent_id));
-        }
-
-        // Get parent agent's model ID
-        let parent_model_id = {
-            let parent_agent = self.agents.get(&request.parent_id)
+        // Verify parent agent exists and get its model
+        let parent_model = {
+            let parent_agent = self
+                .agents
+                .get(&request.parent_id)
                 .ok_or_else(|| format!("Parent agent {} not found", request.parent_id))?;
-            parent_agent.metadata().model_id.clone()
+            parent_agent.metadata().model
         };
 
         // Generate agent name
@@ -501,18 +561,20 @@ impl AgentManagerWindow {
             .count();
         let default_name = format!("Task Worker {}", worker_count + 1);
 
-        // Create metadata with parent's model
+        // Create metadata (inherit parent's model)
         let metadata = AgentMetadata {
             name: default_name.clone(),
             description: format!("Task: {}", request.task_description),
-            model_id: parent_model_id,
+            model: parent_model,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
         // Get parent agent's logger to share with worker
         let parent_logger = {
-            let parent_agent = self.agents.get(&request.parent_id)
+            let parent_agent = self
+                .agents
+                .get(&request.parent_id)
                 .ok_or_else(|| format!("Parent agent {} not found", request.parent_id))?;
             parent_agent.logger().clone()
         };
@@ -521,16 +583,15 @@ impl AgentManagerWindow {
         let agent_type = AgentType::TaskWorker {
             parent_id: request.parent_id,
         };
-        let mut agent = AgentInstance::new_with_parent_logger(
-            metadata,
-            agent_type,
-            parent_logger,
-        );
+        let mut agent = AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger);
         let agent_id = agent.id();
+
+        // Set the current stood log level on new worker agent
+        agent.set_stood_log_level(self.stood_log_level);
 
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
-            let init_result = agent.initialize(&mut *aws_identity.lock().unwrap());
+            let init_result = agent.initialize(&mut aws_identity.lock().unwrap());
             if let Err(e) = init_result {
                 return Err(format!("Failed to initialize agent: {}", e));
             }
@@ -568,10 +629,8 @@ impl AgentManagerWindow {
         self.agents
             .iter()
             .filter_map(|(id, agent)| {
-                if matches!(
-                    agent.agent_type(),
-                    AgentType::TaskWorker { .. }
-                ) && agent.status() == &AgentStatus::Running
+                if matches!(agent.agent_type(), AgentType::TaskWorker { .. })
+                    && agent.status() == &AgentStatus::Running
                 {
                     Some(*id)
                 } else {
@@ -766,7 +825,7 @@ impl AgentManagerWindow {
         };
 
         // Render UI and handle message sending/polling in a scope to release borrow
-        let (terminate_clicked, log_clicked, _clear_clicked, _model_changed_to) = {
+        let (terminate_clicked, log_clicked, _clear_clicked) = {
             // Get the agent to display
             let agent = match self.agents.get_mut(&display_agent_id) {
                 Some(agent) => agent,
@@ -776,9 +835,9 @@ impl AgentManagerWindow {
                 }
             };
 
-            // Render thechat UI and check if message should be sent, log clicked, clear clicked, or agent terminated
-            let (should_send, log_clicked, clear_clicked, terminate_clicked, model_changed_to) =
-                render_agent_chat(ui, agent, &mut self.input_text);
+            // Render the chat UI and check if message should be sent, log clicked, clear clicked, or agent terminated
+            let (should_send, log_clicked, clear_clicked, terminate_clicked) =
+                render_agent_chat(ui, agent, &mut self.input_text, &mut self.markdown_cache);
 
             // Send message if requested
             if should_send {
@@ -790,38 +849,13 @@ impl AgentManagerWindow {
                 agent.send_message(message);
             }
 
-            // Handle model change if requested
-            if let Some(new_model_id) = &model_changed_to {
-                agent.change_model(new_model_id.clone());
-                // Clear conversation when changing models (context is lost)
-                agent.clear_conversation();
-                log::info!(
-                    "Agent {} model changed to {} (conversation cleared)",
-                    agent_id,
-                    new_model_id
-                );
-
-                // Re-initialize agent with new model if AWS identity available
-                if let Some(aws_identity) = &self.aws_identity {
-                    if let Err(e) = agent.initialize(&mut *aws_identity.lock().unwrap()) {
-                        log::error!("Failed to re-initialize agent with new model: {}", e);
-                    }
-                }
-            }
-
             // Handle clear conversation if requested
             if clear_clicked {
                 agent.clear_conversation();
                 log::info!("Agent {} conversation cleared", agent_id);
             }
 
-            // All controls are now inside render_agent_chat to prevent window growth
-            (
-                terminate_clicked,
-                log_clicked,
-                clear_clicked,
-                model_changed_to,
-            )
+            (terminate_clicked, log_clicked, clear_clicked)
         }; // agent borrow released here
 
         // Handle log button click outside the borrow scope
@@ -891,11 +925,17 @@ impl AgentManagerWindow {
 
                         // Check if this is a completed worker agent
                         if let AgentType::TaskWorker { parent_id } = agent.agent_type() {
-                            if last_msg.role == crate::app::agent_framework::ConversationRole::Assistant {
+                            if last_msg.role
+                                == crate::app::agent_framework::ConversationRole::Assistant
+                            {
                                 // Worker has completed - check if it's an error or success
                                 let result = if last_msg.content.starts_with("Error: ") {
                                     // Strip "Error: " prefix and send as error
-                                    Err(last_msg.content.strip_prefix("Error: ").unwrap_or(&last_msg.content).to_string())
+                                    Err(last_msg
+                                        .content
+                                        .strip_prefix("Error: ")
+                                        .unwrap_or(&last_msg.content)
+                                        .to_string())
                                 } else {
                                     // Success - send raw content
                                     Ok(last_msg.content.clone())

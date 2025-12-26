@@ -1,15 +1,51 @@
-//! Standalone Agent Simple Chat UI
+//! Agent Chat UI
 //!
-//! Simplified UI rendering for standalone agent with lessons learned:
-//! - Height-constrained scroll area to prevent window auto-growth
-//! - Per-agent scroll position tracking
-//! - Lock-free rendering with data collection pattern
-//! - Fixed input area at bottom
+//! Renders the agent conversation interface with markdown support for assistant responses.
+//!
+//! ## Features
+//!
+//! - **Markdown Rendering**: Assistant messages are automatically rendered as markdown
+//!   when they contain code blocks, headers, lists, bold text, or links
+//! - **Syntax Highlighting**: Code blocks use language-aware coloring via syntect
+//! - **Height-constrained Layout**: Scroll area prevents window auto-growth
+//! - **Per-agent Scroll Position**: Each agent maintains independent scroll state
+//! - **Lock-free Rendering**: Data collected before rendering to avoid UI blocking
+//! - **Fixed Input Area**: Input box stays at bottom regardless of content size
+//!
+//! ## Message Display
+//!
+//! - User messages: Plain text with ">" prefix and theme-adaptive strong color
+//! - Assistant messages: Markdown-rendered if detected, otherwise plain text
 
 use egui::{RichText, ScrollArea, Ui};
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
 use crate::app::agent_framework::agent_instance::AgentInstance;
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationRole};
+
+/// Check if content appears to be markdown
+///
+/// Uses simple heuristics - looks for common markdown patterns:
+/// - Headers (# ## ###)
+/// - Code blocks (```)
+/// - Lists (* - 1.)
+/// - Bold/italic (**text**)
+/// - Links [text](url)
+fn looks_like_markdown(content: &str) -> bool {
+    let patterns = [
+        "```",    // Code blocks
+        "\n# ",   // H1 header
+        "\n## ",  // H2 header
+        "\n### ", // H3 header
+        "\n* ",   // Unordered list
+        "\n- ",   // Unordered list
+        "\n1. ",  // Ordered list
+        "**",     // Bold
+        "](http", // Links
+    ];
+
+    patterns.iter().any(|p| content.contains(p))
+}
 
 /// Render the agent chat interface
 ///
@@ -19,23 +55,22 @@ use crate::app::agent_framework::conversation::{ConversationMessage, Conversatio
 /// - Maintains per-agent scroll position
 /// - Fixed input area at bottom
 ///
-/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, model_changed_to)` tuple
+/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked)` tuple
 pub fn render_agent_chat(
     ui: &mut Ui,
     agent: &mut AgentInstance,
     input_text: &mut String,
-) -> (bool, bool, bool, bool, Option<String>) {
+    markdown_cache: &mut CommonMarkCache,
+) -> (bool, bool, bool, bool) {
     // Collect data before rendering to avoid holding locks during UI rendering
     let is_processing = agent.is_processing();
     let status_message = agent.status_message().map(|s| s.to_string());
     let messages: Vec<ConversationMessage> = agent.messages().iter().cloned().collect();
     let agent_id = agent.id();
 
-    // Header removed per user request - agent name not needed here
-
-    // Calculate max height: reserve space for status + input + model dropdown + buttons + separators
-    // Status: ~20px, Input (3 lines): ~70px, Model dropdown: ~30px, Buttons: ~30px, Separators: ~30px = ~180px total
-    let conversation_max_height = ui.available_height() - 180.0;
+    // Calculate max height: reserve space for status + input + buttons + separators
+    // Status: ~20px, Input (3 lines): ~70px, Buttons: ~30px, Separators: ~30px = ~150px total
+    let conversation_max_height = ui.available_height() - 150.0;
 
     // Scrollable conversation area with critical constraints + auto-scroll
     ScrollArea::vertical()
@@ -46,8 +81,7 @@ pub fn render_agent_chat(
         .show(ui, |ui| {
             // No placeholder message - just show empty space when no messages
             for message in &messages {
-                //ui.add_space(6.0);
-                render_message(ui, message);
+                render_message(ui, message, markdown_cache);
                 ui.add_space(1.0);
             }
         });
@@ -82,11 +116,13 @@ pub fn render_agent_chat(
 
         // Enter key to send message (without Shift) while input has focus
         // Shift+Enter adds a newline (default TextEdit behavior)
-        if had_focus && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) {
-            if !input_text.is_empty() && !is_processing {
-                should_send = true;
-                keep_focus = true; // Keep focus after sending
-            }
+        if had_focus
+            && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift)
+            && !input_text.is_empty()
+            && !is_processing
+        {
+            should_send = true;
+            keep_focus = true; // Keep focus after sending
         }
 
         // Send button
@@ -107,48 +143,8 @@ pub fn render_agent_chat(
         }
     });
 
-    // Controls section (included here to prevent window growth)
+    // Controls section
     ui.add_space(10.0);
-
-    // Model selection dropdown (editable for TaskManager, read-only for workers)
-    let mut model_changed_to = None;
-
-    let available_models = crate::app::agent_framework::ModelConfig::default_models();
-    let current_model_id = &agent.metadata().model_id;
-    let current_display_name = available_models
-        .iter()
-        .find(|m| &m.model_id == current_model_id)
-        .map(|m| m.display_name.as_str())
-        .unwrap_or("Unknown Model");
-
-    // Only show model selector for TaskManager agents
-    if agent.agent_type().is_task_manager() {
-        ui.horizontal(|ui| {
-            ui.label("Model:");
-
-            egui::ComboBox::from_id_salt(("model_selector", agent_id))
-                .selected_text(current_display_name)
-                .show_ui(ui, |ui| {
-                    for model in &available_models {
-                        if ui
-                            .selectable_label(&model.model_id == current_model_id, &model.display_name)
-                            .clicked()
-                        {
-                            model_changed_to = Some(model.model_id.clone());
-                        }
-                    }
-                });
-        });
-    } else {
-        // For workers, show model read-only
-        ui.horizontal(|ui| {
-            ui.label("Model:");
-            ui.label(current_display_name)
-                .on_hover_text("Worker model inherited from parent manager");
-        });
-    }
-
-    ui.add_space(5.0);
 
     // Action buttons
     let (log_clicked, clear_clicked, terminate_clicked) = ui
@@ -170,17 +166,15 @@ pub fn render_agent_chat(
         })
         .inner;
 
-    (
-        should_send,
-        log_clicked,
-        clear_clicked,
-        terminate_clicked,
-        model_changed_to,
-    )
+    (should_send, log_clicked, clear_clicked, terminate_clicked)
 }
 
-/// Render a single message (simple text only, no trees/JSON)
-fn render_message(ui: &mut Ui, message: &ConversationMessage) {
+/// Render a single message
+///
+/// User messages are rendered as plain text with a ">" prefix.
+/// Assistant messages are rendered as markdown if they contain markdown patterns,
+/// otherwise as plain text.
+fn render_message(ui: &mut Ui, message: &ConversationMessage, cache: &mut CommonMarkCache) {
     match message.role {
         ConversationRole::User => {
             // User message - with visual anchor, theme-adaptive color
@@ -189,13 +183,17 @@ fn render_message(ui: &mut Ui, message: &ConversationMessage) {
             ui.label(
                 RichText::new(format!("> {}", message.content))
                     .color(strong_color) // Theme-adaptive strong color
-                    .size(17.0) // 10% smaller than previous 20.0
-                    .font(egui::FontId::proportional(17.0)), // Non-monospace font
+                    .size(21.0)
+                    .font(egui::FontId::proportional(21.0)),
             );
         }
         ConversationRole::Assistant => {
-            // Assistant message - normal text with wrapping
-            ui.label(&message.content);
+            // Assistant message - render as markdown if detected, otherwise plain text
+            if looks_like_markdown(&message.content) {
+                CommonMarkViewer::new().show(ui, cache, &message.content);
+            } else {
+                ui.label(&message.content);
+            }
         }
     }
 }

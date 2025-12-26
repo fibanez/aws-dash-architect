@@ -25,7 +25,7 @@ use crate::app::agent_framework::{AgentId, AgentMetadata, AgentStatus, AgentType
 
 // Thread-local storage for current agent logger (used by tools to log to per-agent logs)
 thread_local! {
-    static CURRENT_AGENT_LOGGER: RefCell<Option<Arc<AgentLogger>>> = RefCell::new(None);
+    static CURRENT_AGENT_LOGGER: RefCell<Option<Arc<AgentLogger>>> = const { RefCell::new(None) };
 }
 
 /// Set the current agent logger for this thread (used by tools like execute_javascript)
@@ -155,9 +155,8 @@ impl AgentLogger {
     /// Log agent creation event
     pub fn log_agent_created(&self, agent_type: &AgentType, metadata: &AgentMetadata) {
         self.write_event(&format!(
-            "{} 🚀 AGENT_CREATED\n    Model: {}\n    Description: {}",
+            "{} 🚀 AGENT_CREATED\n    Description: {}",
             Self::timestamp_with_type(agent_type),
-            metadata.model_id,
             metadata.description
         ));
     }
@@ -265,7 +264,13 @@ impl AgentLogger {
     }
 
     /// Log tool execution completion
-    pub fn log_tool_complete(&self, agent_type: &AgentType, tool_name: &str, output: Option<&Value>, duration: Duration) {
+    pub fn log_tool_complete(
+        &self,
+        agent_type: &AgentType,
+        tool_name: &str,
+        output: Option<&Value>,
+        duration: Duration,
+    ) {
         let formatted_output = if let Some(out) = output {
             serde_json::to_string_pretty(out).unwrap_or_else(|_| "Invalid JSON".to_string())
         } else {
@@ -282,7 +287,13 @@ impl AgentLogger {
     }
 
     /// Log tool execution failure
-    pub fn log_tool_failed(&self, agent_type: &AgentType, tool_name: &str, error: &str, duration: Duration) {
+    pub fn log_tool_failed(
+        &self,
+        agent_type: &AgentType,
+        tool_name: &str,
+        error: &str,
+        duration: Duration,
+    ) {
         self.write_event(&format!(
             "{} ❌ TOOL_FAILED\n    Tool Name: {}\n    Duration: {:.2}s\n    Error: {}",
             Self::timestamp_with_type(agent_type),
@@ -314,10 +325,51 @@ impl AgentLogger {
     /// Log model change
     pub fn log_model_changed(&self, agent_type: &AgentType, old_model: &str, new_model: &str) {
         self.write_event(&format!(
-            "{} 🔄 MODEL_CHANGED\n    Old Model: {}\n    New Model: {}",
+            "{} MODEL_CHANGED\n    Old Model: {}\n    New Model: {}",
             Self::timestamp_with_type(agent_type),
             old_model,
             new_model
+        ));
+    }
+
+    /// Log a stood library trace message
+    ///
+    /// Used by the custom tracing layer to capture stood::* events
+    /// directly to the per-agent log file.
+    ///
+    /// # Arguments
+    /// * `level` - The tracing level (TRACE, DEBUG, INFO, WARN, ERROR)
+    /// * `target` - The tracing target (e.g., "stood::agent::execution")
+    /// * `message` - The formatted trace message
+    pub fn log_stood_trace(&self, level: &str, target: &str, message: &str) {
+        // Use a more compact format for stood traces to avoid excessive verbosity
+        let timestamp = Utc::now().format("%H:%M:%S%.3f").to_string();
+        let formatted = format!(
+            "[{}] [STOOD] [{}] {}: {}",
+            timestamp, level, target, message
+        );
+
+        // Write directly without the extra newline prefix (stood traces can be frequent)
+        if let Ok(mut writer) = self.file_writer.lock() {
+            if let Err(e) = writeln!(writer, "{}", formatted) {
+                error!("Failed to write stood trace to agent log: {}", e);
+            }
+            // No flush for stood traces - they're frequent and buffering is fine
+        }
+    }
+
+    /// Log stood log level change
+    pub fn log_stood_level_changed(
+        &self,
+        agent_type: &AgentType,
+        old_level: &str,
+        new_level: &str,
+    ) {
+        self.write_event(&format!(
+            "{} STOOD_LOG_LEVEL_CHANGED\n    Old Level: {}\n    New Level: {}",
+            Self::timestamp_with_type(agent_type),
+            old_level,
+            new_level
         ));
     }
 
@@ -337,7 +389,7 @@ impl AgentLogger {
                     let _ = writer.flush();
                 }
                 return;
-            },
+            }
             AgentStatus::Cancelled => "Cancelled by User",
             _ => "Unknown",
         };
@@ -396,7 +448,11 @@ impl AgentLogger {
 
     /// Get timestamp with agent type label
     fn timestamp_with_type(agent_type: &AgentType) -> String {
-        format!("[{}] [{}]", Self::timestamp(), Self::agent_type_label(agent_type))
+        format!(
+            "[{}] [{}]",
+            Self::timestamp(),
+            Self::agent_type_label(agent_type)
+        )
     }
 
     /// Prettify JSON for display - specifically handles JavaScript code with escaped newlines
@@ -413,10 +469,7 @@ impl AgentLogger {
             if let Some(code_str) = json_value.get("code").and_then(|v| v.as_str()) {
                 // Found JavaScript code - replace escaped newlines with actual newlines
                 // The code is already unescaped by serde_json, so we just need to format it nicely
-                return format!(
-                    "{{\n  \"code\": \"\"\"\n{}\n  \"\"\"\n}}",
-                    code_str
-                );
+                return format!("{{\n  \"code\": \"\"\"\n{}\n  \"\"\"\n}}", code_str);
             }
         }
 
@@ -518,11 +571,7 @@ impl AgentLogger {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to delete old agent log {}: {}",
-                        path.display(),
-                        e
-                    );
+                    tracing::warn!("Failed to delete old agent log {}: {}", path.display(), e);
                 }
             }
         }
@@ -582,11 +631,7 @@ impl AgentLogger {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to delete old debug log {}: {}",
-                        path.display(),
-                        e
-                    );
+                    tracing::warn!("Failed to delete old debug log {}: {}", path.display(), e);
                 }
             }
         }
@@ -603,8 +648,8 @@ mod tests {
     fn test_agent_logger_creation() {
         let agent_id = AgentId::new();
         let agent_type = AgentType::TaskManager;
-        let logger =
-            AgentLogger::new(agent_id, "Test Agent".to_string(), &agent_type).expect("Failed to create logger");
+        let logger = AgentLogger::new(agent_id, "Test Agent".to_string(), &agent_type)
+            .expect("Failed to create logger");
 
         // Verify log path exists
         assert!(logger.log_path().exists());

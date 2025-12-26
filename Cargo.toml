@@ -41,6 +41,7 @@ egui_extras = { version = "=0.32.3", features = ["image", "svg"] }
 egui_code_editor = "0.2.17"
 egui_json_tree = "0.12"
 egui_dnd = "0.13"  # Drag-and-drop for tag hierarchy builder
+egui_commonmark = { version = "0.21", features = ["better_syntax_highlighting"] }
 image = "0.25.4"
 
 

@@ -97,10 +97,7 @@ pub fn send_worker_completion(completion: WorkerCompletion) {
 ///
 /// * `Ok(response)` - Worker completed successfully with response text
 /// * `Err(error)` - Worker failed with error message or timeout
-pub fn wait_for_worker_completion(
-    worker_id: AgentId,
-    timeout: Duration,
-) -> Result<String, String> {
+pub fn wait_for_worker_completion(worker_id: AgentId, timeout: Duration) -> Result<String, String> {
     tracing::info!(
         target: "agent::worker_completion",
         worker_id = %worker_id,
@@ -117,16 +114,12 @@ pub fn wait_for_worker_completion(
 
         // Wait for notification or timeout
         let (mut guard, timeout_result) = condvar
-            .wait_timeout_while(
-                registry,
-                timeout,
-                |reg| {
-                    // Keep waiting while result is None
-                    reg.get(&worker_id)
-                        .and_then(|(result, _)| result.as_ref())
-                        .is_none()
-                },
-            )
+            .wait_timeout_while(registry, timeout, |reg| {
+                // Keep waiting while result is None
+                reg.get(&worker_id)
+                    .and_then(|(result, _)| result.as_ref())
+                    .is_none()
+            })
             .unwrap();
 
         // Check if we timed out

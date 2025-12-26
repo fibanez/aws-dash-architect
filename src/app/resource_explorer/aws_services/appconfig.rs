@@ -1,9 +1,9 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Result, Context};
+use super::super::credentials::CredentialCoordinator;
+use anyhow::{Context, Result};
 use aws_sdk_appconfig as appconfig;
 use std::sync::Arc;
-use super::super::credentials::CredentialCoordinator;
 
 pub struct AppConfigService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -22,10 +22,16 @@ impl AppConfigService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
         let mut applications = Vec::new();
@@ -61,10 +67,16 @@ impl AppConfigService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
         let mut environments = Vec::new();
@@ -108,10 +120,16 @@ impl AppConfigService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
         let mut configuration_profiles = Vec::new();
@@ -156,10 +174,16 @@ impl AppConfigService {
         region: &str,
         application_id: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
 
@@ -168,7 +192,12 @@ impl AppConfigService {
             .application_id(application_id)
             .send()
             .await
-            .with_context(|| format!("Failed to describe AppConfig application: {}", application_id))?;
+            .with_context(|| {
+                format!(
+                    "Failed to describe AppConfig application: {}",
+                    application_id
+                )
+            })?;
 
         Ok(self.application_detail_to_json(&response))
     }
@@ -180,17 +209,26 @@ impl AppConfigService {
         region: &str,
         environment_id: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
 
         // Parse environment ID (format: app_id:env_id)
         let parts: Vec<&str> = environment_id.split(':').collect();
         if parts.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid environment ID format: {}", environment_id));
+            return Err(anyhow::anyhow!(
+                "Invalid environment ID format: {}",
+                environment_id
+            ));
         }
 
         let app_id = parts[0];
@@ -202,7 +240,12 @@ impl AppConfigService {
             .environment_id(env_id)
             .send()
             .await
-            .with_context(|| format!("Failed to describe AppConfig environment: {}", environment_id))?;
+            .with_context(|| {
+                format!(
+                    "Failed to describe AppConfig environment: {}",
+                    environment_id
+                )
+            })?;
 
         Ok(self.environment_detail_to_json(&response, app_id))
     }
@@ -214,17 +257,26 @@ impl AppConfigService {
         region: &str,
         profile_id: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account, region
+                )
+            })?;
 
         let client = appconfig::Client::new(&aws_config);
 
         // Parse profile ID (format: app_id:profile_id)
         let parts: Vec<&str> = profile_id.split(':').collect();
         if parts.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid configuration profile ID format: {}", profile_id));
+            return Err(anyhow::anyhow!(
+                "Invalid configuration profile ID format: {}",
+                profile_id
+            ));
         }
 
         let app_id = parts[0];
@@ -236,17 +288,28 @@ impl AppConfigService {
             .configuration_profile_id(config_profile_id)
             .send()
             .await
-            .with_context(|| format!("Failed to describe AppConfig configuration profile: {}", profile_id))?;
+            .with_context(|| {
+                format!(
+                    "Failed to describe AppConfig configuration profile: {}",
+                    profile_id
+                )
+            })?;
 
         Ok(self.configuration_profile_detail_to_json(&response, app_id))
     }
 
-    fn application_to_json(&self, application: &appconfig::types::Application) -> serde_json::Value {
+    fn application_to_json(
+        &self,
+        application: &appconfig::types::Application,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &application.id {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(id.clone()));
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(id.clone()),
+            );
         }
 
         if let Some(name) = &application.name {
@@ -254,61 +317,102 @@ impl AppConfigService {
         }
 
         if let Some(description) = &application.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn environment_to_json(&self, environment: &appconfig::types::Environment, application_id: &str) -> serde_json::Value {
+    fn environment_to_json(
+        &self,
+        environment: &appconfig::types::Environment,
+        application_id: &str,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &environment.id {
             let env_id = format!("{}:{}", application_id, id);
-            json.insert("EnvironmentId".to_string(), serde_json::Value::String(env_id.clone()));
+            json.insert(
+                "EnvironmentId".to_string(),
+                serde_json::Value::String(env_id.clone()),
+            );
             json.insert("ResourceId".to_string(), serde_json::Value::String(env_id));
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
         }
 
-        json.insert("ApplicationId".to_string(), serde_json::Value::String(application_id.to_string()));
+        json.insert(
+            "ApplicationId".to_string(),
+            serde_json::Value::String(application_id.to_string()),
+        );
 
         if let Some(name) = &environment.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(description) = &environment.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(state) = &environment.state {
-            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn configuration_profile_to_json(&self, profile: &appconfig::types::ConfigurationProfileSummary, application_id: &str) -> serde_json::Value {
+    fn configuration_profile_to_json(
+        &self,
+        profile: &appconfig::types::ConfigurationProfileSummary,
+        application_id: &str,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &profile.id {
             let profile_id = format!("{}:{}", application_id, id);
-            json.insert("ConfigurationProfileId".to_string(), serde_json::Value::String(profile_id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(profile_id));
+            json.insert(
+                "ConfigurationProfileId".to_string(),
+                serde_json::Value::String(profile_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(profile_id),
+            );
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
         }
 
-        json.insert("ApplicationId".to_string(), serde_json::Value::String(application_id.to_string()));
+        json.insert(
+            "ApplicationId".to_string(),
+            serde_json::Value::String(application_id.to_string()),
+        );
 
         if let Some(name) = &profile.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(location_uri) = &profile.location_uri {
-            json.insert("LocationUri".to_string(), serde_json::Value::String(location_uri.clone()));
+            json.insert(
+                "LocationUri".to_string(),
+                serde_json::Value::String(location_uri.clone()),
+            );
         }
 
         if let Some(validator_types) = &profile.validator_types {
@@ -316,24 +420,39 @@ impl AppConfigService {
                 .iter()
                 .map(|vt| serde_json::Value::String(vt.as_str().to_string()))
                 .collect();
-            json.insert("ValidatorTypes".to_string(), serde_json::Value::Array(validator_types_json));
+            json.insert(
+                "ValidatorTypes".to_string(),
+                serde_json::Value::Array(validator_types_json),
+            );
         }
 
         if let Some(r#type) = &profile.r#type {
-            json.insert("Type".to_string(), serde_json::Value::String(r#type.clone()));
+            json.insert(
+                "Type".to_string(),
+                serde_json::Value::String(r#type.clone()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn application_detail_to_json(&self, application: &appconfig::operation::get_application::GetApplicationOutput) -> serde_json::Value {
+    fn application_detail_to_json(
+        &self,
+        application: &appconfig::operation::get_application::GetApplicationOutput,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &application.id {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(id.clone()));
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(id.clone()),
+            );
         }
 
         if let Some(name) = &application.name {
@@ -341,88 +460,150 @@ impl AppConfigService {
         }
 
         if let Some(description) = &application.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn environment_detail_to_json(&self, environment: &appconfig::operation::get_environment::GetEnvironmentOutput, application_id: &str) -> serde_json::Value {
+    fn environment_detail_to_json(
+        &self,
+        environment: &appconfig::operation::get_environment::GetEnvironmentOutput,
+        application_id: &str,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &environment.id {
             let env_id = format!("{}:{}", application_id, id);
-            json.insert("EnvironmentId".to_string(), serde_json::Value::String(env_id.clone()));
+            json.insert(
+                "EnvironmentId".to_string(),
+                serde_json::Value::String(env_id.clone()),
+            );
             json.insert("ResourceId".to_string(), serde_json::Value::String(env_id));
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
         }
 
-        json.insert("ApplicationId".to_string(), serde_json::Value::String(application_id.to_string()));
+        json.insert(
+            "ApplicationId".to_string(),
+            serde_json::Value::String(application_id.to_string()),
+        );
 
         if let Some(name) = &environment.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(description) = &environment.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(state) = &environment.state {
-            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
         }
 
         if let Some(_monitors) = &environment.monitors {
-            json.insert("Monitors".to_string(), serde_json::Value::String("TODO: Manual conversion needed".to_string()));
+            json.insert(
+                "Monitors".to_string(),
+                serde_json::Value::String("TODO: Manual conversion needed".to_string()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn configuration_profile_detail_to_json(&self, profile: &appconfig::operation::get_configuration_profile::GetConfigurationProfileOutput, application_id: &str) -> serde_json::Value {
+    fn configuration_profile_detail_to_json(
+        &self,
+        profile: &appconfig::operation::get_configuration_profile::GetConfigurationProfileOutput,
+        application_id: &str,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &profile.id {
             let profile_id = format!("{}:{}", application_id, id);
-            json.insert("ConfigurationProfileId".to_string(), serde_json::Value::String(profile_id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(profile_id));
+            json.insert(
+                "ConfigurationProfileId".to_string(),
+                serde_json::Value::String(profile_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(profile_id),
+            );
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
         }
 
-        json.insert("ApplicationId".to_string(), serde_json::Value::String(application_id.to_string()));
+        json.insert(
+            "ApplicationId".to_string(),
+            serde_json::Value::String(application_id.to_string()),
+        );
 
         if let Some(name) = &profile.name {
             json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(description) = &profile.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(location_uri) = &profile.location_uri {
-            json.insert("LocationUri".to_string(), serde_json::Value::String(location_uri.clone()));
+            json.insert(
+                "LocationUri".to_string(),
+                serde_json::Value::String(location_uri.clone()),
+            );
         }
 
         if let Some(retrieval_role_arn) = &profile.retrieval_role_arn {
-            json.insert("RetrievalRoleArn".to_string(), serde_json::Value::String(retrieval_role_arn.clone()));
+            json.insert(
+                "RetrievalRoleArn".to_string(),
+                serde_json::Value::String(retrieval_role_arn.clone()),
+            );
         }
 
         if let Some(_validators) = &profile.validators {
-            json.insert("Validators".to_string(), serde_json::Value::String("TODO: Manual conversion needed".to_string()));
+            json.insert(
+                "Validators".to_string(),
+                serde_json::Value::String("TODO: Manual conversion needed".to_string()),
+            );
         }
 
         if let Some(r#type) = &profile.r#type {
-            json.insert("Type".to_string(), serde_json::Value::String(r#type.clone()));
+            json.insert(
+                "Type".to_string(),
+                serde_json::Value::String(r#type.clone()),
+            );
         }
 
         if let Some(kms_key_identifier) = &profile.kms_key_identifier {
-            json.insert("KmsKeyIdentifier".to_string(), serde_json::Value::String(kms_key_identifier.clone()));
+            json.insert(
+                "KmsKeyIdentifier".to_string(),
+                serde_json::Value::String(kms_key_identifier.clone()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }

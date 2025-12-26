@@ -36,25 +36,17 @@ impl AsyncResourceNormalizer for WafV2WebAclNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::WAFv2::WebACL", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::WAFv2::WebACL {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::WAFv2::WebACL {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -99,4 +91,3 @@ impl AsyncResourceNormalizer for WafV2WebAclNormalizer {
         "AWS::WAFv2::WebACL"
     }
 }
-

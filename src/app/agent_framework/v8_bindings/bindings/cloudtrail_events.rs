@@ -8,7 +8,9 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::app::data_plane::cloudtrail_events::{CloudTrailEventsClient, LookupAttribute, LookupAttributeKey, LookupOptions};
+use crate::app::data_plane::cloudtrail_events::{
+    CloudTrailEventsClient, LookupAttribute, LookupAttributeKey, LookupOptions,
+};
 
 /// JavaScript lookup attribute
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,9 +99,7 @@ pub struct CloudTrailEventsResult {
 }
 
 /// Register CloudTrail Events functions into V8 context
-pub fn register(
-    scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>,
-) -> Result<()> {
+pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
 
     // Register getCloudTrailEvents() function
@@ -168,11 +168,8 @@ fn get_cloudtrail_events_callback(
     let result = match execute_lookup(lookup_args) {
         Ok(result) => result,
         Err(e) => {
-            let msg = v8::String::new(
-                scope,
-                &format!("CloudTrail events lookup failed: {}", e),
-            )
-            .unwrap();
+            let msg =
+                v8::String::new(scope, &format!("CloudTrail events lookup failed: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -183,11 +180,8 @@ fn get_cloudtrail_events_callback(
     let result_json = match serde_json::to_string(&result) {
         Ok(json) => json,
         Err(e) => {
-            let msg = v8::String::new(
-                scope,
-                &format!("Failed to serialize lookup result: {}", e),
-            )
-            .unwrap();
+            let msg = v8::String::new(scope, &format!("Failed to serialize lookup result: {}", e))
+                .unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -195,10 +189,7 @@ fn get_cloudtrail_events_callback(
     };
 
     // Step 6: Parse JSON string back to V8 value and return
-    let result_value = match v8::json::parse(
-        scope,
-        v8::String::new(scope, &result_json).unwrap().into(),
-    ) {
+    let result_value = match v8::json::parse(scope, v8::String::new(scope, &result_json).unwrap()) {
         Some(val) => val,
         None => {
             let msg = v8::String::new(scope, "Failed to parse result JSON").unwrap();
@@ -215,9 +206,8 @@ fn get_cloudtrail_events_callback(
 fn execute_lookup(args: GetCloudTrailEventsArgs) -> Result<CloudTrailEventsResult> {
     // CRITICAL: Use block_in_place to avoid "Cannot start a runtime from within a runtime" error
     tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            get_cloudtrail_events_internal(args).await
-        })
+        tokio::runtime::Handle::current()
+            .block_on(async { get_cloudtrail_events_internal(args).await })
     })
 }
 
@@ -229,7 +219,10 @@ async fn get_cloudtrail_events_internal(
         "Looking up CloudTrail events: account={}, region={}, filters={}",
         args.account_id,
         args.region,
-        args.lookup_attributes.as_ref().map(|a| a.len()).unwrap_or(0)
+        args.lookup_attributes
+            .as_ref()
+            .map(|a| a.len())
+            .unwrap_or(0)
     );
 
     // Get global AWS client for credential coordinator access

@@ -163,7 +163,9 @@ pub mod types;
 
 // Re-export commonly used types
 pub use client::CloudTrailEventsClient;
-pub use resource_mapping::{get_cloudtrail_lookup_value, get_common_event_names, has_cloudtrail_support};
+pub use resource_mapping::{
+    get_cloudtrail_lookup_value, get_common_event_names, has_cloudtrail_support,
+};
 pub use types::{
     CloudTrailEvent, EventResource, LookupAttribute, LookupAttributeKey, LookupOptions,
     LookupResult,

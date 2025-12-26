@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::CodeBuild::Project", &project_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::CodeBuild::Project {}: {}", project_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::CodeBuild::Project {}: {}",
+                    project_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -129,4 +128,3 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
         "AWS::CodeBuild::Project"
     }
 }
-

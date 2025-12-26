@@ -16,7 +16,6 @@ This directory contains modular technical documentation for the AWS Dash project
 
 * [AWS Login Window](aws-login-window.md) - Identity Center authentication with simplified URL input and region selection
 * [Command Palette System](command-palette-system.md) - Command palette with keyboard shortcuts
-* [AWS Icon System](aws-icon-system.md) - Dynamic icon loading and caching for AWS service visualization
 
 ## Architecture Patterns
 
@@ -34,5 +33,7 @@ This directory contains modular technical documentation for the AWS Dash project
 * [AWS Service Integration Patterns](aws-service-integration-patterns.md) - Templates for integrating new AWS services
 
 ## Reference
+
+* [AWS API Calls Inventory](aws-api-calls-inventory.md) - Complete inventory of AWS SDK calls per resource type (for security/compliance gap analysis)
 
 For user-facing documentation including troubleshooting guides, see the [User Guide](../userguide/) section.

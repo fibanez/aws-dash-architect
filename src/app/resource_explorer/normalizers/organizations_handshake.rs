@@ -30,7 +30,12 @@ impl AsyncResourceNormalizer for OrganizationsHandshakeNormalizer {
             .get("State")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .or_else(|| raw_response.get("Status").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .or_else(|| {
+                raw_response
+                    .get("Status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .or_else(|| Some("REQUESTED".to_string()));
 
         // Extract basic properties for normalized view
@@ -56,16 +61,21 @@ impl AsyncResourceNormalizer for OrganizationsHandshakeNormalizer {
         }
 
         if let Some(requested_timestamp) = raw_response.get("RequestedTimestamp") {
-            properties.insert("requested_timestamp".to_string(), requested_timestamp.clone());
+            properties.insert(
+                "requested_timestamp".to_string(),
+                requested_timestamp.clone(),
+            );
         }
 
         if let Some(expiration_timestamp) = raw_response.get("ExpirationTimestamp") {
-            properties.insert("expiration_timestamp".to_string(), expiration_timestamp.clone());
+            properties.insert(
+                "expiration_timestamp".to_string(),
+                expiration_timestamp.clone(),
+            );
         }
 
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
-
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::Handshake".to_string(),
@@ -93,7 +103,12 @@ impl AsyncResourceNormalizer for OrganizationsHandshakeNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

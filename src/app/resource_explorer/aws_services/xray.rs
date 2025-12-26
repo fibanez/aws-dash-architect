@@ -32,7 +32,7 @@ impl XRayService {
             })?;
 
         let client = xray::Client::new(&aws_config);
-        
+
         // Note: X-Ray GetSamplingRules doesn't have pagination
         let response = client.get_sampling_rules().send().await?;
 
@@ -65,14 +65,16 @@ impl XRayService {
             })?;
 
         let client = xray::Client::new(&aws_config);
-        
+
         // Get services from the last hour by default
         let end_time = chrono::Utc::now();
         let start_time = end_time - chrono::Duration::hours(1);
 
         let mut paginator = client
             .get_service_graph()
-            .start_time(aws_smithy_types::DateTime::from_secs(start_time.timestamp()))
+            .start_time(aws_smithy_types::DateTime::from_secs(
+                start_time.timestamp(),
+            ))
             .end_time(aws_smithy_types::DateTime::from_secs(end_time.timestamp()))
             .into_paginator()
             .send();
@@ -110,10 +112,7 @@ impl XRayService {
             })?;
 
         let client = xray::Client::new(&aws_config);
-        let response = client
-            .get_sampling_rules()
-            .send()
-            .await?;
+        let response = client.get_sampling_rules().send().await?;
 
         if let Some(sampling_rule_records) = response.sampling_rule_records {
             for rule_record in sampling_rule_records {
@@ -130,7 +129,10 @@ impl XRayService {
         Err(anyhow::anyhow!("Sampling rule {} not found", rule_name))
     }
 
-    fn sampling_rule_to_json(&self, rule_record: &xray::types::SamplingRuleRecord) -> serde_json::Value {
+    fn sampling_rule_to_json(
+        &self,
+        rule_record: &xray::types::SamplingRuleRecord,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(sampling_rule) = &rule_record.sampling_rule {
@@ -190,7 +192,8 @@ impl XRayService {
             json.insert(
                 "FixedRate".to_string(),
                 serde_json::Value::Number(
-                    serde_json::Number::from_f64(sampling_rule.fixed_rate).unwrap_or(serde_json::Number::from(0))
+                    serde_json::Number::from_f64(sampling_rule.fixed_rate)
+                        .unwrap_or(serde_json::Number::from(0)),
                 ),
             );
 
@@ -252,10 +255,7 @@ impl XRayService {
         }
 
         if let Some(name) = &service.name {
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(name.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(service_names) = &service.names {
@@ -264,10 +264,7 @@ impl XRayService {
                     .iter()
                     .map(|name| serde_json::Value::String(name.clone()))
                     .collect();
-                json.insert(
-                    "Names".to_string(),
-                    serde_json::Value::Array(names_json),
-                );
+                json.insert("Names".to_string(), serde_json::Value::Array(names_json));
             }
         }
 
@@ -300,10 +297,7 @@ impl XRayService {
         }
 
         if let Some(root) = service.root {
-            json.insert(
-                "Root".to_string(),
-                serde_json::Value::Bool(root),
-            );
+            json.insert("Root".to_string(), serde_json::Value::Bool(root));
         }
 
         // Default status for consistency

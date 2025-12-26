@@ -3,6 +3,9 @@
 //! Provides JavaScript access to AWS resource querying functionality.
 //! This is a code-first approach where JavaScript code calls bound Rust functions
 //! to query AWS resources across accounts, regions, and resource types.
+//!
+//! Uses unified caching via ResourceExplorerState for consistency between
+//! Explorer UI and Agent Framework queries.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
@@ -12,18 +15,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::app::agent_framework::tools_registry::get_global_aws_client;
 use crate::app::resource_explorer::state::{
     AccountSelection, QueryScope, RegionSelection, ResourceEntry, ResourceTypeSelection,
 };
-
-/// Global resource cache shared across all queryResources() calls
-/// This cache prevents redundant API calls when the same resources are queried multiple times
-static GLOBAL_RESOURCE_CACHE: once_cell::sync::Lazy<
-    Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
-> = once_cell::sync::Lazy::new(|| Arc::new(tokio::sync::RwLock::new(HashMap::new())));
+use crate::app::resource_explorer::unified_query::{
+    BookmarkInfo, DetailLevel, QueryError, QueryWarning, ResourceFull, ResourceSummary,
+    ResourceWithTags, UnifiedQueryResult,
+};
+use crate::app::resource_explorer::{get_global_bookmark_manager, get_global_explorer_state};
 
 /// JavaScript function call arguments for queryResources()
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,49 +39,13 @@ pub struct QueryResourcesArgs {
 
     /// CloudFormation resource types (required)
     pub resource_types: Vec<String>,
+
+    /// Detail level for returned data: "count", "summary" (default), "tags", "full"
+    pub detail: Option<String>,
 }
 
-/// Resource information exposed to JavaScript
-/// Simplified version of ResourceEntry for V8 consumption
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceInfo {
-    /// CloudFormation resource type (e.g., "AWS::EC2::Instance")
-    pub resource_type: String,
-
-    /// AWS Account ID
-    pub account_id: String,
-
-    /// AWS Region code
-    pub region: String,
-
-    /// Resource identifier (ARN, ID, name)
-    pub resource_id: String,
-
-    /// Human-readable display name
-    pub display_name: String,
-
-    /// Resource status (e.g., "running", "stopped")
-    pub status: Option<String>,
-
-    /// Normalized resource properties (JSON object)
-    pub properties: serde_json::Value,
-
-    /// Original AWS API response (from List queries)
-    pub raw_properties: serde_json::Value,
-
-    /// Detailed properties from Describe queries (if available)
-    pub detailed_properties: Option<serde_json::Value>,
-
-    /// Resource tags (key-value pairs)
-    pub tags: Vec<ResourceTag>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceTag {
-    pub key: String,
-    pub value: String,
-}
+// Note: Resource types (ResourceSummary, ResourceWithTags, ResourceFull) are now
+// imported from unified_query.rs for consistency between Explorer and Agent Framework.
 
 /// Register resource-related functions into V8 context
 pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
@@ -88,10 +54,23 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
     // Register queryResources() function
     let query_resources_fn = v8::Function::new(scope, query_resources_callback)
         .expect("Failed to create queryResources function");
-
     let fn_name =
         v8::String::new(scope, "queryResources").expect("Failed to create function name string");
     global.set(scope, fn_name.into(), query_resources_fn.into());
+
+    // Register listBookmarks() function
+    let list_bookmarks_fn = v8::Function::new(scope, list_bookmarks_callback)
+        .expect("Failed to create listBookmarks function");
+    let fn_name =
+        v8::String::new(scope, "listBookmarks").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), list_bookmarks_fn.into());
+
+    // Register queryBookmarks() function
+    let query_bookmarks_fn = v8::Function::new(scope, query_bookmarks_callback)
+        .expect("Failed to create queryBookmarks function");
+    let fn_name =
+        v8::String::new(scope, "queryBookmarks").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), query_bookmarks_fn.into());
 
     Ok(())
 }
@@ -108,7 +87,7 @@ fn query_resources_callback(
         None => {
             let msg = v8::String::new(
                 scope,
-                "queryResources() requires an object argument with { accounts, regions, resourceTypes }",
+                "queryResources() requires an object argument with { accounts, regions, resourceTypes, detail? }",
             )
             .unwrap();
             let error = v8::Exception::type_error(scope, msg);
@@ -140,9 +119,26 @@ fn query_resources_callback(
     };
 
     // Execute async query in Tokio runtime
-    let resources = match execute_query(query_args) {
-        Ok(resources) => resources,
+    let result = match execute_query(query_args) {
+        Ok(result) => result,
         Err(e) => {
+            // Return error result instead of throwing exception
+            // This allows the caller to check status and errors
+            let error_result: UnifiedQueryResult<Vec<serde_json::Value>> =
+                UnifiedQueryResult::error(vec![QueryError {
+                    account: "all".to_string(),
+                    region: "all".to_string(),
+                    code: "QueryFailed".to_string(),
+                    message: e.to_string(),
+                }]);
+            if let Ok(json) = serde_json::to_string(&error_result) {
+                if let Some(v8_str) = v8::String::new(scope, &json) {
+                    if let Some(v8_value) = v8::json::parse(scope, v8_str) {
+                        rv.set(v8_value);
+                        return;
+                    }
+                }
+            }
             let msg = v8::String::new(scope, &format!("Query failed: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
@@ -150,12 +146,12 @@ fn query_resources_callback(
         }
     };
 
-    // Serialize to JSON string
-    let json_str = match serde_json::to_string(&resources) {
+    // Serialize result to JSON string
+    let json_str = match serde_json::to_string(&result) {
         Ok(json) => json,
         Err(e) => {
             let msg =
-                v8::String::new(scope, &format!("Failed to serialize resources: {}", e)).unwrap();
+                v8::String::new(scope, &format!("Failed to serialize result: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -173,7 +169,7 @@ fn query_resources_callback(
         }
     };
 
-    // Parse JSON in V8 to create JavaScript array
+    // Parse JSON in V8 to create JavaScript object
     let v8_value = match v8::json::parse(scope, v8_str) {
         Some(v) => v,
         None => {
@@ -188,7 +184,7 @@ fn query_resources_callback(
 }
 
 /// Execute AWS resource query (synchronous wrapper for async code)
-fn execute_query(args: QueryResourcesArgs) -> Result<Vec<ResourceInfo>> {
+fn execute_query(args: QueryResourcesArgs) -> Result<UnifiedQueryResult<serde_json::Value>> {
     // Use the current runtime's handle and block_in_place to avoid nested runtime error
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async { query_resources_internal(args).await })
@@ -196,7 +192,13 @@ fn execute_query(args: QueryResourcesArgs) -> Result<Vec<ResourceInfo>> {
 }
 
 /// Internal async implementation of resource query
-async fn query_resources_internal(args: QueryResourcesArgs) -> Result<Vec<ResourceInfo>> {
+async fn query_resources_internal(
+    args: QueryResourcesArgs,
+) -> Result<UnifiedQueryResult<serde_json::Value>> {
+    // Parse detail level (default: summary)
+    let detail_level = DetailLevel::from_str_opt(args.detail.as_deref());
+    debug!("Query detail level: {:?}", detail_level);
+
     // Get global AWS client
     let client = get_global_aws_client().ok_or_else(|| anyhow!("AWS client not initialized"))?;
 
@@ -248,19 +250,54 @@ async fn query_resources_internal(args: QueryResourcesArgs) -> Result<Vec<Resour
     // Build QueryScope
     let scope = build_query_scope(&account_ids, &region_codes, &args.resource_types)?;
 
+    // Get global explorer state for unified caching
+    let explorer_state = get_global_explorer_state();
+
+    // Create a temporary cache for the parallel query
+    // We'll sync results with ResourceExplorerState after
+    let query_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>> =
+        Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+
+    // Check if any results are already cached in explorer state
+    if let Some(state) = &explorer_state {
+        let state_guard = state.read().await;
+        for account in &scope.accounts {
+            for region in &scope.regions {
+                for resource_type in &scope.resource_types {
+                    let cache_key = format!(
+                        "{}:{}:{}",
+                        account.account_id, region.region_code, resource_type.resource_type
+                    );
+                    if let Some(cached_entries) = state_guard.cached_queries.get(&cache_key) {
+                        // Cache hit - use cached entries
+                        debug!("Cache hit for {}", cache_key);
+                        let mut cache_guard = query_cache.write().await;
+                        cache_guard.insert(cache_key, cached_entries.clone());
+                    }
+                }
+            }
+        }
+    }
+
     // Create result channel
     let (result_tx, mut result_rx) = mpsc::channel(1000);
 
-    // Use global resource cache to avoid redundant API calls
-    let cache = Arc::clone(&GLOBAL_RESOURCE_CACHE);
+    // Track warnings and errors per account/region
+    let mut warnings: Vec<QueryWarning> = Vec::new();
+    let mut errors: Vec<QueryError> = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
 
     // Start parallel query (spawns background tasks)
     let client_clone = Arc::clone(&client);
+    let cache_clone = Arc::clone(&query_cache);
     tokio::spawn(async move {
         if let Err(e) = client_clone
             .query_aws_resources_parallel(
-                &scope, result_tx, None, // No progress updates needed
-                cache,
+                &scope,
+                result_tx,
+                None, // No progress updates needed
+                cache_clone,
             )
             .await
         {
@@ -269,46 +306,357 @@ async fn query_resources_internal(args: QueryResourcesArgs) -> Result<Vec<Resour
     });
 
     // Collect all results
-    let mut resources = Vec::new();
+    let mut all_entries: Vec<ResourceEntry> = Vec::new();
 
     while let Some(result) = result_rx.recv().await {
         match result.resources {
             Ok(entries) => {
-                // Convert ResourceEntry to ResourceInfo
-                for entry in entries {
-                    resources.push(ResourceInfo {
-                        resource_type: entry.resource_type,
-                        account_id: entry.account_id,
-                        region: entry.region,
-                        resource_id: entry.resource_id,
-                        display_name: entry.display_name,
-                        status: entry.status,
-                        properties: entry.properties,
-                        raw_properties: entry.raw_properties,
-                        detailed_properties: entry.detailed_properties,
-                        tags: entry
-                            .tags
-                            .into_iter()
-                            .map(|t| ResourceTag {
-                                key: t.key,
-                                value: t.value,
-                            })
-                            .collect(),
-                    });
+                success_count += 1;
+                // Store in explorer state cache for future queries
+                if let Some(state) = &explorer_state {
+                    let cache_key = format!(
+                        "{}:{}:{}",
+                        result.account_id, result.region, result.resource_type
+                    );
+                    let mut state_guard = state.write().await;
+                    state_guard
+                        .cached_queries
+                        .insert(cache_key, entries.clone());
                 }
+                all_entries.extend(entries);
             }
             Err(e) => {
+                error_count += 1;
+                let error_msg = e.to_string();
                 warn!(
                     "Query error for {}/{}/{}: {}",
-                    result.account_id, result.region, result.resource_type, e
+                    result.account_id, result.region, result.resource_type, error_msg
                 );
-                // Continue collecting other results (partial results on error)
+
+                // Categorize error
+                let (code, is_warning) = categorize_error(&error_msg);
+                if is_warning {
+                    warnings.push(QueryWarning {
+                        account: result.account_id,
+                        region: result.region,
+                        message: error_msg,
+                    });
+                } else {
+                    errors.push(QueryError {
+                        account: result.account_id,
+                        region: result.region,
+                        code,
+                        message: error_msg,
+                    });
+                }
             }
         }
     }
 
-    info!("Collected {} resources total", resources.len());
-    Ok(resources)
+    let total_count = all_entries.len();
+    info!(
+        "Collected {} resources total (success: {}, errors: {})",
+        total_count, success_count, error_count
+    );
+
+    // Apply detail level filtering and convert to JSON
+    let data = match detail_level {
+        DetailLevel::Count => {
+            // Just return count in data field
+            serde_json::json!(null)
+        }
+        DetailLevel::Summary => {
+            let summaries: Vec<ResourceSummary> =
+                all_entries.iter().map(ResourceSummary::from).collect();
+            serde_json::to_value(summaries).unwrap_or(serde_json::json!([]))
+        }
+        DetailLevel::Tags => {
+            let with_tags: Vec<ResourceWithTags> =
+                all_entries.iter().map(ResourceWithTags::from).collect();
+            serde_json::to_value(with_tags).unwrap_or(serde_json::json!([]))
+        }
+        DetailLevel::Full => {
+            let full: Vec<ResourceFull> = all_entries.iter().map(ResourceFull::from).collect();
+            serde_json::to_value(full).unwrap_or(serde_json::json!([]))
+        }
+    };
+
+    // Build result with appropriate status
+    let result = UnifiedQueryResult::from_results(
+        data,
+        total_count,
+        success_count,
+        error_count,
+        warnings,
+        errors,
+    );
+
+    Ok(result)
+}
+
+/// Categorize an error message into a code and whether it's a warning
+fn categorize_error(error_msg: &str) -> (String, bool) {
+    let lower = error_msg.to_lowercase();
+    if lower.contains("access denied") || lower.contains("not authorized") {
+        ("AccessDenied".to_string(), false)
+    } else if lower.contains("rate") || lower.contains("throttl") {
+        ("RateLimitExceeded".to_string(), true) // Warning - retryable
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        ("Timeout".to_string(), true) // Warning - retryable
+    } else if lower.contains("not found") || lower.contains("does not exist") {
+        ("NotFound".to_string(), false)
+    } else if lower.contains("invalid") {
+        ("InvalidRequest".to_string(), false)
+    } else {
+        ("UnknownError".to_string(), false)
+    }
+}
+
+// ============================================================================
+// Bookmark Functions
+// ============================================================================
+
+/// Callback for listBookmarks() JavaScript function
+/// Returns a flat list of all bookmarks (no folder hierarchy)
+fn list_bookmarks_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    _args: v8::FunctionCallbackArguments<'_>,
+    mut rv: v8::ReturnValue<'_>,
+) {
+    // Get global bookmark manager
+    let manager = match get_global_bookmark_manager() {
+        Some(m) => m,
+        None => {
+            let msg = v8::String::new(
+                scope,
+                "listBookmarks() failed: Bookmark manager not initialized (login required)",
+            )
+            .unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Get bookmarks from manager (read lock)
+    let bookmarks: Vec<BookmarkInfo> = match manager.read() {
+        Ok(guard) => guard
+            .get_bookmarks()
+            .iter()
+            .map(BookmarkInfo::from)
+            .collect(),
+        Err(e) => {
+            let msg = v8::String::new(scope, &format!("Failed to read bookmarks: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Serialize to JSON string
+    let json_str = match serde_json::to_string(&bookmarks) {
+        Ok(json) => json,
+        Err(e) => {
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize bookmarks: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Create V8 string from JSON
+    let v8_str = match v8::String::new(scope, &json_str) {
+        Some(s) => s,
+        None => {
+            let msg = v8::String::new(scope, "Failed to create V8 string").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON in V8 to create JavaScript array
+    let v8_value = match v8::json::parse(scope, v8_str) {
+        Some(v) => v,
+        None => {
+            let msg = v8::String::new(scope, "Failed to parse JSON in V8").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    rv.set(v8_value);
+}
+
+/// JavaScript function call arguments for queryBookmarks()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryBookmarksArgs {
+    /// Detail level for returned data: "count", "summary" (default), "tags", "full"
+    pub detail: Option<String>,
+}
+
+/// Callback for queryBookmarks() JavaScript function
+/// Executes a bookmark's saved query and returns resources
+fn query_bookmarks_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    args: v8::FunctionCallbackArguments<'_>,
+    mut rv: v8::ReturnValue<'_>,
+) {
+    // Parse bookmark ID from first argument
+    let bookmark_id = match args.get(0).to_string(scope) {
+        Some(s) => s.to_rust_string_lossy(scope),
+        None => {
+            let msg = v8::String::new(
+                scope,
+                "queryBookmarks() requires a bookmark ID as first argument",
+            )
+            .unwrap();
+            let error = v8::Exception::type_error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse optional options object from second argument
+    let options: QueryBookmarksArgs = if args.length() > 1 {
+        match args.get(1).to_object(scope) {
+            Some(obj) => match v8::json::stringify(scope, obj.into()) {
+                Some(s) => {
+                    let json_str = s.to_rust_string_lossy(scope);
+                    serde_json::from_str(&json_str).unwrap_or(QueryBookmarksArgs { detail: None })
+                }
+                None => QueryBookmarksArgs { detail: None },
+            },
+            None => QueryBookmarksArgs { detail: None },
+        }
+    } else {
+        QueryBookmarksArgs { detail: None }
+    };
+
+    // Execute async query
+    let result = match execute_bookmark_query(&bookmark_id, options) {
+        Ok(result) => result,
+        Err(e) => {
+            // Return error result instead of throwing exception
+            let error_result: UnifiedQueryResult<Vec<serde_json::Value>> =
+                UnifiedQueryResult::error(vec![QueryError {
+                    account: "all".to_string(),
+                    region: "all".to_string(),
+                    code: "BookmarkQueryFailed".to_string(),
+                    message: e.to_string(),
+                }]);
+            if let Ok(json) = serde_json::to_string(&error_result) {
+                if let Some(v8_str) = v8::String::new(scope, &json) {
+                    if let Some(v8_value) = v8::json::parse(scope, v8_str) {
+                        rv.set(v8_value);
+                        return;
+                    }
+                }
+            }
+            let msg = v8::String::new(scope, &format!("Bookmark query failed: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Serialize result to JSON string
+    let json_str = match serde_json::to_string(&result) {
+        Ok(json) => json,
+        Err(e) => {
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize result: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Create V8 string from JSON
+    let v8_str = match v8::String::new(scope, &json_str) {
+        Some(s) => s,
+        None => {
+            let msg = v8::String::new(scope, "Failed to create V8 string").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON in V8 to create JavaScript object
+    let v8_value = match v8::json::parse(scope, v8_str) {
+        Some(v) => v,
+        None => {
+            let msg = v8::String::new(scope, "Failed to parse JSON in V8").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    rv.set(v8_value);
+}
+
+/// Execute a bookmark query (synchronous wrapper for async code)
+fn execute_bookmark_query(
+    bookmark_id: &str,
+    options: QueryBookmarksArgs,
+) -> Result<UnifiedQueryResult<serde_json::Value>> {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(async { query_bookmark_internal(bookmark_id, options).await })
+    })
+}
+
+/// Internal async implementation of bookmark query
+async fn query_bookmark_internal(
+    bookmark_id: &str,
+    options: QueryBookmarksArgs,
+) -> Result<UnifiedQueryResult<serde_json::Value>> {
+    // Parse detail level (default: summary)
+    let detail_level = DetailLevel::from_str_opt(options.detail.as_deref());
+    debug!("Bookmark query detail level: {:?}", detail_level);
+
+    // Get the bookmark from global manager
+    let manager =
+        get_global_bookmark_manager().ok_or_else(|| anyhow!("Bookmark manager not initialized"))?;
+
+    let bookmark = {
+        let guard = manager
+            .read()
+            .map_err(|e| anyhow!("Failed to lock bookmark manager: {}", e))?;
+        guard
+            .get_bookmark(bookmark_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("Bookmark not found: {}", bookmark_id))?
+    };
+
+    debug!(
+        "Executing bookmark '{}' query: accounts={:?}, regions={:?}, types={:?}",
+        bookmark.name, bookmark.account_ids, bookmark.region_codes, bookmark.resource_type_ids
+    );
+
+    // Build QueryResourcesArgs from bookmark
+    let query_args = QueryResourcesArgs {
+        accounts: if bookmark.account_ids.is_empty() {
+            None
+        } else {
+            Some(bookmark.account_ids.clone())
+        },
+        regions: if bookmark.region_codes.is_empty() {
+            None
+        } else {
+            Some(bookmark.region_codes.clone())
+        },
+        resource_types: bookmark.resource_type_ids.clone(),
+        detail: options.detail,
+    };
+
+    // Execute the query using the existing internal function
+    query_resources_internal(query_args).await
 }
 
 /// Build QueryScope from arguments
@@ -364,161 +712,329 @@ pub fn get_documentation() -> String {
     r#"
 ### queryResources()
 
-Query AWS resources across accounts, regions, and resource types.
+Query AWS resources across accounts, regions, and resource types with configurable detail levels.
 
 **Signature:**
 ```typescript
-function queryResources(options: QueryOptions): ResourceInfo[]
+function queryResources(options: QueryOptions): QueryResult
 
 interface QueryOptions {
-  accounts?: string[] | null;      // Account IDs (null = use listAccounts to select one)
-  regions?: string[] | us-east-1;       // Region codes (null = use if null us-east-1)
+  accounts?: string[] | null;      // Account IDs (null = random account)
+  regions?: string[] | null;       // Region codes (null = us-east-1)
   resourceTypes: string[];         // CloudFormation resource types (required)
+  detail?: 'count' | 'summary' | 'tags' | 'full';  // Detail level (default: 'summary')
 }
 
-interface ResourceInfo {
-  resourceType: string;            // CloudFormation type (e.g., "AWS::EC2::Instance")
-  accountId: string;               // AWS Account ID
-  region: string;                  // AWS Region code
-  resourceId: string;              // Resource identifier (ARN, ID, name)
-  displayName: string;             // Human-readable name
-  status: string | null;           // Resource status (e.g., "running", "stopped")
-  properties: object;              // Normalized resource properties
-  tags: Array<{key: string, value: string}>;  // Resource tags
+interface QueryResult {
+  status: 'success' | 'partial' | 'error';  // Query status
+  data: ResourceInfo[] | null;               // Resources (null for count)
+  count: number;                             // Total resource count
+  warnings: QueryWarning[];                  // Non-fatal issues (rate limiting, timeouts)
+  errors: QueryError[];                      // Errors per account/region
+}
+
+interface QueryWarning {
+  account: string;
+  region: string;
+  message: string;
+}
+
+interface QueryError {
+  account: string;
+  region: string;
+  code: string;    // e.g., 'AccessDenied', 'NotFound', 'InvalidRequest'
+  message: string;
 }
 ```
 
+**Detail Levels:**
+- `count`: Just totals, data is null - use for "how many instances exist?"
+- `summary` (DEFAULT): Minimal fields: resourceId, displayName, resourceType, accountId, region, status
+- `tags`: Summary fields plus tags array
+- `full`: Complete data including properties, rawProperties, detailedProperties
+
+**Resource Info by Detail Level:**
+```typescript
+// detail: 'summary' (default)
+interface ResourceSummary {
+  resourceId: string;
+  displayName: string;
+  resourceType: string;
+  accountId: string;
+  region: string;
+  status: string | null;
+}
+
+// detail: 'tags'
+interface ResourceWithTags extends ResourceSummary {
+  tags: Array<{key: string, value: string}>;
+}
+
+// detail: 'full'
+interface ResourceFull extends ResourceWithTags {
+  properties: object;           // Normalized properties
+  rawProperties: object;        // Original AWS API response
+  detailedProperties: object | null;  // From Describe queries
+}
+```
+
+**Status Meanings:**
+- `success`: All account/region queries succeeded
+- `partial`: Some queries succeeded, some failed (check errors array)
+- `error`: All queries failed (check errors array)
+
 **Description:**
 Executes parallel AWS API queries across specified accounts, regions, and resource types.
-Returns a unified list of resources with normalized properties.
+Returns a result object with status, data, count, warnings, and errors.
+Results are cached and shared with AWS Explorer UI for efficiency.
 
 **Default Behavior:**
-- If `accounts` is `null` or empty: the model shouls use listAccounts and pick ONE random account from configured accounts
+- If `accounts` is `null` or empty: selects ONE random account from configured accounts
 - If `regions` is `null` or empty: Uses `us-east-1` region only
+- If `detail` is not specified: Uses `summary` level
 - `resourceTypes` is REQUIRED and cannot be empty
 
 **Resource Types:**
 Use CloudFormation format (e.g., `AWS::EC2::Instance`, `AWS::S3::Bucket`, `AWS::IAM::Role`).
-We support 93 services and 183 resource types, most likely we can query for it.
-See AWS CloudFormation documentation for full list of resource types.
+We support 93 services and 183 resource types.
 
 **Return value structure:**
 ```json
-[
-  {
-    "resourceType": "AWS::EC2::Instance",
-    "accountId": "123456789012",
-    "region": "us-east-1",
-    "resourceId": "i-1234567890abcdef0",
-    "displayName": "web-server-01",
-    "status": "running",
-    "properties": {
-      "InstanceType": "t3.micro",
-      "LaunchTime": "2024-01-15T10:30:00Z",
-      "PublicIpAddress": "203.0.113.25"
-    },
-    "tags": [
-      {"key": "Environment", "value": "Production"},
-      {"key": "Application", "value": "WebServer"}
-    ]
-  }
-]
+{
+  "status": "success",
+  "data": [
+    {
+      "resourceId": "i-1234567890abcdef0",
+      "displayName": "web-server-01",
+      "resourceType": "AWS::EC2::Instance",
+      "accountId": "123456789012",
+      "region": "us-east-1",
+      "status": "running"
+    }
+  ],
+  "count": 1,
+  "warnings": [],
+  "errors": []
+}
 ```
 
 **Example usage:**
 ```javascript
-// Query EC2 instances in specific account and region
-const instances = queryResources({
+// Quick count - how many EC2 instances?
+const countResult = queryResources({
+  accounts: ["123456789012"],
+  regions: ["us-east-1"],
+  resourceTypes: ["AWS::EC2::Instance"],
+  detail: "count"
+});
+console.log(`Found ${countResult.count} EC2 instances`);
+
+// Default summary query
+const result = queryResources({
   accounts: ["123456789012"],
   regions: ["us-east-1"],
   resourceTypes: ["AWS::EC2::Instance"]
 });
 
-console.log(`Found ${instances.length} EC2 instances`);
-instances.forEach(i => {
-  console.log(`${i.displayName}: ${i.status} (${i.properties.InstanceType})`);
+if (result.status === "error") {
+  console.error("Query failed:", result.errors);
+  return null;
+}
+
+if (result.status === "partial") {
+  console.warn("Some queries failed:", result.errors);
+}
+
+console.log(`Found ${result.count} instances`);
+result.data.forEach(i => {
+  console.log(`${i.displayName}: ${i.status}`);
 });
 
-// Query S3 buckets across all configured accounts (random account selected)
-const buckets = queryResources({
-  accounts: null,  // Random account
-  regions: null,   // S3 is global, queried from us-east-1
-  resourceTypes: ["AWS::S3::Bucket"]
-});
-
-console.log(`Found ${buckets.length} S3 buckets in random account`);
-
-// Query multiple resource types in multiple regions
-const resources = queryResources({
-  accounts: listAccounts().map(a => a.id),  // All accounts
+// Query with tags to filter by environment
+const tagResult = queryResources({
+  accounts: listAccounts().map(a => a.id),
   regions: ["us-east-1", "us-west-2"],
-  resourceTypes: [
-    "AWS::EC2::Instance",
-    "AWS::RDS::DBInstance",
-    "AWS::Lambda::Function"
-  ]
+  resourceTypes: ["AWS::EC2::Instance"],
+  detail: "tags"
 });
 
-// Group by resource type
-const byType = {};
-resources.forEach(r => {
-  byType[r.resourceType] = (byType[r.resourceType] || 0) + 1;
-});
-console.log("Resources by type:", JSON.stringify(byType, null, 2));
-
-// Filter running EC2 instances
-const runningInstances = resources
-  .filter(r => r.resourceType === "AWS::EC2::Instance")
-  .filter(r => r.status === "running");
-
-// Find resources with specific tag
-const prodResources = resources.filter(r =>
+const prodInstances = tagResult.data.filter(r =>
   r.tags.some(t => t.key === "Environment" && t.value === "Production")
 );
 
-// Extract specific properties
-const instanceDetails = resources
-  .filter(r => r.resourceType === "AWS::EC2::Instance")
-  .map(r => ({
-    name: r.displayName,
-    type: r.properties.InstanceType,
-    ip: r.properties.PublicIpAddress,
-    account: r.accountId
-  }));
-```
+// Full details for deep inspection
+const fullResult = queryResources({
+  accounts: ["123456789012"],
+  regions: ["us-east-1"],
+  resourceTypes: ["AWS::EC2::Instance"],
+  detail: "full"
+});
 
-**Edge cases:**
-- Returns empty array `[]` if no resources found
-- Partial results returned if some queries fail (errors logged to console)
-- Global services (IAM, S3, Route53) are queried from us-east-1 only, regardless of regions parameter
-- Resource properties vary by resource type - check AWS API documentation
+fullResult.data.forEach(r => {
+  console.log(`Instance: ${r.displayName}`);
+  console.log(`  Type: ${r.properties.InstanceType}`);
+  console.log(`  Launch: ${r.properties.LaunchTime}`);
+  console.log(`  Tags: ${r.tags.length}`);
+});
+```
 
 **Error handling:**
 ```javascript
-const resources = queryResources({
+const result = queryResources({
   accounts: null,
   regions: null,
   resourceTypes: ["AWS::EC2::Instance"]
 });
 
-if (resources.length === 0) {
-  console.error("No EC2 instances found");
+// Check status first
+if (result.status === "error") {
+  result.errors.forEach(e => {
+    console.error(`Error in ${e.account}/${e.region}: ${e.code} - ${e.message}`);
+  });
   return null;
 }
 
-// Safe property access with defaults
-resources.forEach(r => {
-  const instanceType = r.properties.InstanceType || "unknown";
-  const status = r.status || "unknown";
-  console.log(`${r.displayName}: ${instanceType} (${status})`);
-});
+// Handle partial results
+if (result.status === "partial") {
+  console.warn("Partial results - some queries failed:");
+  result.errors.forEach(e => console.warn(`  ${e.account}/${e.region}: ${e.code}`));
+  result.warnings.forEach(w => console.warn(`  Warning: ${w.message}`));
+}
+
+// Empty results are valid (status: success, count: 0)
+if (result.count === 0) {
+  console.log("No resources found matching criteria");
+  return [];
+}
+
+return result.data;
 ```
 
 **Performance considerations:**
-- Queries are executed in parallel across all account/region/resource type combinations
-- Large queries (many accounts × many regions × many resource types) may take 10-60 seconds
-- Consider filtering in JavaScript to reduce result size
-- Use specific accounts/regions when possible instead of null defaults
+- Use `detail: "count"` for existence checks - no data transferred
+- Use `detail: "summary"` (default) for list views
+- Use `detail: "tags"` only when filtering by tags
+- Use `detail: "full"` only when you need all properties
+- Results are cached and shared with AWS Explorer UI
+- Large queries (many accounts x regions x types) may take 10-60 seconds
+
+---
+
+### listBookmarks()
+
+List all saved bookmarks (flat list, no folder hierarchy).
+
+**Signature:**
+```typescript
+function listBookmarks(): BookmarkInfo[]
+
+interface BookmarkInfo {
+  id: string;                   // Unique bookmark ID (UUID)
+  name: string;                 // Display name
+  description: string | null;   // Optional description
+  accountIds: string[];         // Saved account IDs
+  regionCodes: string[];        // Saved region codes
+  resourceTypes: string[];      // Saved resource types
+  hasTagFilters: boolean;       // Whether bookmark has tag filters
+  hasSearchFilter: boolean;     // Whether bookmark has search filter
+  accessCount: number;          // Times this bookmark was accessed
+  lastAccessed: string | null;  // ISO timestamp of last access
+}
+```
+
+**Description:**
+Returns all user-created bookmarks as a flat list. Bookmarks are saved queries
+that store account, region, resource type selections along with filters.
+Use with `queryBookmarks()` to execute a bookmark's query.
+
+**Example usage:**
+```javascript
+// List all bookmarks
+const bookmarks = listBookmarks();
+console.log(`Found ${bookmarks.length} bookmarks`);
+
+// Find bookmarks by name
+const prodBookmark = bookmarks.find(b => b.name.includes("Production"));
+if (prodBookmark) {
+  console.log(`Found: ${prodBookmark.name} (${prodBookmark.resourceTypes.join(", ")})`);
+}
+
+// List bookmarks with their configurations
+bookmarks.forEach(b => {
+  console.log(`${b.name}:`);
+  console.log(`  Accounts: ${b.accountIds.length || "all"}`);
+  console.log(`  Regions: ${b.regionCodes.join(", ") || "default"}`);
+  console.log(`  Types: ${b.resourceTypes.join(", ")}`);
+  console.log(`  Has filters: tags=${b.hasTagFilters}, search=${b.hasSearchFilter}`);
+});
+```
+
+---
+
+### queryBookmarks()
+
+Execute a saved bookmark's query and return resources.
+
+**Signature:**
+```typescript
+function queryBookmarks(
+  bookmarkId: string,
+  options?: { detail?: 'count' | 'summary' | 'tags' | 'full' }
+): QueryResult
+
+// Returns same QueryResult as queryResources()
+interface QueryResult {
+  status: 'success' | 'partial' | 'error';
+  data: ResourceInfo[] | null;
+  count: number;
+  warnings: QueryWarning[];
+  errors: QueryError[];
+}
+```
+
+**Description:**
+Executes the saved query from a bookmark. This is a convenience function that
+loads the bookmark's configuration (accounts, regions, resource types) and
+runs `queryResources()` with those parameters.
+
+**Parameters:**
+- `bookmarkId` (required): The bookmark's UUID from `listBookmarks()`
+- `options.detail`: Detail level for results (same as queryResources)
+
+**Example usage:**
+```javascript
+// Get bookmarks and execute one
+const bookmarks = listBookmarks();
+const myBookmark = bookmarks.find(b => b.name === "Production EC2");
+
+if (myBookmark) {
+  // Quick count
+  const count = queryBookmarks(myBookmark.id, { detail: "count" });
+  console.log(`Production has ${count.count} EC2 instances`);
+
+  // Full query with tags
+  const result = queryBookmarks(myBookmark.id, { detail: "tags" });
+  if (result.status === "success") {
+    result.data.forEach(r => {
+      console.log(`${r.displayName} - ${r.status}`);
+    });
+  }
+}
+
+// Execute bookmark by ID directly (if you know the ID)
+const result = queryBookmarks("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+console.log(`Found ${result.count} resources`);
+
+// Handle errors
+if (result.status === "error") {
+  console.error("Bookmark query failed:", result.errors);
+}
+```
+
+**Error handling:**
+- Returns error result if bookmark ID not found
+- Returns error result if AWS client not initialized (login required)
+- Partial results if some account/region queries fail
 "#.to_string()
 }
 
@@ -567,16 +1083,110 @@ mod tests {
     fn test_documentation_format() {
         let docs = get_documentation();
 
-        // Verify required documentation elements
+        // Verify required documentation elements for queryResources
         assert!(docs.contains("queryResources()"));
         assert!(docs.contains("function queryResources("));
         assert!(docs.contains("QueryOptions"));
-        assert!(docs.contains("ResourceInfo"));
+        assert!(docs.contains("QueryResult"));
+        assert!(docs.contains("detail?:"));
+        assert!(docs.contains("'count' | 'summary' | 'tags' | 'full'"));
+        assert!(docs.contains("status: 'success' | 'partial' | 'error'"));
+        assert!(docs.contains("warnings:"));
+        assert!(docs.contains("errors:"));
         assert!(docs.contains("Return value structure:"));
         assert!(docs.contains("```json"));
         assert!(docs.contains("Example usage:"));
-        assert!(docs.contains("Edge cases:"));
         assert!(docs.contains("Error handling:"));
         assert!(docs.contains("Performance considerations:"));
+
+        // Verify listBookmarks documentation
+        assert!(docs.contains("listBookmarks()"));
+        assert!(docs.contains("function listBookmarks(): BookmarkInfo[]"));
+        assert!(docs.contains("interface BookmarkInfo"));
+        assert!(docs.contains("accountIds: string[]"));
+        assert!(docs.contains("regionCodes: string[]"));
+        assert!(docs.contains("resourceTypes: string[]"));
+        assert!(docs.contains("hasTagFilters: boolean"));
+
+        // Verify queryBookmarks documentation
+        assert!(docs.contains("queryBookmarks()"));
+        assert!(docs.contains("function queryBookmarks("));
+        assert!(docs.contains("bookmarkId: string"));
+    }
+
+    #[test]
+    fn test_categorize_error() {
+        // Test access denied
+        let (code, is_warning) = categorize_error("Access Denied: You are not authorized");
+        assert_eq!(code, "AccessDenied");
+        assert!(!is_warning);
+
+        // Test rate limiting (should be warning)
+        let (code, is_warning) = categorize_error("Rate exceeded, please slow down");
+        assert_eq!(code, "RateLimitExceeded");
+        assert!(is_warning);
+
+        // Test throttling (should be warning)
+        let (code, is_warning) = categorize_error("Request throttled");
+        assert_eq!(code, "RateLimitExceeded");
+        assert!(is_warning);
+
+        // Test timeout (should be warning)
+        let (code, is_warning) = categorize_error("Connection timed out");
+        assert_eq!(code, "Timeout");
+        assert!(is_warning);
+
+        // Test not found
+        let (code, is_warning) = categorize_error("Resource not found");
+        assert_eq!(code, "NotFound");
+        assert!(!is_warning);
+
+        // Test invalid request
+        let (code, is_warning) = categorize_error("Invalid parameter value");
+        assert_eq!(code, "InvalidRequest");
+        assert!(!is_warning);
+
+        // Test unknown error
+        let (code, is_warning) = categorize_error("Something unexpected happened");
+        assert_eq!(code, "UnknownError");
+        assert!(!is_warning);
+    }
+
+    #[test]
+    fn test_query_resources_args_deserialize() {
+        // Test with all fields
+        let json = r#"{
+            "accounts": ["123456789012"],
+            "regions": ["us-east-1"],
+            "resourceTypes": ["AWS::EC2::Instance"],
+            "detail": "full"
+        }"#;
+        let args: QueryResourcesArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.accounts, Some(vec!["123456789012".to_string()]));
+        assert_eq!(args.regions, Some(vec!["us-east-1".to_string()]));
+        assert_eq!(args.resource_types, vec!["AWS::EC2::Instance".to_string()]);
+        assert_eq!(args.detail, Some("full".to_string()));
+
+        // Test with minimal fields (detail optional)
+        let json_minimal = r#"{
+            "resourceTypes": ["AWS::S3::Bucket"]
+        }"#;
+        let args_minimal: QueryResourcesArgs = serde_json::from_str(json_minimal).unwrap();
+        assert_eq!(args_minimal.accounts, None);
+        assert_eq!(args_minimal.regions, None);
+        assert_eq!(args_minimal.detail, None);
+    }
+
+    #[test]
+    fn test_query_bookmarks_args_deserialize() {
+        // Test with detail
+        let json = r#"{"detail": "tags"}"#;
+        let args: QueryBookmarksArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.detail, Some("tags".to_string()));
+
+        // Test with empty object
+        let json_empty = r#"{}"#;
+        let args_empty: QueryBookmarksArgs = serde_json::from_str(json_empty).unwrap();
+        assert_eq!(args_empty.detail, None);
     }
 }

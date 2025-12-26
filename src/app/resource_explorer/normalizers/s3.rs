@@ -79,4 +79,3 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
         "AWS::S3::Bucket"
     }
 }
-

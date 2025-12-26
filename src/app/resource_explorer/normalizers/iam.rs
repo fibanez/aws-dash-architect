@@ -1,4 +1,4 @@
-use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
+use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,17 +32,16 @@ impl AsyncResourceNormalizer for IAMRoleNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::IAM::Role", &role_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::IAM::Role {}: {}", role_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::IAM::Role {}: {}",
+                    role_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -131,17 +130,16 @@ impl AsyncResourceNormalizer for IAMUserNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::IAM::User", &user_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::IAM::User {}: {}", user_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::IAM::User {}: {}",
+                    user_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -246,17 +244,16 @@ impl AsyncResourceNormalizer for IAMPolicyNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::IAM::Policy", &policy_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::IAM::Policy {}: {}", policy_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::IAM::Policy {}: {}",
+                    policy_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -295,4 +292,3 @@ impl AsyncResourceNormalizer for IAMPolicyNormalizer {
         "AWS::IAM::Policy"
     }
 }
-

@@ -10,18 +10,15 @@
 //! - window_rendering: All individual window rendering methods
 
 use super::aws_login_window::AwsLoginWindow;
-use super::cloudwatch_logs_window::CloudWatchLogsWindow;
 use super::cloudtrail_events_window::CloudTrailEventsWindow;
+use super::cloudwatch_logs_window::CloudWatchLogsWindow;
 use super::command_palette::CommandPalette;
 use super::help_window::HelpWindow;
 use super::log_window::LogWindow;
 use super::verification_window::VerificationWindow;
 use super::window_focus::WindowFocusManager;
 use super::window_selector::WindowSelector;
-use super::{
-    HintMode, HintOverlay, KeyMappingRegistry,
-    NavigableWidgetManager, NavigationState,
-};
+use super::{HintMode, HintOverlay, KeyMappingRegistry, NavigableWidgetManager, NavigationState};
 use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::notifications::NotificationManager;
 use crate::app::resource_explorer::ResourceExplorer;
@@ -51,17 +48,9 @@ pub enum ThemeChoice {
     Mocha,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Default)]
 pub struct NavigationStatusBarSettings {
     pub show_status_bar: bool,
-}
-
-impl Default for NavigationStatusBarSettings {
-    fn default() -> Self {
-        Self {
-            show_status_bar: false, // Hidden by default
-        }
-    }
 }
 
 impl std::fmt::Display for ThemeChoice {

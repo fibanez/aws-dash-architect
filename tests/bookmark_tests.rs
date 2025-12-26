@@ -12,7 +12,7 @@
 //! - **Folder Hierarchy**: Parent-child relationships
 //! - **Access Tracking**: Usage counting and last accessed timestamps
 
-use awsdash::app::resource_explorer::bookmarks::{Bookmark, BookmarkFolder, BookmarkCollection};
+use awsdash::app::resource_explorer::bookmarks::{Bookmark, BookmarkCollection, BookmarkFolder};
 use awsdash::app::resource_explorer::state::{
     AccountSelection, GroupingMode, RegionSelection, ResourceExplorerState, ResourceTypeSelection,
     TagFilter, TagFilterGroup, TagFilterType,
@@ -47,8 +47,14 @@ fn test_bookmark_captures_explorer_state() {
     assert_eq!(bookmark.name, "My Bookmark");
     assert_eq!(bookmark.account_ids, vec!["123456789012".to_string()]);
     assert_eq!(bookmark.region_codes, vec!["us-east-1".to_string()]);
-    assert_eq!(bookmark.resource_type_ids, vec!["AWS::EC2::Instance".to_string()]);
-    assert_eq!(bookmark.grouping, GroupingMode::ByTag("Environment".to_string()));
+    assert_eq!(
+        bookmark.resource_type_ids,
+        vec!["AWS::EC2::Instance".to_string()]
+    );
+    assert_eq!(
+        bookmark.grouping,
+        GroupingMode::ByTag("Environment".to_string())
+    );
     assert_eq!(bookmark.search_filter, "production");
     assert_eq!(bookmark.access_count, 0);
     assert!(bookmark.last_accessed.is_none());
@@ -68,7 +74,10 @@ fn test_bookmark_apply_to_state_updates_grouping() {
 
     bookmark.apply_to_state(&mut new_state);
 
-    assert_eq!(new_state.primary_grouping, GroupingMode::ByTag("Team".to_string()));
+    assert_eq!(
+        new_state.primary_grouping,
+        GroupingMode::ByTag("Team".to_string())
+    );
     assert_eq!(new_state.search_filter, "backend");
     assert_eq!(bookmark.access_count, 1);
     assert!(bookmark.last_accessed.is_some());
@@ -268,9 +277,7 @@ fn test_bookmark_with_tag_filters() {
         TagFilter::new("Environment".to_string(), TagFilterType::Equals)
             .with_values(vec!["Production".to_string()]),
     );
-    group.add_filter(
-        TagFilter::new("Team".to_string(), TagFilterType::Exists),
-    );
+    group.add_filter(TagFilter::new("Team".to_string(), TagFilterType::Exists));
 
     state.tag_filter_group = group.clone();
 
@@ -406,7 +413,9 @@ fn test_bookmark_collection_serialization() {
 
     collection.add(Bookmark::new("Bookmark 1".to_string(), &state));
     collection.add(Bookmark::new("Bookmark 2".to_string(), &state));
-    collection.folders.push(BookmarkFolder::new("Folder 1".to_string(), None));
+    collection
+        .folders
+        .push(BookmarkFolder::new("Folder 1".to_string(), None));
 
     // Serialize
     let json = serde_json::to_string(&collection).unwrap();

@@ -1,7 +1,10 @@
 use super::super::credentials::CredentialCoordinator;
+use super::super::status::{report_status, report_status_done};
 use anyhow::{Context, Result};
 use aws_sdk_backup as backup;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct BackupService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -19,6 +22,7 @@ impl BackupService {
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
         let aws_config = self
             .credential_coordinator
@@ -39,7 +43,47 @@ impl BackupService {
             let page = page?;
             if let Some(backup_plans_list) = page.backup_plans_list {
                 for backup_plan in backup_plans_list {
-                    let backup_plan_json = self.backup_plan_list_member_to_json(&backup_plan);
+                    let mut backup_plan_json = self.backup_plan_list_member_to_json(&backup_plan);
+
+                    if include_details {
+                        if let Some(backup_plan_id) = &backup_plan.backup_plan_id {
+                            report_status(
+                                "Backup",
+                                "get_backup_plan_details",
+                                Some(backup_plan_id),
+                            );
+
+                            // Get detailed plan info
+                            if let Ok(plan_detail) =
+                                self.get_backup_plan_internal(&client, backup_plan_id).await
+                            {
+                                if let serde_json::Value::Object(ref mut map) = backup_plan_json {
+                                    if let serde_json::Value::Object(details) = plan_detail {
+                                        for (k, v) in details {
+                                            map.insert(k, v);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Get backup selections
+                            if let Ok(selections) = self
+                                .get_backup_selections_internal(&client, backup_plan_id)
+                                .await
+                            {
+                                if let serde_json::Value::Object(ref mut map) = backup_plan_json {
+                                    map.insert("BackupSelections".to_string(), selections);
+                                }
+                            }
+
+                            report_status_done(
+                                "Backup",
+                                "get_backup_plan_details",
+                                Some(backup_plan_id),
+                            );
+                        }
+                    }
+
                     backup_plans.push(backup_plan_json);
                 }
             }
@@ -130,6 +174,7 @@ impl BackupService {
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
         let aws_config = self
             .credential_coordinator
@@ -150,7 +195,41 @@ impl BackupService {
             let page = page?;
             if let Some(backup_vault_list) = page.backup_vault_list {
                 for backup_vault in backup_vault_list {
-                    let backup_vault_json = self.backup_vault_list_member_to_json(&backup_vault);
+                    let mut backup_vault_json =
+                        self.backup_vault_list_member_to_json(&backup_vault);
+
+                    if include_details {
+                        if let Some(vault_name) = &backup_vault.backup_vault_name {
+                            report_status("Backup", "get_backup_vault_details", Some(vault_name));
+
+                            // Get vault access policy
+                            if let Ok(policy) = self
+                                .get_vault_access_policy_internal(&client, vault_name)
+                                .await
+                            {
+                                if let serde_json::Value::Object(ref mut map) = backup_vault_json {
+                                    map.insert("AccessPolicy".to_string(), policy);
+                                }
+                            }
+
+                            // Get recovery points (limit to 20)
+                            if let Ok(recovery_points) = self
+                                .list_recovery_points_internal(&client, vault_name)
+                                .await
+                            {
+                                if let serde_json::Value::Object(ref mut map) = backup_vault_json {
+                                    map.insert("RecoveryPoints".to_string(), recovery_points);
+                                }
+                            }
+
+                            report_status_done(
+                                "Backup",
+                                "get_backup_vault_details",
+                                Some(vault_name),
+                            );
+                        }
+                    }
+
                     backup_vaults.push(backup_vault_json);
                 }
             }
@@ -500,6 +579,350 @@ impl BackupService {
         json.insert(
             "Status".to_string(),
             serde_json::Value::String("Available".to_string()),
+        );
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Get detailed information for a backup plan (Phase 2 enrichment)
+    pub async fn get_backup_plan_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        backup_plan_id: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = backup::Client::new(&aws_config);
+
+        let mut details = serde_json::Map::new();
+
+        // Get detailed plan info
+        if let Ok(serde_json::Value::Object(plan_obj)) =
+            self.get_backup_plan_internal(&client, backup_plan_id).await
+        {
+            for (k, v) in plan_obj {
+                details.insert(k, v);
+            }
+        }
+
+        // Get backup selections
+        if let Ok(selections) = self
+            .get_backup_selections_internal(&client, backup_plan_id)
+            .await
+        {
+            details.insert("BackupSelections".to_string(), selections);
+        }
+
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Get detailed information for a backup vault (Phase 2 enrichment)
+    pub async fn get_backup_vault_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        backup_vault_name: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = backup::Client::new(&aws_config);
+
+        let mut details = serde_json::Map::new();
+
+        // Get vault access policy
+        if let Ok(policy) = self
+            .get_vault_access_policy_internal(&client, backup_vault_name)
+            .await
+        {
+            details.insert("AccessPolicy".to_string(), policy);
+        }
+
+        // Get recovery points (limit to 20)
+        if let Ok(recovery_points) = self
+            .list_recovery_points_internal(&client, backup_vault_name)
+            .await
+        {
+            details.insert("RecoveryPoints".to_string(), recovery_points);
+        }
+
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Internal helper to get backup plan details
+    async fn get_backup_plan_internal(
+        &self,
+        client: &backup::Client,
+        backup_plan_id: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .get_backup_plan()
+                .backup_plan_id(backup_plan_id)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout getting backup plan {}", backup_plan_id))?
+        .with_context(|| format!("Failed to get backup plan {}", backup_plan_id))?;
+
+        let mut details = serde_json::Map::new();
+
+        if let Some(backup_plan) = result.backup_plan {
+            let plan_json = self.backup_plan_to_json(&backup_plan);
+            details.insert("BackupPlan".to_string(), plan_json);
+        }
+
+        if let Some(backup_plan_arn) = result.backup_plan_arn {
+            details.insert(
+                "BackupPlanArn".to_string(),
+                serde_json::Value::String(backup_plan_arn),
+            );
+        }
+
+        if let Some(version_id) = result.version_id {
+            details.insert(
+                "VersionId".to_string(),
+                serde_json::Value::String(version_id),
+            );
+        }
+
+        if let Some(creation_date) = result.creation_date {
+            details.insert(
+                "CreationDate".to_string(),
+                serde_json::Value::String(creation_date.to_string()),
+            );
+        }
+
+        if let Some(last_execution_date) = result.last_execution_date {
+            details.insert(
+                "LastExecutionDate".to_string(),
+                serde_json::Value::String(last_execution_date.to_string()),
+            );
+        }
+
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Internal helper to get backup selections
+    async fn get_backup_selections_internal(
+        &self,
+        client: &backup::Client,
+        backup_plan_id: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .list_backup_selections()
+                .backup_plan_id(backup_plan_id)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout listing backup selections for {}", backup_plan_id))?
+        .with_context(|| format!("Failed to list backup selections for {}", backup_plan_id))?;
+
+        let selections: Vec<serde_json::Value> = result
+            .backup_selections_list
+            .unwrap_or_default()
+            .into_iter()
+            .map(|selection| {
+                let mut sel_json = serde_json::Map::new();
+                if let Some(selection_id) = selection.selection_id {
+                    sel_json.insert(
+                        "SelectionId".to_string(),
+                        serde_json::Value::String(selection_id),
+                    );
+                }
+                if let Some(selection_name) = selection.selection_name {
+                    sel_json.insert(
+                        "SelectionName".to_string(),
+                        serde_json::Value::String(selection_name),
+                    );
+                }
+                if let Some(iam_role_arn) = selection.iam_role_arn {
+                    sel_json.insert(
+                        "IamRoleArn".to_string(),
+                        serde_json::Value::String(iam_role_arn),
+                    );
+                }
+                if let Some(creation_date) = selection.creation_date {
+                    sel_json.insert(
+                        "CreationDate".to_string(),
+                        serde_json::Value::String(creation_date.to_string()),
+                    );
+                }
+                serde_json::Value::Object(sel_json)
+            })
+            .collect();
+
+        Ok(serde_json::Value::Array(selections))
+    }
+
+    /// Internal helper to get vault access policy
+    async fn get_vault_access_policy_internal(
+        &self,
+        client: &backup::Client,
+        backup_vault_name: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .get_backup_vault_access_policy()
+                .backup_vault_name(backup_vault_name)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout getting access policy for {}", backup_vault_name))?
+        .with_context(|| format!("Failed to get access policy for {}", backup_vault_name))?;
+
+        let mut policy_json = serde_json::Map::new();
+
+        if let Some(policy) = result.policy {
+            // Try to parse as JSON
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&policy) {
+                policy_json.insert("Policy".to_string(), parsed);
+            } else {
+                policy_json.insert("Policy".to_string(), serde_json::Value::String(policy));
+            }
+        }
+
+        Ok(serde_json::Value::Object(policy_json))
+    }
+
+    /// Internal helper to list recovery points
+    async fn list_recovery_points_internal(
+        &self,
+        client: &backup::Client,
+        backup_vault_name: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .list_recovery_points_by_backup_vault()
+                .backup_vault_name(backup_vault_name)
+                .max_results(20)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout listing recovery points for {}", backup_vault_name))?
+        .with_context(|| format!("Failed to list recovery points for {}", backup_vault_name))?;
+
+        let recovery_points: Vec<serde_json::Value> = result
+            .recovery_points
+            .unwrap_or_default()
+            .into_iter()
+            .map(|rp| self.recovery_point_to_json(&rp))
+            .collect();
+
+        Ok(serde_json::Value::Array(recovery_points))
+    }
+
+    /// Convert recovery point to JSON
+    fn recovery_point_to_json(
+        &self,
+        recovery_point: &backup::types::RecoveryPointByBackupVault,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(recovery_point_arn) = &recovery_point.recovery_point_arn {
+            json.insert(
+                "RecoveryPointArn".to_string(),
+                serde_json::Value::String(recovery_point_arn.clone()),
+            );
+        }
+
+        if let Some(backup_vault_name) = &recovery_point.backup_vault_name {
+            json.insert(
+                "BackupVaultName".to_string(),
+                serde_json::Value::String(backup_vault_name.clone()),
+            );
+        }
+
+        if let Some(resource_arn) = &recovery_point.resource_arn {
+            json.insert(
+                "ResourceArn".to_string(),
+                serde_json::Value::String(resource_arn.clone()),
+            );
+        }
+
+        if let Some(resource_type) = &recovery_point.resource_type {
+            json.insert(
+                "ResourceType".to_string(),
+                serde_json::Value::String(resource_type.clone()),
+            );
+        }
+
+        if let Some(creation_date) = recovery_point.creation_date {
+            json.insert(
+                "CreationDate".to_string(),
+                serde_json::Value::String(creation_date.to_string()),
+            );
+        }
+
+        if let Some(status) = &recovery_point.status {
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
+        }
+
+        if let Some(status_message) = &recovery_point.status_message {
+            json.insert(
+                "StatusMessage".to_string(),
+                serde_json::Value::String(status_message.clone()),
+            );
+        }
+
+        if let Some(backup_size_in_bytes) = recovery_point.backup_size_in_bytes {
+            json.insert(
+                "BackupSizeInBytes".to_string(),
+                serde_json::Value::Number(backup_size_in_bytes.into()),
+            );
+        }
+
+        if let Some(iam_role_arn) = &recovery_point.iam_role_arn {
+            json.insert(
+                "IamRoleArn".to_string(),
+                serde_json::Value::String(iam_role_arn.clone()),
+            );
+        }
+
+        if let Some(encryption_key_arn) = &recovery_point.encryption_key_arn {
+            json.insert(
+                "EncryptionKeyArn".to_string(),
+                serde_json::Value::String(encryption_key_arn.clone()),
+            );
+        }
+
+        json.insert(
+            "IsEncrypted".to_string(),
+            serde_json::Value::Bool(recovery_point.is_encrypted),
         );
 
         serde_json::Value::Object(json)

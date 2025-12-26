@@ -36,17 +36,16 @@ impl AsyncResourceNormalizer for SNSTopicNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::SNS::Topic", &topic_arn, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::SNS::Topic {}: {}", topic_arn, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::SNS::Topic {}: {}",
+                    topic_arn,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -86,4 +85,3 @@ impl AsyncResourceNormalizer for SNSTopicNormalizer {
         "AWS::SNS::Topic"
     }
 }
-

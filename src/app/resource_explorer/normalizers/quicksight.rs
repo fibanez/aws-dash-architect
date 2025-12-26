@@ -44,7 +44,6 @@ impl AsyncResourceNormalizer for QuickSightDataSourceNormalizer {
             });
         }
 
-
         let mut entry = ResourceEntry {
             resource_id: data_source_id.clone(),
             resource_type: "AWS::QuickSight::DataSource".to_string(),
@@ -71,7 +70,12 @@ impl AsyncResourceNormalizer for QuickSightDataSourceNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -132,7 +136,6 @@ impl AsyncResourceNormalizer for QuickSightDashboardNormalizer {
             });
         }
 
-
         let mut entry = ResourceEntry {
             resource_id: data_source_id.clone(),
             resource_type: "AWS::QuickSight::DataSource".to_string(),
@@ -159,7 +162,12 @@ impl AsyncResourceNormalizer for QuickSightDashboardNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -220,7 +228,6 @@ impl AsyncResourceNormalizer for QuickSightDataSetNormalizer {
             });
         }
 
-
         let mut entry = ResourceEntry {
             resource_id: data_source_id.clone(),
             resource_type: "AWS::QuickSight::DataSource".to_string(),
@@ -247,7 +254,12 @@ impl AsyncResourceNormalizer for QuickSightDataSetNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

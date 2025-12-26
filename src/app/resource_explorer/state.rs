@@ -219,7 +219,10 @@ impl TagFilterType {
     pub fn supports_multiple_values(&self) -> bool {
         matches!(
             self,
-            TagFilterType::In | TagFilterType::NotIn | TagFilterType::Equals | TagFilterType::NotEquals
+            TagFilterType::In
+                | TagFilterType::NotIn
+                | TagFilterType::Equals
+                | TagFilterType::NotEquals
         )
     }
 }
@@ -313,7 +316,9 @@ impl TagFilter {
     /// Returns true if the resource matches this filter
     pub fn matches(&self, resource: &ResourceEntry) -> bool {
         // Find the tag value for this key on the resource
-        let tag_value = resource.tags.iter()
+        let tag_value = resource
+            .tags
+            .iter()
             .find(|tag| tag.key == self.tag_key)
             .map(|tag| tag.value.as_str());
 
@@ -508,19 +513,21 @@ impl TagFilterGroup {
         }
 
         // Evaluate all direct filters
-        let filter_results: Vec<bool> = self.filters.iter()
+        let filter_results: Vec<bool> = self
+            .filters
+            .iter()
             .map(|filter| filter.matches(resource))
             .collect();
 
         // Evaluate all sub-groups recursively
-        let subgroup_results: Vec<bool> = self.sub_groups.iter()
+        let subgroup_results: Vec<bool> = self
+            .sub_groups
+            .iter()
             .map(|group| group.matches(resource))
             .collect();
 
         // Combine all results (filters + sub-groups) based on the operator
-        let all_results: Vec<bool> = filter_results.into_iter()
-            .chain(subgroup_results)
-            .collect();
+        let all_results: Vec<bool> = filter_results.into_iter().chain(subgroup_results).collect();
 
         if all_results.is_empty() {
             // No conditions to evaluate - matches by default
@@ -600,7 +607,7 @@ pub struct ResourceExplorerState {
     pub badge_selector: crate::app::resource_explorer::tag_badges::BadgeSelector, // Badge selection strategy
     pub property_catalog: crate::app::resource_explorer::PropertyCatalog, // Property discovery and metadata
     pub property_filter_group: crate::app::resource_explorer::PropertyFilterGroup, // Property-based filtering
-    pub loading_tasks: HashSet<String>,   // Track active queries
+    pub loading_tasks: HashSet<String>, // Track active queries
     pub cached_queries: HashMap<String, Vec<ResourceEntry>>, // Session cache
     pub show_refresh_dialog: bool,
     pub show_account_dialog: bool,
@@ -608,15 +615,18 @@ pub struct ResourceExplorerState {
     pub show_resource_type_dialog: bool,
     pub stale_data_threshold_minutes: i64, // Data older than this is considered stale
     // Tag filtering UI state
-    pub show_only_tagged: bool,        // Filter to only resources with tags
-    pub show_only_untagged: bool,      // Filter to only resources without tags
-    pub show_filter_builder: bool,     // Show advanced filter builder dialog
+    pub show_only_tagged: bool,    // Filter to only resources with tags
+    pub show_only_untagged: bool,  // Filter to only resources without tags
+    pub show_filter_builder: bool, // Show advanced filter builder dialog
     pub show_property_filter_builder: bool, // Show property filter builder dialog
     // Tag grouping UI state
     pub show_tag_hierarchy_builder: bool, // Show tag hierarchy builder dialog
     pub min_tag_resources_for_grouping: usize, // Minimum resource count for tags to appear in GroupBy dropdown
     // Property grouping UI state (M6)
     pub show_property_hierarchy_builder: bool, // Show property hierarchy builder dialog
+    // Two-phase loading state
+    pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
+    pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
 }
 
 impl Default for ResourceExplorerState {
@@ -652,6 +662,8 @@ impl ResourceExplorerState {
             show_tag_hierarchy_builder: false,
             min_tag_resources_for_grouping: 1, // Default: show all tags with at least 1 resource
             show_property_hierarchy_builder: false,
+            phase2_enrichment_in_progress: false,
+            phase2_enrichment_completed: false,
         }
     }
 
@@ -814,19 +826,33 @@ impl ResourceExplorerState {
     /// This should be called when the active selection changes.
     pub fn rebuild_property_catalog_from_active_selection(&mut self) {
         // Filter resources to match current query scope
-        let scoped_resources: Vec<ResourceEntry> = self.resources.iter()
+        let scoped_resources: Vec<ResourceEntry> = self
+            .resources
+            .iter()
             .filter(|resource| {
                 // Check if resource matches any selected account
-                let account_match = self.query_scope.accounts.is_empty() ||
-                    self.query_scope.accounts.iter().any(|a| a.account_id == resource.account_id);
+                let account_match = self.query_scope.accounts.is_empty()
+                    || self
+                        .query_scope
+                        .accounts
+                        .iter()
+                        .any(|a| a.account_id == resource.account_id);
 
                 // Check if resource matches any selected region
-                let region_match = self.query_scope.regions.is_empty() ||
-                    self.query_scope.regions.iter().any(|r| r.region_code == resource.region);
+                let region_match = self.query_scope.regions.is_empty()
+                    || self
+                        .query_scope
+                        .regions
+                        .iter()
+                        .any(|r| r.region_code == resource.region);
 
                 // Check if resource matches any selected resource type
-                let type_match = self.query_scope.resource_types.is_empty() ||
-                    self.query_scope.resource_types.iter().any(|rt| rt.resource_type == resource.resource_type);
+                let type_match = self.query_scope.resource_types.is_empty()
+                    || self
+                        .query_scope
+                        .resource_types
+                        .iter()
+                        .any(|rt| rt.resource_type == resource.resource_type);
 
                 account_match && region_match && type_match
             })
@@ -860,7 +886,8 @@ impl ResourceExplorerState {
     /// Calculate the total memory used by all resources (cache + active) in bytes
     pub fn calculate_total_memory_bytes(&self) -> usize {
         let cache_memory = self.calculate_cache_memory_bytes();
-        let active_memory: usize = self.resources
+        let active_memory: usize = self
+            .resources
             .iter()
             .map(|resource| resource.estimate_memory_bytes())
             .sum();
@@ -921,9 +948,15 @@ impl ResourceExplorerState {
     /// This should be called after resources are updated from a query
     pub fn update_tag_popularity(&mut self) {
         // Discover tags from resources (populates tag discovery for autocomplete)
-        tracing::info!("🏷️  Starting tag discovery for {} resources", self.resources.len());
+        tracing::info!(
+            "🏷️  Starting tag discovery for {} resources",
+            self.resources.len()
+        );
         self.tag_discovery.discover_tags(&self.resources);
-        tracing::info!("🏷️  Tag discovery complete - {} unique tag keys found", self.tag_discovery.tag_key_count());
+        tracing::info!(
+            "🏷️  Tag discovery complete - {} unique tag keys found",
+            self.tag_discovery.tag_key_count()
+        );
 
         // Analyze resources for tag popularity
         self.tag_popularity.analyze_resources(&self.resources);
@@ -1049,7 +1082,10 @@ impl GroupingMode {
 
     /// Check if this is a tag-based grouping mode
     pub fn is_tag_based(&self) -> bool {
-        matches!(self, GroupingMode::ByTag(_) | GroupingMode::ByTagHierarchy(_))
+        matches!(
+            self,
+            GroupingMode::ByTag(_) | GroupingMode::ByTagHierarchy(_)
+        )
     }
 
     /// Get the tag keys used for grouping (if tag-based)
@@ -1064,9 +1100,7 @@ impl GroupingMode {
     /// Check if this grouping mode is valid
     pub fn is_valid(&self) -> bool {
         match self {
-            GroupingMode::ByAccount | GroupingMode::ByRegion | GroupingMode::ByResourceType => {
-                true
-            }
+            GroupingMode::ByAccount | GroupingMode::ByRegion | GroupingMode::ByResourceType => true,
             GroupingMode::ByTag(key) => !key.is_empty(),
             GroupingMode::ByTagHierarchy(keys) => {
                 !keys.is_empty() && keys.iter().all(|k| !k.is_empty())

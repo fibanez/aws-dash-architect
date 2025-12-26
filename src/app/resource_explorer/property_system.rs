@@ -437,11 +437,7 @@ impl PropertyCatalog {
     }
 
     /// Get a property value or Null if not present
-    pub fn get_property_or_null(
-        &self,
-        resource_id: &str,
-        property_path: &str,
-    ) -> PropertyValue {
+    pub fn get_property_or_null(&self, resource_id: &str, property_path: &str) -> PropertyValue {
         self.get_property(resource_id, property_path)
             .cloned()
             .unwrap_or(PropertyValue::Null)
@@ -468,9 +464,10 @@ impl PropertyCatalog {
     pub fn add_resource(&mut self, resource_id: &str, properties: HashMap<String, PropertyValue>) {
         for (path, value) in &properties {
             // Update property key metadata
-            let key = self.keys.entry(path.clone()).or_insert_with(|| {
-                PropertyKey::new(path.clone())
-            });
+            let key = self
+                .keys
+                .entry(path.clone())
+                .or_insert_with(|| PropertyKey::new(path.clone()));
 
             // Update frequency
             key.frequency += 1;
@@ -1060,14 +1057,19 @@ impl PropertyFilter {
                 if value.is_null() {
                     return false;
                 }
-                self.values.iter().any(|v| self.compare_values(value, v, CompareOp::Equal))
+                self.values
+                    .iter()
+                    .any(|v| self.compare_values(value, v, CompareOp::Equal))
             }
 
             PropertyFilterType::NotEquals => {
                 if value.is_null() {
                     return true; // Null is not equal to anything
                 }
-                !self.values.iter().any(|v| self.compare_values(value, v, CompareOp::Equal))
+                !self
+                    .values
+                    .iter()
+                    .any(|v| self.compare_values(value, v, CompareOp::Equal))
             }
 
             PropertyFilterType::Contains => {
@@ -1119,14 +1121,19 @@ impl PropertyFilter {
                 if value.is_null() {
                     return false;
                 }
-                self.values.iter().any(|v| self.compare_values(value, v, CompareOp::Equal))
+                self.values
+                    .iter()
+                    .any(|v| self.compare_values(value, v, CompareOp::Equal))
             }
 
             PropertyFilterType::NotIn => {
                 if value.is_null() {
                     return true;
                 }
-                !self.values.iter().any(|v| self.compare_values(value, v, CompareOp::Equal))
+                !self
+                    .values
+                    .iter()
+                    .any(|v| self.compare_values(value, v, CompareOp::Equal))
             }
 
             PropertyFilterType::GreaterThan => {
@@ -1154,15 +1161,18 @@ impl PropertyFilter {
     }
 
     /// Compare two values with type awareness
-    fn compare_values(&self, property_value: &PropertyValue, filter_value: &str, op: CompareOp) -> bool {
+    fn compare_values(
+        &self,
+        property_value: &PropertyValue,
+        filter_value: &str,
+        op: CompareOp,
+    ) -> bool {
         match property_value {
-            PropertyValue::String(s) => {
-                match op {
-                    CompareOp::Equal => s.as_ref() == filter_value,
-                    CompareOp::GreaterThan => s.as_ref() > filter_value,
-                    CompareOp::LessThan => s.as_ref() < filter_value,
-                }
-            }
+            PropertyValue::String(s) => match op {
+                CompareOp::Equal => s.as_ref() == filter_value,
+                CompareOp::GreaterThan => s.as_ref() > filter_value,
+                CompareOp::LessThan => s.as_ref() < filter_value,
+            },
 
             PropertyValue::Number(n) => {
                 if let Ok(filter_num) = filter_value.parse::<f64>() {
@@ -1207,12 +1217,10 @@ impl PropertyFilter {
                 }
             }
 
-            PropertyValue::Enum { code, label } => {
-                match op {
-                    CompareOp::Equal => code == filter_value || label == filter_value,
-                    _ => false,
-                }
-            }
+            PropertyValue::Enum { code, label } => match op {
+                CompareOp::Equal => code == filter_value || label == filter_value,
+                _ => false,
+            },
 
             PropertyValue::Null => false,
         }
@@ -1414,7 +1422,12 @@ impl PropertyFilterGroup {
         if self.sub_groups.is_empty() {
             1
         } else {
-            1 + self.sub_groups.iter().map(|g| g.max_depth()).max().unwrap_or(0)
+            1 + self
+                .sub_groups
+                .iter()
+                .map(|g| g.max_depth())
+                .max()
+                .unwrap_or(0)
         }
     }
 

@@ -18,7 +18,7 @@ pub struct LookupEventsParams {
 /// Lookup attribute for filtering CloudTrail events
 #[derive(Debug, Clone)]
 pub struct LookupAttribute {
-    pub attribute_key: String,   // EventId, EventName, ReadOnly, Username, ResourceType, ResourceName, EventSource, AccessKeyId
+    pub attribute_key: String, // EventId, EventName, ReadOnly, Username, ResourceType, ResourceName, EventSource, AccessKeyId
     pub attribute_value: String,
 }
 
@@ -273,7 +273,7 @@ impl CloudTrailService {
     }
 
     // ===== DATA PLANE OPERATIONS ===== //
-    
+
     /// Lookup CloudTrail events from the 90-day event history (data plane operation)
     /// This queries events without requiring a trail to be configured
     pub async fn lookup_events(
@@ -311,7 +311,9 @@ impl CloudTrailService {
             // Add lookup attribute filter if provided
             if let Some(ref attr) = params.lookup_attribute {
                 let lookup_attr = cloudtrail::types::LookupAttribute::builder()
-                    .attribute_key(cloudtrail::types::LookupAttributeKey::from(attr.attribute_key.as_str()))
+                    .attribute_key(cloudtrail::types::LookupAttributeKey::from(
+                        attr.attribute_key.as_str(),
+                    ))
                     .attribute_value(&attr.attribute_value)
                     .build()?;
                 request = request.lookup_attributes(lookup_attr);
@@ -319,9 +321,9 @@ impl CloudTrailService {
 
             // Add time range
             if let Some(start) = params.start_time {
-                request = request.start_time(aws_sdk_cloudtrail::primitives::DateTime::from_millis(
-                    start.timestamp_millis(),
-                ));
+                request = request.start_time(
+                    aws_sdk_cloudtrail::primitives::DateTime::from_millis(start.timestamp_millis()),
+                );
             }
 
             if let Some(end) = params.end_time {
@@ -381,7 +383,7 @@ impl CloudTrailService {
     }
 
     // ===== DEDICATED LOOKUP METHODS ===== //
-    
+
     /// Lookup CloudTrail events for a specific resource ID
     pub async fn lookup_events_by_resource_id(
         &self,
@@ -398,12 +400,12 @@ impl CloudTrailService {
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events for resource {} in account {} region {}",
             resource_id, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -423,12 +425,12 @@ impl CloudTrailService {
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events for resource type {} in account {} region {}",
             resource_type, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -445,20 +447,20 @@ impl CloudTrailService {
         let event_source = match service_name_lower.as_str() {
             // Core compute & storage services
             "s3" => "s3.amazonaws.com",
-            "ec2" => "ec2.amazonaws.com", 
+            "ec2" => "ec2.amazonaws.com",
             "lambda" => "lambda.amazonaws.com",
             "efs" => "elasticfilesystem.amazonaws.com",
             "ecs" => "ecs.amazonaws.com",
             "eks" => "eks.amazonaws.com",
             "batch" => "batch.amazonaws.com",
-            
+
             // Database services
             "rds" => "rds.amazonaws.com",
             "dynamodb" => "dynamodb.amazonaws.com",
             "elasticache" => "elasticache.amazonaws.com",
             "neptune" => "neptune.amazonaws.com",
             "redshift" => "redshift.amazonaws.com",
-            
+
             // Security & Identity services
             "iam" => "iam.amazonaws.com",
             "sts" => "sts.amazonaws.com",
@@ -469,7 +471,7 @@ impl CloudTrailService {
             "securityhub" => "securityhub.amazonaws.com",
             "acm" => "acm.amazonaws.com",
             "organizations" => "organizations.amazonaws.com",
-            
+
             // Networking services
             "elb" | "elasticloadbalancing" => "elasticloadbalancing.amazonaws.com",
             "elbv2" | "elasticloadbalancingv2" => "elasticloadbalancingv2.amazonaws.com",
@@ -478,20 +480,20 @@ impl CloudTrailService {
             "apigatewayv2" => "apigatewayv2.amazonaws.com",
             "cloudfront" => "cloudfront.amazonaws.com",
             "waf" | "wafv2" => "wafv2.amazonaws.com",
-            
+
             // Messaging & Events
             "sns" => "sns.amazonaws.com",
             "sqs" => "sqs.amazonaws.com",
             "eventbridge" | "events" => "events.amazonaws.com",
             "kinesis" => "kinesis.amazonaws.com",
             "firehose" | "kinesisfirehose" => "firehose.amazonaws.com",
-            
+
             // Developer Tools
             "codecommit" => "codecommit.amazonaws.com",
             "codebuild" => "codebuild.amazonaws.com",
             "codedeploy" => "codedeploy.amazonaws.com",
             "codepipeline" => "codepipeline.amazonaws.com",
-            
+
             // Analytics & ML
             "athena" => "athena.amazonaws.com",
             "glue" => "glue.amazonaws.com",
@@ -499,12 +501,12 @@ impl CloudTrailService {
             "sagemaker" => "sagemaker.amazonaws.com",
             "opensearch" | "elasticsearch" => "opensearch.amazonaws.com",
             "quicksight" => "quicksight.amazonaws.com",
-            
+
             // Application Integration
             "stepfunctions" | "states" => "states.amazonaws.com",
             "appsync" => "appsync.amazonaws.com",
             "cognito" => "cognito-idp.amazonaws.com",
-            
+
             // Management & Governance
             "cloudformation" | "cfn" => "cloudformation.amazonaws.com",
             "cloudtrail" => "cloudtrail.amazonaws.com",
@@ -513,7 +515,7 @@ impl CloudTrailService {
             "config" | "configservice" => "config.amazonaws.com",
             "backup" => "backup.amazonaws.com",
             "transfer" => "transfer.amazonaws.com",
-            
+
             // If it already looks like an event source, use as-is
             name if name.contains(".amazonaws.com") => name,
             // Otherwise assume it's already in the correct format
@@ -528,12 +530,12 @@ impl CloudTrailService {
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events for service {} (EventSource: {}) in account {} region {}",
             service_name, event_source, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -553,12 +555,12 @@ impl CloudTrailService {
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events for event name {} in account {} region {}",
             event_name, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -578,17 +580,17 @@ impl CloudTrailService {
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events for username {} in account {} region {}",
             username, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
     // ===== TIME-BASED CONVENIENCE METHODS ===== //
-    
+
     /// Lookup recent CloudTrail events (last N hours)
     pub async fn lookup_recent_events(
         &self,
@@ -599,19 +601,19 @@ impl CloudTrailService {
     ) -> Result<Vec<serde_json::Value>> {
         let now = Utc::now();
         let start_time = now - Duration::hours(hours_back);
-        
+
         let params = LookupEventsParams {
             start_time: Some(start_time),
             end_time: Some(now),
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events from last {} hours in account {} region {}",
             hours_back, account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -622,7 +624,8 @@ impl CloudTrailService {
         region: &str,
         max_results: Option<usize>,
     ) -> Result<Vec<serde_json::Value>> {
-        self.lookup_recent_events(account_id, region, 1, max_results).await
+        self.lookup_recent_events(account_id, region, 1, max_results)
+            .await
     }
 
     /// Lookup CloudTrail events from the last 24 hours
@@ -632,7 +635,8 @@ impl CloudTrailService {
         region: &str,
         max_results: Option<usize>,
     ) -> Result<Vec<serde_json::Value>> {
-        self.lookup_recent_events(account_id, region, 24, max_results).await
+        self.lookup_recent_events(account_id, region, 24, max_results)
+            .await
     }
 
     /// Lookup CloudTrail events from the last week
@@ -644,19 +648,19 @@ impl CloudTrailService {
     ) -> Result<Vec<serde_json::Value>> {
         let now = Utc::now();
         let start_time = now - Duration::weeks(1);
-        
+
         let params = LookupEventsParams {
             start_time: Some(start_time),
             end_time: Some(now),
             max_results: max_results.unwrap_or(100),
             ..Default::default()
         };
-        
+
         info!(
             "🔍 Looking up CloudTrail events from last week in account {} region {}",
             account_id, region
         );
-        
+
         self.lookup_events(account_id, region, params).await
     }
 
@@ -734,7 +738,10 @@ impl CloudTrailService {
                     serde_json::Value::Object(res_map)
                 })
                 .collect();
-            json.insert("Resources".to_string(), serde_json::Value::Array(resources_json));
+            json.insert(
+                "Resources".to_string(),
+                serde_json::Value::Array(resources_json),
+            );
         }
 
         // Include the full CloudTrail event JSON if available

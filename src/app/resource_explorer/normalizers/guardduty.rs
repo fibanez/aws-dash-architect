@@ -36,25 +36,17 @@ impl AsyncResourceNormalizer for GuardDutyDetectorNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::GuardDuty::Detector", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::GuardDuty::Detector {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::GuardDuty::Detector {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -98,4 +90,3 @@ impl AsyncResourceNormalizer for GuardDutyDetectorNormalizer {
         "AWS::GuardDuty::Detector"
     }
 }
-

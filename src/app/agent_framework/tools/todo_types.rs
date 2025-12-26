@@ -80,9 +80,16 @@ mod tests {
     #[test]
     fn test_todo_item_status_checks() {
         let pending = TodoItem::new("Task 1".into(), "Doing task 1".into(), TodoStatus::Pending);
-        let in_progress =
-            TodoItem::new("Task 2".into(), "Doing task 2".into(), TodoStatus::InProgress);
-        let completed = TodoItem::new("Task 3".into(), "Doing task 3".into(), TodoStatus::Completed);
+        let in_progress = TodoItem::new(
+            "Task 2".into(),
+            "Doing task 2".into(),
+            TodoStatus::InProgress,
+        );
+        let completed = TodoItem::new(
+            "Task 3".into(),
+            "Doing task 3".into(),
+            TodoStatus::Completed,
+        );
 
         assert!(pending.is_pending());
         assert!(!pending.is_in_progress());

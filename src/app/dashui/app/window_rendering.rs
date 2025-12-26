@@ -3,6 +3,7 @@
 use super::{DashApp, FocusedWindow};
 use crate::app::agent_framework::v8_bindings::set_global_aws_identity;
 use crate::app::dashui::window_focus::FocusableWindow;
+use crate::app::resource_explorer::{set_global_bookmark_manager, set_global_explorer_state};
 use eframe::egui;
 
 impl DashApp {
@@ -89,6 +90,15 @@ impl DashApp {
                     // This ensures the AWS client is available for agent framework tools even if the window isn't open
                     self.resource_explorer
                         .set_aws_identity_center(Some(aws_identity.clone()));
+
+                    // Set global explorer state and bookmark manager for unified V8 bindings
+                    set_global_explorer_state(Some(self.resource_explorer.get_state()));
+                    set_global_bookmark_manager(Some(
+                        self.resource_explorer.get_bookmark_manager(),
+                    ));
+                    tracing::debug!(
+                        "Global explorer state and bookmark manager set for V8 bindings"
+                    );
                 } else {
                     tracing::debug!("Waiting for credentials before initializing windows");
                 }
@@ -106,7 +116,9 @@ impl DashApp {
                 // Log when transitioning from not logged in to logged in
                 if !was_logged_in_before && is_logged_in_now {
                     tracing::info!("AWS login successful");
-                    tracing::info!("ResourceExplorer and AgentManagerWindow initialized with credentials");
+                    tracing::info!(
+                        "ResourceExplorer and AgentManagerWindow initialized with credentials"
+                    );
                     // Note: Shake animation now triggered when credentials debug window opens
                 }
             } else if self.aws_identity_center.is_some() && self.aws_login_window.logged_out {
@@ -120,7 +132,11 @@ impl DashApp {
 
                 // Clear ResourceExplorer AWS client
                 self.resource_explorer.set_aws_identity_center(None);
-                tracing::info!("🧹 ResourceExplorer cleared on logout");
+
+                // Clear global explorer state and bookmark manager for V8 bindings
+                set_global_explorer_state(None);
+                set_global_bookmark_manager(None);
+                tracing::info!("ResourceExplorer cleared on logout");
             }
 
             // Check if the accounts window is open and set focus
@@ -317,7 +333,10 @@ impl DashApp {
     /// Handle the agent manager window
     pub(super) fn handle_agent_manager_window(&mut self, ctx: &egui::Context) {
         // Check if window exists and is open before borrowing
-        let is_open = self.agent_manager_window.as_ref().map_or(false, |w| w.is_open());
+        let is_open = self
+            .agent_manager_window
+            .as_ref()
+            .is_some_and(|w| w.is_open());
         if !is_open {
             return;
         }

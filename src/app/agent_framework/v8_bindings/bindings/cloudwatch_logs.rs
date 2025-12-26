@@ -91,9 +91,7 @@ pub struct CloudWatchLogsQueryResult {
 }
 
 /// Register CloudWatch Logs functions into V8 context
-pub fn register(
-    scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>,
-) -> Result<()> {
+pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
 
     // Register queryCloudWatchLogEvents() function
@@ -143,11 +141,7 @@ fn query_cloudwatch_log_events_callback(
     let query_args: QueryCloudWatchLogEventsArgs = match serde_json::from_str(&json_str) {
         Ok(args) => args,
         Err(e) => {
-            let msg = v8::String::new(
-                scope,
-                &format!("Failed to parse arguments: {}", e),
-            )
-            .unwrap();
+            let msg = v8::String::new(scope, &format!("Failed to parse arguments: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -158,11 +152,8 @@ fn query_cloudwatch_log_events_callback(
     let result = match execute_query(query_args) {
         Ok(result) => result,
         Err(e) => {
-            let msg = v8::String::new(
-                scope,
-                &format!("CloudWatch Logs query failed: {}", e),
-            )
-            .unwrap();
+            let msg =
+                v8::String::new(scope, &format!("CloudWatch Logs query failed: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -173,11 +164,8 @@ fn query_cloudwatch_log_events_callback(
     let result_json = match serde_json::to_string(&result) {
         Ok(json) => json,
         Err(e) => {
-            let msg = v8::String::new(
-                scope,
-                &format!("Failed to serialize query result: {}", e),
-            )
-            .unwrap();
+            let msg = v8::String::new(scope, &format!("Failed to serialize query result: {}", e))
+                .unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -185,7 +173,7 @@ fn query_cloudwatch_log_events_callback(
     };
 
     // Parse JSON string to V8 value
-    let result_value = match v8::json::parse(scope, v8::String::new(scope, &result_json).unwrap().into()) {
+    let result_value = match v8::json::parse(scope, v8::String::new(scope, &result_json).unwrap()) {
         Some(val) => val,
         None => {
             let msg = v8::String::new(scope, "Failed to parse result JSON").unwrap();
@@ -202,9 +190,8 @@ fn query_cloudwatch_log_events_callback(
 fn execute_query(args: QueryCloudWatchLogEventsArgs) -> Result<CloudWatchLogsQueryResult> {
     // Use block_in_place to avoid nested runtime error
     tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            query_cloudwatch_logs_internal(args).await
-        })
+        tokio::runtime::Handle::current()
+            .block_on(async { query_cloudwatch_logs_internal(args).await })
     })
 }
 
@@ -374,5 +361,6 @@ apiLogs.events.forEach(event => {
 - Large time ranges may be slow - use specific time windows
 - Use filter patterns to reduce data scanned and improve performance
 - Timestamps must be in Unix milliseconds (use `Date.now()`)
-"#.to_string()
+"#
+    .to_string()
 }

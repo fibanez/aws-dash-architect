@@ -25,13 +25,13 @@ pub mod cloudformation;
 pub mod cloudfront;
 pub mod cloudtrail;
 pub mod cloudwatch;
-pub mod connect;
 pub mod codebuild;
 pub mod codecommit;
 pub mod codepipeline;
 pub mod cognito;
 pub mod config_rule;
 pub mod configservice;
+pub mod connect;
 pub mod databrew;
 pub mod datasync;
 pub mod detective;
@@ -44,26 +44,27 @@ pub mod ecs;
 pub mod efs;
 pub mod eks;
 pub mod elasticache;
-pub mod fsx;
-pub mod globalaccelerator;
 pub mod elb;
 pub mod elbv2;
 pub mod eventbridge;
 pub mod fargate;
+pub mod fsx;
+pub mod globalaccelerator;
 pub mod glue;
 pub mod greengrass;
 pub mod guardduty;
 pub mod iam;
 pub mod inspector;
 pub mod iot;
+pub mod json_expansion;
 pub mod kinesis;
 pub mod kinesisfirehose;
 pub mod kms;
 pub mod lakeformation;
 pub mod lambda;
 pub mod lex;
-pub mod macie;
 pub mod logs;
+pub mod macie;
 pub mod mq;
 pub mod msk;
 pub mod neptune;
@@ -118,13 +119,13 @@ pub use cloudformation::*;
 pub use cloudfront::*;
 pub use cloudtrail::*;
 pub use cloudwatch::*;
-pub use connect::*;
 pub use codebuild::*;
 pub use codecommit::*;
 pub use codepipeline::*;
 pub use cognito::*;
 pub use config_rule::*;
 pub use configservice::*;
+pub use connect::*;
 pub use databrew::*;
 pub use datasync::*;
 pub use detective::*;
@@ -137,26 +138,27 @@ pub use ecs::*;
 pub use efs::*;
 pub use eks::*;
 pub use elasticache::*;
-pub use fsx::*;
-pub use globalaccelerator::*;
 pub use elb::*;
 pub use elbv2::*;
 pub use eventbridge::*;
 pub use fargate::*;
+pub use fsx::*;
+pub use globalaccelerator::*;
 pub use glue::*;
 pub use greengrass::*;
 pub use guardduty::*;
 pub use iam::*;
 pub use inspector::*;
 pub use iot::*;
+pub use json_expansion::expand_embedded_json;
 pub use kinesis::*;
 pub use kinesisfirehose::*;
 pub use kms::*;
 pub use lakeformation::*;
 pub use lambda::*;
 pub use lex::*;
-pub use macie::*;
 pub use logs::*;
+pub use macie::*;
 pub use mq::*;
 pub use msk::*;
 pub use neptune::*;
@@ -456,36 +458,64 @@ impl NormalizerFactory {
             "AWS::Bedrock::Model" => Some(Box::new(BedrockModelNormalizer)),
             "AWS::Bedrock::InferenceProfile" => Some(Box::new(BedrockInferenceProfileNormalizer)),
             "AWS::Bedrock::Guardrail" => Some(Box::new(BedrockGuardrailNormalizer)),
-            "AWS::Bedrock::ProvisionedModelThroughput" => Some(Box::new(BedrockProvisionedModelThroughputNormalizer)),
+            "AWS::Bedrock::ProvisionedModelThroughput" => {
+                Some(Box::new(BedrockProvisionedModelThroughputNormalizer))
+            }
             "AWS::Bedrock::Agent" => Some(Box::new(BedrockAgentNormalizer)),
             "AWS::Bedrock::KnowledgeBase" => Some(Box::new(BedrockKnowledgeBaseNormalizer)),
             "AWS::Bedrock::CustomModel" => Some(Box::new(BedrockCustomModelNormalizer)),
             "AWS::Bedrock::ImportedModel" => Some(Box::new(BedrockImportedModelNormalizer)),
             "AWS::Bedrock::EvaluationJob" => Some(Box::new(BedrockEvaluationJobNormalizer)),
-            "AWS::Bedrock::ModelInvocationJob" => Some(Box::new(BedrockModelInvocationJobNormalizer)),
+            "AWS::Bedrock::ModelInvocationJob" => {
+                Some(Box::new(BedrockModelInvocationJobNormalizer))
+            }
             "AWS::Bedrock::Prompt" => Some(Box::new(BedrockPromptNormalizer)),
             "AWS::Bedrock::Flow" => Some(Box::new(BedrockFlowNormalizer)),
             "AWS::Bedrock::AgentAlias" => Some(Box::new(BedrockAgentAliasNormalizer)),
             "AWS::Bedrock::AgentActionGroup" => Some(Box::new(BedrockAgentActionGroupNormalizer)),
             "AWS::Bedrock::DataSource" => Some(Box::new(BedrockDataSourceNormalizer)),
-            "AWS::Bedrock::ModelCustomizationJob" => Some(Box::new(BedrockModelCustomizationJobNormalizer)),
+            "AWS::Bedrock::ModelCustomizationJob" => {
+                Some(Box::new(BedrockModelCustomizationJobNormalizer))
+            }
             "AWS::Bedrock::IngestionJob" => Some(Box::new(BedrockIngestionJobNormalizer)),
             "AWS::Bedrock::FlowAlias" => Some(Box::new(BedrockFlowAliasNormalizer)),
-            "AWS::BedrockAgentCore::AgentRuntime" => Some(Box::new(BedrockAgentCoreAgentRuntimeNormalizer)),
-            "AWS::BedrockAgentCore::AgentRuntimeEndpoint" => Some(Box::new(BedrockAgentCoreAgentRuntimeEndpointNormalizer)),
+            "AWS::BedrockAgentCore::AgentRuntime" => {
+                Some(Box::new(BedrockAgentCoreAgentRuntimeNormalizer))
+            }
+            "AWS::BedrockAgentCore::AgentRuntimeEndpoint" => {
+                Some(Box::new(BedrockAgentCoreAgentRuntimeEndpointNormalizer))
+            }
             "AWS::BedrockAgentCore::Memory" => Some(Box::new(BedrockAgentCoreMemoryNormalizer)),
             "AWS::BedrockAgentCore::Gateway" => Some(Box::new(BedrockAgentCoreGatewayNormalizer)),
             "AWS::BedrockAgentCore::Browser" => Some(Box::new(BedrockAgentCoreBrowserNormalizer)),
-            "AWS::BedrockAgentCore::CodeInterpreter" => Some(Box::new(BedrockAgentCoreCodeInterpreterNormalizer)),
-            "AWS::BedrockAgentCore::ApiKeyCredentialProvider" => Some(Box::new(BedrockAgentCoreApiKeyCredentialProviderNormalizer)),
-            "AWS::BedrockAgentCore::OAuth2CredentialProvider" => Some(Box::new(BedrockAgentCoreOAuth2CredentialProviderNormalizer)),
-            "AWS::BedrockAgentCore::WorkloadIdentity" => Some(Box::new(BedrockAgentCoreWorkloadIdentityNormalizer)),
-            "AWS::BedrockAgentCore::AgentRuntimeVersion" => Some(Box::new(BedrockAgentCoreAgentRuntimeVersionNormalizer)),
-            "AWS::BedrockAgentCore::GatewayTarget" => Some(Box::new(BedrockAgentCoreGatewayTargetNormalizer)),
-            "AWS::BedrockAgentCore::MemoryRecord" => Some(Box::new(BedrockAgentCoreMemoryRecordNormalizer)),
+            "AWS::BedrockAgentCore::CodeInterpreter" => {
+                Some(Box::new(BedrockAgentCoreCodeInterpreterNormalizer))
+            }
+            "AWS::BedrockAgentCore::ApiKeyCredentialProvider" => {
+                Some(Box::new(BedrockAgentCoreApiKeyCredentialProviderNormalizer))
+            }
+            "AWS::BedrockAgentCore::OAuth2CredentialProvider" => {
+                Some(Box::new(BedrockAgentCoreOAuth2CredentialProviderNormalizer))
+            }
+            "AWS::BedrockAgentCore::WorkloadIdentity" => {
+                Some(Box::new(BedrockAgentCoreWorkloadIdentityNormalizer))
+            }
+            "AWS::BedrockAgentCore::AgentRuntimeVersion" => {
+                Some(Box::new(BedrockAgentCoreAgentRuntimeVersionNormalizer))
+            }
+            "AWS::BedrockAgentCore::GatewayTarget" => {
+                Some(Box::new(BedrockAgentCoreGatewayTargetNormalizer))
+            }
+            "AWS::BedrockAgentCore::MemoryRecord" => {
+                Some(Box::new(BedrockAgentCoreMemoryRecordNormalizer))
+            }
             "AWS::BedrockAgentCore::Event" => Some(Box::new(BedrockAgentCoreEventNormalizer)),
-            "AWS::BedrockAgentCore::BrowserSession" => Some(Box::new(BedrockAgentCoreBrowserSessionNormalizer)),
-            "AWS::BedrockAgentCore::CodeInterpreterSession" => Some(Box::new(BedrockAgentCoreCodeInterpreterSessionNormalizer)),
+            "AWS::BedrockAgentCore::BrowserSession" => {
+                Some(Box::new(BedrockAgentCoreBrowserSessionNormalizer))
+            }
+            "AWS::BedrockAgentCore::CodeInterpreterSession" => {
+                Some(Box::new(BedrockAgentCoreCodeInterpreterSessionNormalizer))
+            }
             "AWS::S3::Bucket" => Some(Box::new(S3BucketNormalizer)),
             "AWS::CloudFormation::Stack" => Some(Box::new(CloudFormationStackNormalizer)),
             "AWS::RDS::DBInstance" => Some(Box::new(RDSDBInstanceNormalizer)),
@@ -551,11 +581,19 @@ impl NormalizerFactory {
                 Some(Box::new(GreengrassComponentVersionNormalizer))
             }
             "AWS::Organizations::Account" => Some(Box::new(OrganizationsAccountNormalizer)),
-            "AWS::Organizations::AwsServiceAccess" => Some(Box::new(OrganizationsAwsServiceAccessNormalizer)),
-            "AWS::Organizations::CreateAccountStatus" => Some(Box::new(OrganizationsCreateAccountStatusNormalizer)),
-            "AWS::Organizations::DelegatedAdministrator" => Some(Box::new(OrganizationsDelegatedAdministratorNormalizer)),
+            "AWS::Organizations::AwsServiceAccess" => {
+                Some(Box::new(OrganizationsAwsServiceAccessNormalizer))
+            }
+            "AWS::Organizations::CreateAccountStatus" => {
+                Some(Box::new(OrganizationsCreateAccountStatusNormalizer))
+            }
+            "AWS::Organizations::DelegatedAdministrator" => {
+                Some(Box::new(OrganizationsDelegatedAdministratorNormalizer))
+            }
             "AWS::Organizations::Handshake" => Some(Box::new(OrganizationsHandshakeNormalizer)),
-            "AWS::Organizations::Organization" => Some(Box::new(OrganizationsOrganizationNormalizer)),
+            "AWS::Organizations::Organization" => {
+                Some(Box::new(OrganizationsOrganizationNormalizer))
+            }
             "AWS::Organizations::OrganizationalUnit" => Some(Box::new(OrganizationsOUNormalizer)),
             "AWS::Organizations::Policy" => Some(Box::new(OrganizationsPolicyNormalizer)),
             "AWS::Organizations::Root" => Some(Box::new(OrganizationsRootNormalizer)),
@@ -602,14 +640,18 @@ impl NormalizerFactory {
             "AWS::Amplify::App" => Some(Box::new(AmplifyNormalizer)),
             "AWS::Lex::Bot" => Some(Box::new(LexBotNormalizer)),
             "AWS::Rekognition::Collection" => Some(Box::new(RekognitionCollectionNormalizer)),
-            "AWS::Rekognition::StreamProcessor" => Some(Box::new(RekognitionStreamProcessorNormalizer)),
+            "AWS::Rekognition::StreamProcessor" => {
+                Some(Box::new(RekognitionStreamProcessorNormalizer))
+            }
             "AWS::Polly::Voice" => Some(Box::new(PollyVoiceNormalizer)),
             "AWS::Polly::Lexicon" => Some(Box::new(PollyLexiconNormalizer)),
             "AWS::Polly::SynthesisTask" => Some(Box::new(PollySynthesisTaskNormalizer)),
             "AWS::ECR::Repository" => Some(Box::new(EcrRepositoryNormalizer)),
             "AWS::KMS::Key" => Some(Box::new(KmsKeyNormalizer)),
             "AWS::SecretsManager::Secret" => Some(Box::new(SecretsManagerSecretNormalizer)),
-            "AWS::StepFunctions::StateMachine" => Some(Box::new(StepFunctionsStateMachineNormalizer)),
+            "AWS::StepFunctions::StateMachine" => {
+                Some(Box::new(StepFunctionsStateMachineNormalizer))
+            }
             _ => None,
         }
     }
@@ -631,7 +673,7 @@ impl NormalizerFactory {
             "AWS::EC2::KeyPair",
             "AWS::EC2::InternetGateway",
             "AWS::EC2::TransitGateway",
-            "AWS::EC2::VPCPeeringConnection", 
+            "AWS::EC2::VPCPeeringConnection",
             "AWS::EC2::FlowLog",
             "AWS::EC2::VolumeAttachment",
             "AWS::ECS::FargateService",

@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod window_focus_integration_tests {
-    use awsdash::app::dashui::{CredentialsDebugWindow, HelpWindow, LogWindow, VerificationWindow};
+    use awsdash::app::dashui::{HelpWindow, LogWindow, VerificationWindow};
     use awsdash::app::dashui::{FocusableWindow, WindowFocusManager};
 
     #[test]
@@ -33,16 +33,6 @@ mod window_focus_integration_tests {
         assert_eq!(log_window.window_id(), "log_window");
         assert_eq!(log_window.window_title(), "Log Viewer");
         assert!(log_window.is_open());
-    }
-
-    #[test]
-    fn test_credentials_debug_window_trait_implementation() {
-        let creds_window = CredentialsDebugWindow { open: true };
-
-        // Test trait methods
-        assert_eq!(creds_window.window_id(), "credentials_debug");
-        assert_eq!(creds_window.window_title(), "AWS Credentials Debug");
-        assert!(creds_window.is_open());
     }
 
     #[test]
@@ -85,22 +75,19 @@ mod window_focus_integration_tests {
         // Test that all windows implement the trait consistently
         let help_window = HelpWindow::new();
         let log_window = LogWindow::new();
-        let creds_window = CredentialsDebugWindow::default();
         let verification_window = VerificationWindow::default();
 
         // All windows should have unique IDs
         let mut window_ids = std::collections::HashSet::new();
         window_ids.insert(help_window.window_id());
         window_ids.insert(log_window.window_id());
-        window_ids.insert(creds_window.window_id());
         window_ids.insert(verification_window.window_id());
 
-        assert_eq!(window_ids.len(), 4, "All windows should have unique IDs");
+        assert_eq!(window_ids.len(), 3, "All windows should have unique IDs");
 
         // All windows should have non-empty titles
         assert!(!help_window.window_title().is_empty());
         assert!(!log_window.window_title().is_empty());
-        assert!(!creds_window.window_title().is_empty());
         assert!(!verification_window.window_title().is_empty());
     }
 }

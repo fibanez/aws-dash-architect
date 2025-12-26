@@ -5,10 +5,10 @@
 
 #![warn(clippy::all, rust_2018_idioms)]
 
+use crate::app::aws_identity::AwsIdentityCenter;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, RwLock};
-use crate::app::aws_identity::AwsIdentityCenter;
 use tracing::warn;
 
 /// Global access to AwsIdentityCenter for account lookups
@@ -22,7 +22,10 @@ pub fn set_global_aws_identity(identity: Option<Arc<Mutex<AwsIdentityCenter>>>) 
             *guard = identity;
         }
         Err(e) => {
-            warn!("Failed to update global AwsIdentityCenter for V8 bindings: {}", e);
+            warn!(
+                "Failed to update global AwsIdentityCenter for V8 bindings: {}",
+                e
+            );
         }
     }
 }
@@ -32,7 +35,10 @@ pub fn get_global_aws_identity() -> Option<Arc<Mutex<AwsIdentityCenter>>> {
     match GLOBAL_AWS_IDENTITY.read() {
         Ok(guard) => guard.clone(),
         Err(e) => {
-            warn!("Failed to read global AwsIdentityCenter for V8 bindings: {}", e);
+            warn!(
+                "Failed to read global AwsIdentityCenter for V8 bindings: {}",
+                e
+            );
             None
         }
     }
@@ -59,17 +65,15 @@ pub struct AccountInfo {
 }
 
 /// Register account-related functions into V8 context
-pub fn register(
-    scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>,
-) -> Result<()> {
+pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
 
     // Register listAccounts() function
     let list_accounts_fn = v8::Function::new(scope, list_accounts_callback)
         .expect("Failed to create listAccounts function");
 
-    let fn_name = v8::String::new(scope, "listAccounts")
-        .expect("Failed to create function name string");
+    let fn_name =
+        v8::String::new(scope, "listAccounts").expect("Failed to create function name string");
     global.set(scope, fn_name.into(), list_accounts_fn.into());
 
     Ok(())
@@ -96,7 +100,8 @@ fn list_accounts_callback(
     let json_str = match serde_json::to_string(&accounts) {
         Ok(json) => json,
         Err(e) => {
-            let msg = v8::String::new(scope, &format!("Failed to serialize accounts: {}", e)).unwrap();
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize accounts: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -137,7 +142,8 @@ fn get_accounts_from_app() -> Result<Vec<AccountInfo>> {
     let identity = get_global_aws_identity()
         .ok_or_else(|| anyhow::anyhow!("AwsIdentityCenter not initialized"))?;
 
-    let identity_guard = identity.lock()
+    let identity_guard = identity
+        .lock()
         .map_err(|e| anyhow::anyhow!("Failed to lock AwsIdentityCenter: {}", e))?;
 
     // Convert AwsAccount to AccountInfo (only expose essential fields to JavaScript)
@@ -147,7 +153,7 @@ fn get_accounts_from_app() -> Result<Vec<AccountInfo>> {
         .map(|aws_account| AccountInfo {
             id: aws_account.account_id.clone(),
             name: aws_account.account_name.clone(),
-            alias: None,  // AwsAccount doesn't have alias field
+            alias: None, // AwsAccount doesn't have alias field
             email: aws_account.account_email.clone(),
         })
         .collect();
@@ -242,7 +248,8 @@ if (!prodAccount) {
   return null;
 }
 ```
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[cfg(test)]

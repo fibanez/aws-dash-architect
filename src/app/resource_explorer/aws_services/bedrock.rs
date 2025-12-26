@@ -540,10 +540,7 @@ impl BedrockService {
         Ok(self.guardrail_details_to_json(&response))
     }
 
-    fn guardrail_to_json(
-        &self,
-        guardrail: &bedrock::types::GuardrailSummary,
-    ) -> serde_json::Value {
+    fn guardrail_to_json(&self, guardrail: &bedrock::types::GuardrailSummary) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -871,12 +868,19 @@ impl BedrockService {
             })?;
 
         let client = bedrock::Client::new(&aws_config);
-        let response = client.get_custom_model().model_identifier(model_id).send().await?;
+        let response = client
+            .get_custom_model()
+            .model_identifier(model_id)
+            .send()
+            .await?;
 
         Ok(self.custom_model_details_to_json(&response))
     }
 
-    fn custom_model_to_json(&self, model: &bedrock::types::CustomModelSummary) -> serde_json::Value {
+    fn custom_model_to_json(
+        &self,
+        model: &bedrock::types::CustomModelSummary,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -1005,12 +1009,19 @@ impl BedrockService {
             })?;
 
         let client = bedrock::Client::new(&aws_config);
-        let response = client.get_imported_model().model_identifier(model_id).send().await?;
+        let response = client
+            .get_imported_model()
+            .model_identifier(model_id)
+            .send()
+            .await?;
 
         Ok(self.imported_model_details_to_json(&response))
     }
 
-    fn imported_model_to_json(&self, model: &bedrock::types::ImportedModelSummary) -> serde_json::Value {
+    fn imported_model_to_json(
+        &self,
+        model: &bedrock::types::ImportedModelSummary,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -1119,7 +1130,11 @@ impl BedrockService {
             })?;
 
         let client = bedrock::Client::new(&aws_config);
-        let response = client.get_evaluation_job().job_identifier(job_id).send().await?;
+        let response = client
+            .get_evaluation_job()
+            .job_identifier(job_id)
+            .send()
+            .await?;
 
         Ok(self.evaluation_job_details_to_json(&response))
     }
@@ -1245,12 +1260,19 @@ impl BedrockService {
             })?;
 
         let client = bedrock::Client::new(&aws_config);
-        let response = client.get_model_invocation_job().job_identifier(job_id).send().await?;
+        let response = client
+            .get_model_invocation_job()
+            .job_identifier(job_id)
+            .send()
+            .await?;
 
         Ok(self.model_invocation_job_details_to_json(&response))
     }
 
-    fn model_invocation_job_to_json(&self, job: &bedrock::types::ModelInvocationJobSummary) -> serde_json::Value {
+    fn model_invocation_job_to_json(
+        &self,
+        job: &bedrock::types::ModelInvocationJobSummary,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         json.insert(
@@ -1344,7 +1366,10 @@ impl BedrockService {
         let client = bedrock::Client::new(&aws_config);
 
         let mut jobs = Vec::new();
-        let mut paginator = client.list_model_customization_jobs().into_paginator().send();
+        let mut paginator = client
+            .list_model_customization_jobs()
+            .into_paginator()
+            .send();
 
         while let Some(page) = paginator.next().await {
             let page = page?;

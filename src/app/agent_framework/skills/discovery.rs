@@ -109,10 +109,7 @@ impl SkillDiscoveryService {
 
         for skill_dir in &self.skill_directories {
             if !skill_dir.exists() {
-                debug!(
-                    "Skill directory does not exist, skipping: {:?}",
-                    skill_dir
-                );
+                debug!("Skill directory does not exist, skipping: {:?}", skill_dir);
                 continue;
             }
 
@@ -169,8 +166,9 @@ impl SkillDiscoveryService {
     /// Extract metadata from a SKILL.md file
     fn extract_metadata(&self, skill_md_path: &Path) -> Result<SkillMetadata, SkillError> {
         // Read file content
-        let content = fs::read_to_string(skill_md_path)
-            .map_err(|e| SkillError::IoError(format!("Failed to read {}: {}", skill_md_path.display(), e)))?;
+        let content = fs::read_to_string(skill_md_path).map_err(|e| {
+            SkillError::IoError(format!("Failed to read {}: {}", skill_md_path.display(), e))
+        })?;
 
         // Parse YAML frontmatter
         let frontmatter = extract_yaml_frontmatter(&content)?;
@@ -281,10 +279,13 @@ fn extract_yaml_frontmatter(
     }
 
     // Find the second --- delimiter
-    let content_after_first = if content.starts_with("---\n") {
-        &content[4..]
+    let content_after_first = if let Some(stripped) = content.strip_prefix("---\n") {
+        stripped
+    } else if let Some(stripped) = content.strip_prefix("---\r\n") {
+        stripped
     } else {
-        &content[5..]
+        // Should not reach here due to earlier check, but handle gracefully
+        return Err(SkillError::NoFrontmatter);
     };
 
     let end_pos = content_after_first
@@ -297,10 +298,8 @@ fn extract_yaml_frontmatter(
     let yaml_str = &content_after_first[..end_pos];
 
     // Parse YAML
-    let frontmatter: HashMap<serde_yaml::Value, serde_yaml::Value> =
-        serde_yaml::from_str(yaml_str).map_err(|e| {
-            SkillError::InvalidFrontmatter(format!("Failed to parse YAML: {}", e))
-        })?;
+    let frontmatter: HashMap<serde_yaml::Value, serde_yaml::Value> = serde_yaml::from_str(yaml_str)
+        .map_err(|e| SkillError::InvalidFrontmatter(format!("Failed to parse YAML: {}", e)))?;
 
     Ok(frontmatter)
 }

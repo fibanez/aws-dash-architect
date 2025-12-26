@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for EKSClusterNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::EKS::Cluster", &cluster_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::EKS::Cluster {}: {}", cluster_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::EKS::Cluster {}: {}",
+                    cluster_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -93,4 +92,3 @@ impl AsyncResourceNormalizer for EKSClusterNormalizer {
         "AWS::EKS::Cluster"
     }
 }
-

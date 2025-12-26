@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -29,17 +29,16 @@ impl AsyncResourceNormalizer for SecurityHubNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::SecurityHub::Hub", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::SecurityHub::Hub {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::SecurityHub::Hub {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -79,4 +78,3 @@ impl AsyncResourceNormalizer for SecurityHubNormalizer {
         "AWS::SecurityHub::Hub"
     }
 }
-

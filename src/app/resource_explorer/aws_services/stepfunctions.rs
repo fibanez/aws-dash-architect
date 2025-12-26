@@ -1,7 +1,10 @@
 use super::super::credentials::CredentialCoordinator;
+use super::super::status::{report_status, report_status_done};
 use anyhow::{Context, Result};
 use aws_sdk_sfn as sfn;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct StepFunctionsService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -19,6 +22,7 @@ impl StepFunctionsService {
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
         let aws_config = self
             .credential_coordinator
@@ -38,17 +42,52 @@ impl StepFunctionsService {
         while let Some(page) = paginator.next().await {
             let page = page?;
             for state_machine in page.state_machines {
-                // Get detailed state machine information
-                if let Ok(sm_details) = self
+                // Get detailed state machine information (basic describe)
+                let mut sm_json = if let Ok(sm_details) = self
                     .describe_state_machine_internal(&client, &state_machine.state_machine_arn)
                     .await
                 {
-                    state_machines.push(sm_details);
+                    sm_details
                 } else {
                     // Fallback to basic state machine info if describe fails
-                    let sm_json = self.state_machine_list_item_to_json(&state_machine);
-                    state_machines.push(sm_json);
+                    self.state_machine_list_item_to_json(&state_machine)
+                };
+
+                // Phase 2: Fetch execution history if requested
+                if include_details {
+                    report_status("StepFunctions", "get_executions", Some(&state_machine.name));
+
+                    // Get recent executions
+                    if let Ok(executions) = self
+                        .list_executions_internal(&client, &state_machine.state_machine_arn)
+                        .await
+                    {
+                        if let serde_json::Value::Object(ref mut map) = sm_json {
+                            map.insert("RecentExecutions".to_string(), executions);
+                        }
+                    }
+
+                    // Get execution statistics
+                    if let Ok(stats) = self
+                        .get_execution_statistics_internal(
+                            &client,
+                            &state_machine.state_machine_arn,
+                        )
+                        .await
+                    {
+                        if let serde_json::Value::Object(ref mut map) = sm_json {
+                            map.insert("ExecutionStatistics".to_string(), stats);
+                        }
+                    }
+
+                    report_status_done(
+                        "StepFunctions",
+                        "get_executions",
+                        Some(&state_machine.name),
+                    );
                 }
+
+                state_machines.push(sm_json);
             }
         }
 
@@ -158,10 +197,18 @@ impl StepFunctionsService {
             );
         }
 
-        json.insert(
-            "Definition".to_string(),
-            serde_json::Value::String(response.definition.clone()),
-        );
+        // Parse the definition as JSON for proper pretty-printing
+        // Step Functions definitions are Amazon States Language (ASL) JSON
+        if let Ok(definition_json) = serde_json::from_str::<serde_json::Value>(&response.definition)
+        {
+            json.insert("Definition".to_string(), definition_json);
+        } else {
+            // Fallback to raw string if parsing fails
+            json.insert(
+                "Definition".to_string(),
+                serde_json::Value::String(response.definition.clone()),
+            );
+        }
 
         json.insert(
             "RoleArn".to_string(),
@@ -232,6 +279,228 @@ impl StepFunctionsService {
             json.insert(
                 "TracingConfiguration".to_string(),
                 serde_json::Value::Object(tracing_json),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Get detailed information for a state machine (Phase 2 enrichment)
+    pub async fn get_state_machine_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        state_machine_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = sfn::Client::new(&aws_config);
+
+        let mut details = serde_json::Map::new();
+
+        // Get recent executions
+        if let Ok(executions) = self
+            .list_executions_internal(&client, state_machine_arn)
+            .await
+        {
+            details.insert("RecentExecutions".to_string(), executions);
+        }
+
+        // Get execution statistics
+        if let Ok(stats) = self
+            .get_execution_statistics_internal(&client, state_machine_arn)
+            .await
+        {
+            details.insert("ExecutionStatistics".to_string(), stats);
+        }
+
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Internal helper to list recent executions
+    async fn list_executions_internal(
+        &self,
+        client: &sfn::Client,
+        state_machine_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .max_results(20)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout listing executions for {}", state_machine_arn))?
+        .with_context(|| format!("Failed to list executions for {}", state_machine_arn))?;
+
+        let executions: Vec<serde_json::Value> = result
+            .executions
+            .into_iter()
+            .map(|exec| self.execution_to_json(&exec))
+            .collect();
+
+        Ok(serde_json::Value::Array(executions))
+    }
+
+    /// Internal helper to get execution statistics by counting recent executions by status
+    async fn get_execution_statistics_internal(
+        &self,
+        client: &sfn::Client,
+        state_machine_arn: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        // Get counts for each status type
+        let mut stats = serde_json::Map::new();
+
+        // Count running executions
+        if let Ok(Ok(r)) = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .status_filter(sfn::types::ExecutionStatus::Running)
+                .max_results(100)
+                .send(),
+        )
+        .await
+        {
+            stats.insert(
+                "Running".to_string(),
+                serde_json::Value::Number(r.executions.len().into()),
+            );
+        }
+
+        // Count succeeded executions (last 100)
+        if let Ok(Ok(r)) = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .status_filter(sfn::types::ExecutionStatus::Succeeded)
+                .max_results(100)
+                .send(),
+        )
+        .await
+        {
+            stats.insert(
+                "Succeeded".to_string(),
+                serde_json::Value::Number(r.executions.len().into()),
+            );
+        }
+
+        // Count failed executions (last 100)
+        if let Ok(Ok(r)) = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .status_filter(sfn::types::ExecutionStatus::Failed)
+                .max_results(100)
+                .send(),
+        )
+        .await
+        {
+            stats.insert(
+                "Failed".to_string(),
+                serde_json::Value::Number(r.executions.len().into()),
+            );
+        }
+
+        // Count timed out executions (last 100)
+        if let Ok(Ok(r)) = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .status_filter(sfn::types::ExecutionStatus::TimedOut)
+                .max_results(100)
+                .send(),
+        )
+        .await
+        {
+            stats.insert(
+                "TimedOut".to_string(),
+                serde_json::Value::Number(r.executions.len().into()),
+            );
+        }
+
+        // Count aborted executions (last 100)
+        if let Ok(Ok(r)) = timeout(
+            timeout_duration,
+            client
+                .list_executions()
+                .state_machine_arn(state_machine_arn)
+                .status_filter(sfn::types::ExecutionStatus::Aborted)
+                .max_results(100)
+                .send(),
+        )
+        .await
+        {
+            stats.insert(
+                "Aborted".to_string(),
+                serde_json::Value::Number(r.executions.len().into()),
+            );
+        }
+
+        Ok(serde_json::Value::Object(stats))
+    }
+
+    /// Convert execution to JSON
+    fn execution_to_json(&self, execution: &sfn::types::ExecutionListItem) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        json.insert(
+            "ExecutionArn".to_string(),
+            serde_json::Value::String(execution.execution_arn.clone()),
+        );
+
+        json.insert(
+            "StateMachineArn".to_string(),
+            serde_json::Value::String(execution.state_machine_arn.clone()),
+        );
+
+        json.insert(
+            "Name".to_string(),
+            serde_json::Value::String(execution.name.clone()),
+        );
+
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String(execution.status.as_str().to_string()),
+        );
+
+        json.insert(
+            "StartDate".to_string(),
+            serde_json::Value::String(execution.start_date.to_string()),
+        );
+
+        if let Some(stop_date) = execution.stop_date {
+            json.insert(
+                "StopDate".to_string(),
+                serde_json::Value::String(stop_date.to_string()),
+            );
+        }
+
+        // Calculate duration if both start and stop dates exist
+        if let Some(stop_date) = execution.stop_date {
+            let duration_secs = stop_date.secs() - execution.start_date.secs();
+            json.insert(
+                "DurationSeconds".to_string(),
+                serde_json::Value::Number(duration_secs.into()),
             );
         }
 

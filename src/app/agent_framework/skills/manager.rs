@@ -108,10 +108,7 @@ pub fn initialize_skill_system() -> Result<usize, SkillError> {
     match GLOBAL_SKILL_MANAGER.write() {
         Ok(mut guard) => {
             *guard = Some(manager);
-            info!(
-                "✅ Skill system initialized: {} skills discovered",
-                count
-            );
+            info!("✅ Skill system initialized: {} skills discovered", count);
         }
         Err(e) => {
             error!("Failed to set global skill manager: {}", e);
@@ -181,7 +178,9 @@ description: A test skill
 "#;
         fs::write(skill_dir.join("SKILL.md"), skill_md_content).ok();
 
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         let manager = SkillManager::with_discovery(discovery);
 
         let count = manager.discover_skills().unwrap();
@@ -212,7 +211,9 @@ Full content here.
 "#;
         fs::write(skill_dir.join("SKILL.md"), skill_md_content).ok();
 
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         let manager = SkillManager::with_discovery(discovery);
         manager.discover_skills().ok();
 
@@ -248,7 +249,9 @@ description: A test skill
 "#;
         fs::write(skill_dir.join("SKILL.md"), skill_md_content).ok();
 
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         let manager = SkillManager::with_discovery(discovery);
         manager.discover_skills().ok();
 

@@ -298,53 +298,89 @@ impl ConfigService {
             if let Some(rule) = rules_list.first() {
                 Ok(self.config_rule_to_json(rule))
             } else {
-                Err(anyhow::anyhow!("Config rule {} not found", config_rule_name))
+                Err(anyhow::anyhow!(
+                    "Config rule {} not found",
+                    config_rule_name
+                ))
             }
         } else {
-            Err(anyhow::anyhow!("Config rule {} not found", config_rule_name))
+            Err(anyhow::anyhow!(
+                "Config rule {} not found",
+                config_rule_name
+            ))
         }
     }
 
-    fn config_rule_to_json(
-        &self,
-        rule: &configservice::types::ConfigRule,
-    ) -> serde_json::Value {
+    fn config_rule_to_json(&self, rule: &configservice::types::ConfigRule) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(config_rule_name) = &rule.config_rule_name {
-            json.insert("ConfigRuleName".to_string(), serde_json::Value::String(config_rule_name.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(config_rule_name.clone()));
-            json.insert("Name".to_string(), serde_json::Value::String(config_rule_name.clone()));
+            json.insert(
+                "ConfigRuleName".to_string(),
+                serde_json::Value::String(config_rule_name.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(config_rule_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(config_rule_name.clone()),
+            );
         }
 
         if let Some(config_rule_arn) = &rule.config_rule_arn {
-            json.insert("ConfigRuleArn".to_string(), serde_json::Value::String(config_rule_arn.clone()));
+            json.insert(
+                "ConfigRuleArn".to_string(),
+                serde_json::Value::String(config_rule_arn.clone()),
+            );
         }
 
         if let Some(config_rule_id) = &rule.config_rule_id {
-            json.insert("ConfigRuleId".to_string(), serde_json::Value::String(config_rule_id.clone()));
+            json.insert(
+                "ConfigRuleId".to_string(),
+                serde_json::Value::String(config_rule_id.clone()),
+            );
         }
 
         if let Some(description) = &rule.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(config_rule_state) = &rule.config_rule_state {
-            json.insert("ConfigRuleState".to_string(), serde_json::Value::String(config_rule_state.as_str().to_string()));
-            json.insert("Status".to_string(), serde_json::Value::String(config_rule_state.as_str().to_string()));
+            json.insert(
+                "ConfigRuleState".to_string(),
+                serde_json::Value::String(config_rule_state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(config_rule_state.as_str().to_string()),
+            );
         }
 
         if let Some(created_by) = &rule.created_by {
-            json.insert("CreatedBy".to_string(), serde_json::Value::String(created_by.clone()));
+            json.insert(
+                "CreatedBy".to_string(),
+                serde_json::Value::String(created_by.clone()),
+            );
         }
 
         if let Some(source) = &rule.source {
             let mut source_json = serde_json::Map::new();
 
-            source_json.insert("Owner".to_string(), serde_json::Value::String(source.owner.as_str().to_string()));
+            source_json.insert(
+                "Owner".to_string(),
+                serde_json::Value::String(source.owner.as_str().to_string()),
+            );
 
             if let Some(source_identifier) = &source.source_identifier {
-                source_json.insert("SourceIdentifier".to_string(), serde_json::Value::String(source_identifier.clone()));
+                source_json.insert(
+                    "SourceIdentifier".to_string(),
+                    serde_json::Value::String(source_identifier.clone()),
+                );
             }
 
             if let Some(source_detail) = &source.source_details {
@@ -354,18 +390,34 @@ impl ConfigService {
                         .map(|detail| {
                             let mut detail_json = serde_json::Map::new();
                             if let Some(event_source) = &detail.event_source {
-                                detail_json.insert("EventSource".to_string(), serde_json::Value::String(event_source.as_str().to_string()));
+                                detail_json.insert(
+                                    "EventSource".to_string(),
+                                    serde_json::Value::String(event_source.as_str().to_string()),
+                                );
                             }
                             if let Some(message_type) = &detail.message_type {
-                                detail_json.insert("MessageType".to_string(), serde_json::Value::String(message_type.as_str().to_string()));
+                                detail_json.insert(
+                                    "MessageType".to_string(),
+                                    serde_json::Value::String(message_type.as_str().to_string()),
+                                );
                             }
-                            if let Some(maximum_execution_frequency) = &detail.maximum_execution_frequency {
-                                detail_json.insert("MaximumExecutionFrequency".to_string(), serde_json::Value::String(maximum_execution_frequency.as_str().to_string()));
+                            if let Some(maximum_execution_frequency) =
+                                &detail.maximum_execution_frequency
+                            {
+                                detail_json.insert(
+                                    "MaximumExecutionFrequency".to_string(),
+                                    serde_json::Value::String(
+                                        maximum_execution_frequency.as_str().to_string(),
+                                    ),
+                                );
                             }
                             serde_json::Value::Object(detail_json)
                         })
                         .collect();
-                    source_json.insert("SourceDetail".to_string(), serde_json::Value::Array(details_json));
+                    source_json.insert(
+                        "SourceDetail".to_string(),
+                        serde_json::Value::Array(details_json),
+                    );
                 }
             }
 
@@ -381,20 +433,32 @@ impl ConfigService {
                         .iter()
                         .map(|rt| serde_json::Value::String(rt.clone()))
                         .collect();
-                    scope_json.insert("ComplianceResourceTypes".to_string(), serde_json::Value::Array(types_json));
+                    scope_json.insert(
+                        "ComplianceResourceTypes".to_string(),
+                        serde_json::Value::Array(types_json),
+                    );
                 }
             }
 
             if let Some(tag_key) = &scope.tag_key {
-                scope_json.insert("TagKey".to_string(), serde_json::Value::String(tag_key.clone()));
+                scope_json.insert(
+                    "TagKey".to_string(),
+                    serde_json::Value::String(tag_key.clone()),
+                );
             }
 
             if let Some(tag_value) = &scope.tag_value {
-                scope_json.insert("TagValue".to_string(), serde_json::Value::String(tag_value.clone()));
+                scope_json.insert(
+                    "TagValue".to_string(),
+                    serde_json::Value::String(tag_value.clone()),
+                );
             }
 
             if let Some(compliance_resource_id) = &scope.compliance_resource_id {
-                scope_json.insert("ComplianceResourceId".to_string(), serde_json::Value::String(compliance_resource_id.clone()));
+                scope_json.insert(
+                    "ComplianceResourceId".to_string(),
+                    serde_json::Value::String(compliance_resource_id.clone()),
+                );
             }
 
             json.insert("Scope".to_string(), serde_json::Value::Object(scope_json));

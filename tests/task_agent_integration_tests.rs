@@ -12,11 +12,10 @@ use awsdash::app::agent_framework::{
     clear_current_agent_id, get_agent_creation_receiver, get_current_agent_id,
     get_ui_event_receiver, init_agent_creation_channel, init_ui_event_channel,
     request_agent_creation, set_current_agent_id, take_response_channel, AgentCreationRequest,
-    AgentCreationResponse, AgentId, AgentInstance, AgentMetadata, AgentType, AgentUIEvent,
+    AgentCreationResponse, AgentId, AgentInstance, AgentMetadata, AgentModel, AgentType,
+    AgentUIEvent,
 };
-use awsdash::app::aws_identity::AwsIdentityCenter;
 use chrono::Utc;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Helper to create test metadata
@@ -24,7 +23,7 @@ fn create_test_metadata(name: &str) -> AgentMetadata {
     AgentMetadata {
         name: name.to_string(),
         description: "Test agent".to_string(),
-        model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(),
+        model: AgentModel::default(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }
@@ -136,7 +135,7 @@ fn test_agent_creation_with_parent_tracking() {
     assert_ne!(parent_id, child_id);
     match child_agent.agent_type() {
         AgentType::TaskWorker { parent_id: pid } => {
-            assert_eq!(*pid, parent_id);
+            assert_eq!(pid, parent_id);
         }
         _ => panic!("Expected TaskWorker agent type"),
     }
@@ -180,7 +179,10 @@ fn test_complete_agent_spawning_flow() {
 
     // Verify request
     assert_eq!(request.task_description, "List all EC2 instances");
-    assert_eq!(request.expected_output_format, Some("JSON array".to_string()));
+    assert_eq!(
+        request.expected_output_format,
+        Some("JSON array".to_string())
+    );
     assert_eq!(request.parent_id, parent_id);
 
     // Create worker agent
@@ -231,9 +233,7 @@ fn test_multiple_concurrent_worker_spawns() {
     for task in tasks.iter() {
         let task_str = task.to_string();
         let pid = parent_id;
-        let handle = std::thread::spawn(move || {
-            request_agent_creation(task_str, None, pid)
-        });
+        let handle = std::thread::spawn(move || request_agent_creation(task_str, None, pid));
         spawn_threads.push(handle);
     }
 
@@ -282,11 +282,7 @@ fn test_agent_creation_parent_not_found_error() {
 
     // Request creation with non-existent parent
     let spawner_thread = std::thread::spawn(move || {
-        request_agent_creation(
-            "Test task".to_string(),
-            None,
-            non_existent_parent,
-        )
+        request_agent_creation("Test task".to_string(), None, non_existent_parent)
     });
 
     std::thread::sleep(Duration::from_millis(50));
@@ -317,11 +313,7 @@ fn test_agent_creation_timeout() {
     set_current_agent_id(parent_id);
 
     // Request creation but don't process it (no AgentManagerWindow)
-    let result = request_agent_creation(
-        "Test task".to_string(),
-        None,
-        parent_id,
-    );
+    let result = request_agent_creation("Test task".to_string(), None, parent_id);
 
     // Should timeout after 5 seconds
     assert!(result.is_err());
@@ -341,17 +333,12 @@ fn test_ui_event_after_agent_creation() {
 
     // Spawn agent creation request
     let spawner_thread = std::thread::spawn(move || {
-        let result = request_agent_creation(
-            "Test task".to_string(),
-            None,
-            parent_id,
-        );
+        let result = request_agent_creation("Test task".to_string(), None, parent_id);
 
         // After successful creation, send UI event
         if let Ok(agent_id) = result {
-            awsdash::app::agent_framework::send_ui_event(
-                AgentUIEvent::SwitchToAgent(agent_id)
-            ).ok();
+            awsdash::app::agent_framework::send_ui_event(AgentUIEvent::SwitchToAgent(agent_id))
+                .ok();
         }
 
         result
@@ -365,7 +352,9 @@ fn test_ui_event_after_agent_creation() {
 
     let worker_id = AgentId::new();
     let response_sender = take_response_channel(request.request_id).unwrap();
-    response_sender.send(AgentCreationResponse::success(worker_id)).unwrap();
+    response_sender
+        .send(AgentCreationResponse::success(worker_id))
+        .unwrap();
 
     // Wait for spawner to complete
     let result = spawner_thread.join().unwrap();

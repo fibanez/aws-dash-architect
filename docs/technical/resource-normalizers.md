@@ -35,6 +35,7 @@ Service-specific data normalization system transforming AWS API responses into c
 **Key Files:**
 - `src/app/resource_explorer/normalizers/mod.rs` - Normalizer trait, factory, and utility functions
 - `src/app/resource_explorer/normalizers/{service}.rs` - Individual service normalizers (s3.rs, ec2.rs, etc.)
+- `src/app/resource_explorer/normalizers/json_expansion.rs` - Embedded JSON string detection and expansion
 
 **ResourceNormalizer Trait:**
 ```rust
@@ -63,6 +64,20 @@ impl NormalizerFactory {
 - **Status Values**: Try State → InstanceState.Name → Status → None
 - **Tag Processing**: Extract Tags array with Key/Value pairs into ResourceTag structs
 - **Property Normalization**: Map service-specific fields to common property names
+- **JSON Expansion**: Automatically expand embedded JSON strings in policy documents
+
+**JSON Expansion:**
+
+AWS APIs often return policy documents as URL-encoded or stringified JSON. The `json_expansion` module detects and expands these automatically:
+
+```rust
+use crate::app::resource_explorer::normalizers::json_expansion::expand_embedded_json;
+
+// In normalizer, after getting raw response:
+let expanded = expand_embedded_json(raw_response);
+```
+
+This transforms stringified policies like `"{\"Version\":\"2012-10-17\"}"` into proper JSON objects for improved readability in the UI.
 
 **Supported Resource Types:**
 - **EC2**: 14 resource types (Instance, VPC, SecurityGroup, Volume, etc.)

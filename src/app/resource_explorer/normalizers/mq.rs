@@ -127,4 +127,3 @@ impl AsyncResourceNormalizer for MQBrokerNormalizer {
         "AWS::AmazonMQ::Broker"
     }
 }
-

@@ -10,16 +10,21 @@ use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Global agent creation request/response channel
-static AGENT_CREATION_CHANNEL: OnceLock<(
+/// Type alias for the agent creation channel
+type AgentCreationChannelType = (
     Sender<AgentCreationRequest>,
     Arc<Mutex<Receiver<AgentCreationRequest>>>,
-)> = OnceLock::new();
+);
+
+/// Type alias for the agent creation response map
+type AgentCreationResponseMap = Arc<Mutex<HashMap<u64, Sender<AgentCreationResponse>>>>;
+
+/// Global agent creation request/response channel
+static AGENT_CREATION_CHANNEL: OnceLock<AgentCreationChannelType> = OnceLock::new();
 
 /// Global agent creation response channels
 /// Uses a HashMap: each request gets a unique response channel
-static AGENT_CREATION_RESPONSES: OnceLock<Arc<Mutex<HashMap<u64, Sender<AgentCreationResponse>>>>>
-    = OnceLock::new();
+static AGENT_CREATION_RESPONSES: OnceLock<AgentCreationResponseMap> = OnceLock::new();
 
 /// Counter for generating unique request IDs
 static REQUEST_ID_COUNTER: OnceLock<Arc<Mutex<u64>>> = OnceLock::new();
@@ -176,7 +181,9 @@ pub fn request_agent_creation(
     if response.success {
         Ok(response.agent_id)
     } else {
-        Err(response.error.unwrap_or_else(|| "Unknown error".to_string()))
+        Err(response
+            .error
+            .unwrap_or_else(|| "Unknown error".to_string()))
     }
 }
 
@@ -187,11 +194,8 @@ mod tests {
     #[test]
     fn test_agent_creation_request_creation() {
         let parent_id = AgentId::new();
-        let (request, _receiver) = AgentCreationRequest::new(
-            "Test task".to_string(),
-            Some("JSON".to_string()),
-            parent_id,
-        );
+        let (request, _receiver) =
+            AgentCreationRequest::new("Test task".to_string(), Some("JSON".to_string()), parent_id);
 
         assert!(request.request_id > 0);
         assert_eq!(request.task_description, "Test task");

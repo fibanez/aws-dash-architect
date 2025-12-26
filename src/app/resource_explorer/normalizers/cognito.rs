@@ -67,7 +67,6 @@ impl AsyncResourceNormalizer for CognitoNormalizer {
         // Create normalized properties
         let normalized_properties = utils::create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: resource_type.to_string(),
             account_id: account.to_string(),
@@ -94,7 +93,12 @@ impl AsyncResourceNormalizer for CognitoNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

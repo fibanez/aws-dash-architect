@@ -48,9 +48,7 @@ impl CloudWatchLogsClient {
         let client = cloudwatchlogs::Client::new(&aws_config);
 
         // Build the request
-        let mut request = client
-            .filter_log_events()
-            .log_group_name(log_group_name);
+        let mut request = client.filter_log_events().log_group_name(log_group_name);
 
         // Apply query options
         if let Some(start_time) = options.start_time {
@@ -75,10 +73,12 @@ impl CloudWatchLogsClient {
         }
 
         // Execute the query
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("Failed to query log events from log group: {}", log_group_name))?;
+        let response = request.send().await.with_context(|| {
+            format!(
+                "Failed to query log events from log group: {}",
+                log_group_name
+            )
+        })?;
 
         // Convert response to our types
         let mut events = Vec::new();
@@ -97,7 +97,7 @@ impl CloudWatchLogsClient {
 
         // Basic statistics - bytes scanned not available from filter_log_events API
         let statistics = QueryStatistics::new(
-            0.0, // bytes_scanned not available
+            0.0,                 // bytes_scanned not available
             events.len() as f64, // records matched
             events.len() as f64, // records scanned
         );
@@ -194,7 +194,12 @@ impl CloudWatchLogsClient {
             .log_group_name(log_group_name)
             .send()
             .await
-            .with_context(|| format!("Failed to list log streams for log group: {}", log_group_name))?;
+            .with_context(|| {
+                format!(
+                    "Failed to list log streams for log group: {}",
+                    log_group_name
+                )
+            })?;
 
         let mut log_streams = Vec::new();
 

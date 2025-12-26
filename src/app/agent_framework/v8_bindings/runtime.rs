@@ -323,7 +323,9 @@ mod tests {
         let _ = initialize_v8_platform();
 
         let runtime = V8Runtime::new();
-        let result = runtime.execute("const x = 10; const y = 20; x + y").unwrap();
+        let result = runtime
+            .execute("const x = 10; const y = 20; x + y")
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.result.unwrap(), "30");
@@ -515,7 +517,7 @@ mod tests {
         // Use very small memory limit for testing OOM
         let config = RuntimeConfig {
             max_heap_size_bytes: 5 * 1024 * 1024, // 5MB limit
-            timeout: Duration::from_secs(5), // Give enough time
+            timeout: Duration::from_secs(5),      // Give enough time
             ..Default::default()
         };
 
@@ -747,7 +749,10 @@ arr.forEach(x => console.log(x));
 arr;
         "#;
         let result2 = runtime.execute(code2).unwrap();
-        println!("Pattern 2 (forEach then array): result={:?}", result2.result);
+        println!(
+            "Pattern 2 (forEach then array): result={:?}",
+            result2.result
+        );
         println!("Pattern 2 stdout: {}", result2.stdout);
         assert!(result2.success);
 

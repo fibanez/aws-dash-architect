@@ -54,10 +54,7 @@ pub fn get_cloudtrail_lookup_value(
 ///
 /// # Returns
 /// Resource name if it's useful for filtering, None otherwise
-pub fn get_resource_name_for_filtering(
-    resource_type: &str,
-    resource_name: &str,
-) -> Option<String> {
+pub fn get_resource_name_for_filtering(resource_type: &str, resource_name: &str) -> Option<String> {
     // For most resources, the resource name is useful for filtering
     // Only skip it for very generic types
     match resource_type {
@@ -183,7 +180,9 @@ mod tests {
         assert!(get_resource_name_for_filtering("AWS::S3::Bucket", "my-bucket").is_some());
 
         // Generic resources might not
-        assert!(get_resource_name_for_filtering("AWS::CloudFormation::Stack", "my-stack").is_none());
+        assert!(
+            get_resource_name_for_filtering("AWS::CloudFormation::Stack", "my-stack").is_none()
+        );
     }
 
     #[test]

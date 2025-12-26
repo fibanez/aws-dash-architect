@@ -290,10 +290,8 @@ fn test_in_filter_rejects_value_not_in_list() {
 #[test]
 fn test_in_filter_rejects_missing_tag() {
     let resource = create_test_resource(vec![("Team", "Backend")]);
-    let filter = TagFilter::new("Environment".to_string(), TagFilterType::In).with_values(vec![
-        "Production".to_string(),
-        "Staging".to_string(),
-    ]);
+    let filter = TagFilter::new("Environment".to_string(), TagFilterType::In)
+        .with_values(vec!["Production".to_string(), "Staging".to_string()]);
 
     assert!(!filter.matches(&resource));
 }
@@ -329,10 +327,8 @@ fn test_not_in_filter_matches_value_not_in_list() {
 #[test]
 fn test_not_in_filter_matches_missing_tag() {
     let resource = create_test_resource(vec![("Team", "Backend")]);
-    let filter = TagFilter::new("Environment".to_string(), TagFilterType::NotIn).with_values(vec![
-        "Production".to_string(),
-        "Staging".to_string(),
-    ]);
+    let filter = TagFilter::new("Environment".to_string(), TagFilterType::NotIn)
+        .with_values(vec!["Production".to_string(), "Staging".to_string()]);
 
     // Tag doesn't exist, so it's not in any list
     assert!(filter.matches(&resource));
@@ -481,10 +477,7 @@ fn test_filter_validation_regex_with_valid_pattern() {
 
 #[test]
 fn test_filter_group_and_all_filters_must_match() {
-    let resource = create_test_resource(vec![
-        ("Environment", "Production"),
-        ("Team", "Backend"),
-    ]);
+    let resource = create_test_resource(vec![("Environment", "Production"), ("Team", "Backend")]);
 
     let mut group = TagFilterGroup::new().with_operator(BooleanOperator::And);
     group.add_filter(
@@ -501,10 +494,7 @@ fn test_filter_group_and_all_filters_must_match() {
 
 #[test]
 fn test_filter_group_and_rejects_if_one_filter_fails() {
-    let resource = create_test_resource(vec![
-        ("Environment", "Production"),
-        ("Team", "Frontend"),
-    ]);
+    let resource = create_test_resource(vec![("Environment", "Production"), ("Team", "Frontend")]);
 
     let mut group = TagFilterGroup::new().with_operator(BooleanOperator::And);
     group.add_filter(
@@ -525,10 +515,7 @@ fn test_filter_group_and_rejects_if_one_filter_fails() {
 
 #[test]
 fn test_filter_group_or_matches_if_one_filter_succeeds() {
-    let resource = create_test_resource(vec![
-        ("Environment", "Staging"),
-        ("Team", "Backend"),
-    ]);
+    let resource = create_test_resource(vec![("Environment", "Staging"), ("Team", "Backend")]);
 
     let mut group = TagFilterGroup::new().with_operator(BooleanOperator::Or);
     group.add_filter(
@@ -545,10 +532,7 @@ fn test_filter_group_or_matches_if_one_filter_succeeds() {
 
 #[test]
 fn test_filter_group_or_rejects_if_all_filters_fail() {
-    let resource = create_test_resource(vec![
-        ("Environment", "Staging"),
-        ("Team", "Frontend"),
-    ]);
+    let resource = create_test_resource(vec![("Environment", "Staging"), ("Team", "Frontend")]);
 
     let mut group = TagFilterGroup::new().with_operator(BooleanOperator::Or);
     group.add_filter(
@@ -589,10 +573,7 @@ fn test_empty_filter_group_is_valid() {
 #[test]
 fn test_nested_filter_groups_complex_logic() {
     // Test: (Environment = Production OR Environment = Staging) AND Team = Backend
-    let resource = create_test_resource(vec![
-        ("Environment", "Staging"),
-        ("Team", "Backend"),
-    ]);
+    let resource = create_test_resource(vec![("Environment", "Staging"), ("Team", "Backend")]);
 
     // Create sub-group for Environment OR condition
     let mut env_group = TagFilterGroup::new().with_operator(BooleanOperator::Or);
@@ -653,7 +634,10 @@ fn test_nested_filter_groups_rejects_partial_match() {
 #[test]
 fn test_filter_group_count_includes_nested_filters() {
     let mut main_group = TagFilterGroup::new();
-    main_group.add_filter(TagFilter::new("Environment".to_string(), TagFilterType::Exists));
+    main_group.add_filter(TagFilter::new(
+        "Environment".to_string(),
+        TagFilterType::Exists,
+    ));
 
     let mut sub_group = TagFilterGroup::new();
     sub_group.add_filter(TagFilter::new("Team".to_string(), TagFilterType::Exists));
@@ -667,7 +651,10 @@ fn test_filter_group_count_includes_nested_filters() {
 #[test]
 fn test_collect_filter_tag_keys_includes_all_keys() {
     let mut main_group = TagFilterGroup::new();
-    main_group.add_filter(TagFilter::new("Environment".to_string(), TagFilterType::Exists));
+    main_group.add_filter(TagFilter::new(
+        "Environment".to_string(),
+        TagFilterType::Exists,
+    ));
 
     let mut sub_group = TagFilterGroup::new();
     sub_group.add_filter(TagFilter::new("Team".to_string(), TagFilterType::Exists));
@@ -687,7 +674,10 @@ fn test_collect_filter_tag_keys_includes_all_keys() {
 #[test]
 fn test_collect_filter_tag_keys_avoids_duplicates() {
     let mut main_group = TagFilterGroup::new();
-    main_group.add_filter(TagFilter::new("Environment".to_string(), TagFilterType::Exists));
+    main_group.add_filter(TagFilter::new(
+        "Environment".to_string(),
+        TagFilterType::Exists,
+    ));
     main_group.add_filter(
         TagFilter::new("Environment".to_string(), TagFilterType::Equals)
             .with_values(vec!["Production".to_string()]),

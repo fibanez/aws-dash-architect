@@ -38,17 +38,21 @@ impl AsyncResourceNormalizer for GreengrassComponentVersionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
-            .fetch_tags_for_resource("AWS::GreengrassV2::ComponentVersion", &component_name, account, region)
-
+            .fetch_tags_for_resource(
+                "AWS::GreengrassV2::ComponentVersion",
+                &component_name,
+                account,
+                region,
+            )
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::GreengrassV2::ComponentVersion {}: {}", component_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::GreengrassV2::ComponentVersion {}: {}",
+                    component_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -95,4 +99,3 @@ impl AsyncResourceNormalizer for GreengrassComponentVersionNormalizer {
         "AWS::GreengrassV2::ComponentVersion"
     }
 }
-

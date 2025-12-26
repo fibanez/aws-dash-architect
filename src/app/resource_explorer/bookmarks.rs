@@ -11,10 +11,10 @@ use crate::app::resource_explorer::{GroupingMode, ResourceExplorerState, TagFilt
 /// A folder for organizing bookmarks hierarchically
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BookmarkFolder {
-    pub id: String,  // UUID
+    pub id: String, // UUID
     pub name: String,
     pub description: Option<String>,
-    pub parent_id: Option<String>,  // None = Top Folder
+    pub parent_id: Option<String>, // None = Top Folder
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
@@ -44,9 +44,9 @@ pub struct Bookmark {
     pub folder_id: Option<String>, // Folder this bookmark belongs to (None = Top Folder)
 
     // Explorer state - simplified to store just IDs/names
-    pub account_ids: Vec<String>,        // AccountSelection.account_id
-    pub region_codes: Vec<String>,       // RegionSelection.region_code
-    pub resource_type_ids: Vec<String>,  // ResourceTypeSelection.resource_type
+    pub account_ids: Vec<String>,       // AccountSelection.account_id
+    pub region_codes: Vec<String>,      // RegionSelection.region_code
+    pub resource_type_ids: Vec<String>, // ResourceTypeSelection.resource_type
     pub grouping: GroupingMode,
     pub tag_filters: TagFilterGroup,
     pub search_filter: String,
@@ -206,9 +206,9 @@ pub struct BookmarkManager {
     collection: BookmarkCollection,
 
     // Auto-save state
-    last_session: Bookmark,    // Hidden bookmark for session restoration
-    auto_save_dirty: bool,     // Track unsaved auto-save changes
-    last_auto_save: Instant,   // Debounce auto-save operations
+    last_session: Bookmark,  // Hidden bookmark for session restoration
+    auto_save_dirty: bool,   // Track unsaved auto-save changes
+    last_auto_save: Instant, // Debounce auto-save operations
 
     // Manual bookmark state
     dirty: bool, // Track unsaved manual bookmark changes
@@ -255,7 +255,9 @@ impl BookmarkManager {
         let file: BookmarkFile =
             serde_json::from_str(&contents).context("Failed to parse bookmarks JSON")?;
 
-        let last_session = file.last_session.unwrap_or_else(Self::create_empty_auto_save);
+        let last_session = file
+            .last_session
+            .unwrap_or_else(Self::create_empty_auto_save);
 
         Ok((file.collection, last_session))
     }
@@ -390,8 +392,8 @@ impl BookmarkManager {
 
     /// Export bookmarks to a file
     pub fn export_to_file(&self, path: &PathBuf) -> Result<()> {
-        let json =
-            serde_json::to_string_pretty(&self.collection).context("Failed to serialize bookmarks")?;
+        let json = serde_json::to_string_pretty(&self.collection)
+            .context("Failed to serialize bookmarks")?;
         fs::write(path, json).context("Failed to write export file")?;
         Ok(())
     }
@@ -464,7 +466,12 @@ impl BookmarkManager {
 
     /// Move a bookmark to a different folder
     pub fn move_bookmark_to_folder(&mut self, bookmark_id: &str, folder_id: Option<String>) {
-        if let Some(bookmark) = self.collection.bookmarks.iter_mut().find(|b| b.id == bookmark_id) {
+        if let Some(bookmark) = self
+            .collection
+            .bookmarks
+            .iter_mut()
+            .find(|b| b.id == bookmark_id)
+        {
             bookmark.folder_id = folder_id;
             bookmark.modified_at = chrono::Utc::now();
             self.dirty = true;
@@ -545,7 +552,12 @@ impl BookmarkManager {
         }
 
         // Move the folder
-        if let Some(folder) = self.collection.folders.iter_mut().find(|f| f.id == folder_id) {
+        if let Some(folder) = self
+            .collection
+            .folders
+            .iter_mut()
+            .find(|f| f.id == folder_id)
+        {
             folder.parent_id = new_parent_id;
             folder.modified_at = chrono::Utc::now();
             self.dirty = true;

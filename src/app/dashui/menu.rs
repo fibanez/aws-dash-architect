@@ -1,5 +1,5 @@
 use crate::app::aws_identity::LoginState;
-use crate::app::dashui::app::{ThemeChoice, NavigationStatusBarSettings};
+use crate::app::dashui::app::{NavigationStatusBarSettings, ThemeChoice};
 use crate::log_debug;
 use eframe::egui;
 use egui::{Color32, RichText};
@@ -86,24 +86,27 @@ pub fn build_menu(
             catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
             *theme = ThemeChoice::Mocha;
         }
-        
+
         ui.separator();
-        
+
         // Navigation Status Bar toggle
         let checkbox_response = ui.checkbox(
             &mut navigation_status_bar_settings.show_status_bar,
-            "Show Navigation Status Bar"
+            "Show Navigation Status Bar",
         );
         if checkbox_response.hovered() {
-            checkbox_response.on_hover_text("Toggle the Vimium-like navigation status bar showing mode, keys, and hints");
+            checkbox_response.on_hover_text(
+                "Toggle the Vimium-like navigation status bar showing mode, keys, and hints",
+            );
         }
     });
 
     if original_theme != *theme {
         theme_changed = true;
     }
-    
-    if original_status_bar_setting.show_status_bar != navigation_status_bar_settings.show_status_bar {
+
+    if original_status_bar_setting.show_status_bar != navigation_status_bar_settings.show_status_bar
+    {
         navigation_status_bar_changed = true;
     }
 
@@ -111,7 +114,9 @@ pub fn build_menu(
     show_aws_login_status(ui, aws_identity_center);
 
     // Compliance programs display and validation button
-    if let Some(validation_action) = show_compliance_programs_and_validation(ui, compliance_programs, compliance_status) {
+    if let Some(validation_action) =
+        show_compliance_programs_and_validation(ui, compliance_programs, compliance_status)
+    {
         return validation_action;
     }
 
@@ -157,7 +162,7 @@ pub fn build_menu(
         });
     }
 
-    let final_menu_action = if menu_action != MenuAction::None {
+    if menu_action != MenuAction::None {
         menu_action
     } else if theme_changed {
         MenuAction::ThemeChanged
@@ -165,9 +170,7 @@ pub fn build_menu(
         MenuAction::NavigationStatusBarChanged
     } else {
         MenuAction::None
-    };
-
-    final_menu_action
+    }
 }
 
 /// Displays the AWS login status indicator

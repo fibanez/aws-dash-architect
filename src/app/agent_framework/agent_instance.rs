@@ -9,7 +9,9 @@ use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::app::agent_framework::agent_logger::AgentLogger;
-use crate::app::agent_framework::agent_types::{AgentId, AgentMetadata, AgentStatus, AgentType};
+use crate::app::agent_framework::agent_types::{
+    AgentId, AgentMetadata, AgentStatus, AgentType, StoodLogLevel,
+};
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationResponse};
 use crate::app::agent_framework::tools::TodoItem;
 
@@ -58,6 +60,8 @@ pub struct AgentInstance {
     logger: Arc<AgentLogger>,
     /// Tokio runtime for background async execution
     runtime: Arc<tokio::runtime::Runtime>,
+    /// Stood library log level for this agent
+    stood_log_level: StoodLogLevel,
 }
 
 impl AgentInstance {
@@ -101,6 +105,7 @@ impl AgentInstance {
             todo_list_shared: Arc::new(Mutex::new(Vec::new())),
             logger,
             runtime,
+            stood_log_level: StoodLogLevel::default(), // Debug by default
         }
     }
 
@@ -127,10 +132,10 @@ impl AgentInstance {
         let logger = parent_logger;
 
         // Log worker creation to parent's log with section header
-        logger.log_system_message(&agent_type, &format!(
-            "\n====== Worker Agent: {} ({}) ======",
-            metadata.name, id
-        ));
+        logger.log_system_message(
+            &agent_type,
+            &format!("\n====== Worker Agent: {} ({}) ======", metadata.name, id),
+        );
         logger.log_agent_created(&agent_type, &metadata);
         logger.log_system_message(&agent_type, &format!("Agent type: {}", agent_type));
 
@@ -151,6 +156,7 @@ impl AgentInstance {
             todo_list_shared: Arc::new(Mutex::new(Vec::new())),
             logger,
             runtime,
+            stood_log_level: StoodLogLevel::default(), // Debug by default
         }
     }
 
@@ -209,6 +215,53 @@ impl AgentInstance {
         &self.logger
     }
 
+    /// Get the current stood log level for this agent
+    pub fn stood_log_level(&self) -> StoodLogLevel {
+        self.stood_log_level
+    }
+
+    /// Set the stood log level for this agent
+    ///
+    /// This also resets the stood agent so the new log level takes effect
+    /// on the next message send.
+    pub fn set_stood_log_level(&mut self, level: StoodLogLevel) {
+        let old_level = self.stood_log_level;
+        if old_level == level {
+            return; // No change needed
+        }
+
+        self.stood_log_level = level;
+
+        // Log the change
+        self.logger.log_stood_level_changed(
+            &self.agent_type,
+            old_level.display_name(),
+            level.display_name(),
+        );
+
+        tracing::info!(
+            target: "agent::stood_log_level",
+            old_level = %old_level.display_name(),
+            new_level = %level.display_name(),
+            "Stood log level changed"
+        );
+
+        // Reset the stood agent so new log level takes effect
+        self.reset_stood_agent();
+    }
+
+    /// Reset the stood agent for reinitialization
+    ///
+    /// This clears the stood agent instance, which will be re-created
+    /// with current settings on the next message send or initialize() call.
+    pub fn reset_stood_agent(&mut self) {
+        *self.stood_agent.lock().unwrap() = None;
+        self.logger.log_system_message(
+            &self.agent_type,
+            "Stood agent reset - will reinitialize on next message",
+        );
+    }
+
     /// Get tools based on agent type
     ///
     /// Tool configuration:
@@ -258,7 +311,9 @@ impl AgentInstance {
                 ]
             }
             AgentType::TaskWorker { .. } => {
-                vec![crate::app::agent_framework::execute_javascript_tool()]
+                vec![Box::new(
+                    crate::app::agent_framework::tools::ExecuteJavaScriptTool::new(),
+                )]
             }
         }
     }
@@ -268,9 +323,7 @@ impl AgentInstance {
         use chrono::Utc;
 
         let prompt = match self.agent_type {
-            AgentType::TaskManager => {
-                crate::app::agent_framework::TASK_MANAGER_PROMPT.to_string()
-            }
+            AgentType::TaskManager => crate::app::agent_framework::TASK_MANAGER_PROMPT.to_string(),
             AgentType::TaskWorker { .. } => {
                 crate::app::agent_framework::TASK_WORKER_PROMPT.to_string()
             }
@@ -303,7 +356,7 @@ impl AgentInstance {
         let access_key = creds.access_key_id;
         let secret_key = creds.secret_access_key;
         let session_token = creds.session_token;
-        let region = "us-east-1".to_string(); // Default region
+        let region = "us-east-1".to_string();
 
         // Set global credentials for execute_javascript tool
         crate::app::agent_framework::set_global_aws_credentials(
@@ -316,33 +369,76 @@ impl AgentInstance {
         // Log agent initialization
         self.logger
             .log_system_message(&self.agent_type, "Agent initialization started");
-        self.logger
-            .log_system_message(&self.agent_type, &format!("Using model: {}", self.metadata.model_id));
 
-        // Configure agent with Claude Sonnet 3.5
-        // Note: We can't use async in this context, so build synchronously
-
-        // Get system prompt based on agent type
+        // Configure agent with selected model
         let system_prompt = self.get_system_prompt_for_type();
+        let tools = self.get_tools_for_type();
 
-        // Debug: Log the system prompt
-        log::info!(
-            "System prompt length: {} chars",
-            system_prompt.len()
-        );
-        log::info!(
-            "System prompt preview: {}...",
-            &system_prompt.chars().take(200).collect::<String>()
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!("Using model: {}", self.metadata.model),
         );
 
-        let agent_builder = Agent::builder()
-            .model(Bedrock::Claude35Sonnet)
-            .system_prompt(&system_prompt)
-            .with_streaming(false) // Disable streaming to avoid hang issues
-            .with_credentials(access_key, secret_key, session_token, region)
-            .tools(self.get_tools_for_type());
+        // Build agent with selected model (match on enum to get concrete type)
+        use crate::app::agent_framework::AgentModel;
+        let agent_builder = match self.metadata.model {
+            AgentModel::ClaudeSonnet45 => Agent::builder()
+                .model(Bedrock::ClaudeSonnet45)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(tools),
+            AgentModel::ClaudeHaiku45 => Agent::builder()
+                .model(Bedrock::ClaudeHaiku45)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(self.get_tools_for_type()),
+            AgentModel::ClaudeOpus45 => Agent::builder()
+                .model(Bedrock::ClaudeOpus45)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(self.get_tools_for_type()),
+            AgentModel::NovaPro => Agent::builder()
+                .model(Bedrock::NovaPro)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(self.get_tools_for_type()),
+            AgentModel::NovaLite => Agent::builder()
+                .model(Bedrock::NovaLite)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(self.get_tools_for_type()),
+        };
 
-        // We need to build async, so wrap in runtime
         let agent = self
             .runtime
             .block_on(async { agent_builder.build().await })
@@ -367,8 +463,10 @@ impl AgentInstance {
         } else {
             user_message.clone()
         };
-        self.logger
-            .log_system_message(&self.agent_type, &format!("Sending message: {}", message_preview));
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!("Sending message: {}", message_preview),
+        );
 
         // Add user message to conversation
         self.messages
@@ -377,7 +475,8 @@ impl AgentInstance {
         self.status_message = Some("Processing...".to_string());
 
         // Log message
-        self.logger.log_user_message(&self.agent_type, &user_message);
+        self.logger
+            .log_user_message(&self.agent_type, &user_message);
 
         // Clone what we need for the background thread
         let stood_agent = Arc::clone(&self.stood_agent);
@@ -386,6 +485,7 @@ impl AgentInstance {
         let runtime = Arc::clone(&self.runtime);
         let agent_id = self.id;
         let agent_type = self.agent_type;
+        let stood_log_level = self.stood_log_level;
 
         // Spawn background thread
         std::thread::spawn(move || {
@@ -400,7 +500,14 @@ impl AgentInstance {
             // Set the current agent type for this thread (so tools can pass it to logger methods)
             crate::app::agent_framework::set_current_agent_type(agent_type);
 
+            // Set the stood log level for this thread (for AgentTracingLayer to filter stood traces)
+            crate::app::agent_framework::agent_tracing::set_current_log_level(stood_log_level);
+
             // Execute agent in tokio runtime
+            // Note: We intentionally hold the MutexGuard across await because the stood agent
+            // must remain locked during execution. This is safe because only one thread
+            // executes the agent at a time via the background thread spawned above.
+            #[allow(clippy::await_holding_lock)]
             runtime.block_on(async move {
                 logger.log_system_message(&agent_type, "Background execution started");
 
@@ -450,46 +557,27 @@ Query result presentation:
                 logger.log_system_message(&agent_type, "Executing agent...");
                 match agent.execute(&full_message).await {
                     Ok(_) => {
-                        let exec_completed_at = std::time::Instant::now();
                         logger.log_system_message(&agent_type, "Agent execution completed");
 
                         // Get final response from conversation
                         if let Some(last_message) = agent.conversation().messages().last() {
-                            if let Some(text) = last_message.text() {
-                                let before_log = std::time::Instant::now();
-                                log::info!("[TIMING] Before log_assistant_response at {:?}", before_log);
+                            let is_assistant = last_message.role == stood::types::MessageRole::Assistant;
 
+                            if !is_assistant {
+                                // stood execute() succeeded but didn't add an assistant response
+                                let error_msg = "Model did not generate a response. This may indicate an API error or credential issue. Check the application logs for details.".to_string();
+                                logger.log_error(&agent_type, "No assistant response generated");
+                                let _ = sender.send(ConversationResponse::Error(error_msg));
+                            } else if let Some(text) = last_message.text() {
                                 logger.log_assistant_response(&agent_type, &text);
-
-                                let after_log = std::time::Instant::now();
-                                let log_duration = after_log.duration_since(before_log);
-                                log::info!("[TIMING] After log_assistant_response at {:?} (took {:?})", after_log, log_duration);
-
-                                let before_send = std::time::Instant::now();
-                                let send_result = sender.send(ConversationResponse::Success(text.to_string()));
-                                let after_send = std::time::Instant::now();
-                                let send_duration = after_send.duration_since(before_send);
-
-                                log::info!(
-                                    "[TIMING] Channel send took {:?} | Total from exec complete: {:?} | Send result: {:?}",
-                                    send_duration,
-                                    after_send.duration_since(exec_completed_at),
-                                    if send_result.is_ok() { "OK" } else { "ERROR" }
-                                );
-
-                                log::info!(
-                                    "[BG THREAD] Message sent to channel at {:?} (Instant: tv_sec={}, tv_nsec={})",
-                                    after_send,
-                                    after_send.elapsed().as_secs(),
-                                    after_send.elapsed().subsec_nanos()
-                                );
+                                let _ = sender.send(ConversationResponse::Success(text.to_string()));
                             } else {
                                 let error_msg = "Agent response had no text content".to_string();
                                 logger.log_error(&agent_type, &error_msg);
                                 let _ = sender.send(ConversationResponse::Error(error_msg));
                             }
                         } else {
-                            let error_msg = "Agent produced no response".to_string();
+                            let error_msg = "Agent response was empty".to_string();
                             logger.log_error(&agent_type, &error_msg);
                             let _ = sender.send(ConversationResponse::Error(error_msg));
                         }
@@ -512,8 +600,10 @@ Query result presentation:
         match self.response_channel.1.try_recv() {
             Ok(response) => {
                 let response_received_at = std::time::Instant::now();
-                self.logger
-                    .log_system_message(&self.agent_type, "Response received from background thread");
+                self.logger.log_system_message(
+                    &self.agent_type,
+                    "Response received from background thread",
+                );
                 self.processing = false;
                 self.status_message = None;
 
@@ -525,8 +615,10 @@ Query result presentation:
                         } else {
                             text.clone()
                         };
-                        self.logger
-                            .log_system_message(&self.agent_type, &format!("Success response: {}", text_preview));
+                        self.logger.log_system_message(
+                            &self.agent_type,
+                            &format!("Success response: {}", text_preview),
+                        );
                         let msg = ConversationMessage::assistant(text);
                         let message_timestamp = msg.timestamp;
                         self.messages.push_back(msg);
@@ -536,16 +628,20 @@ Query result presentation:
                             response_received_at,
                             message_timestamp.format("%H:%M:%S%.3f")
                         );
-                        self.logger.log_system_message(&self.agent_type, &format!(
-                            "Response added at {} (timestamp: {})",
-                            response_received_at.elapsed().as_millis(),
-                            message_timestamp.format("%H:%M:%S%.3f")
-                        ));
+                        self.logger.log_system_message(
+                            &self.agent_type,
+                            &format!(
+                                "Response added at {} (timestamp: {})",
+                                response_received_at.elapsed().as_millis(),
+                                message_timestamp.format("%H:%M:%S%.3f")
+                            ),
+                        );
                     }
                     ConversationResponse::Error(error) => {
                         self.messages
                             .push_back(ConversationMessage::assistant(format!("Error: {}", error)));
-                        self.logger.log_error(&self.agent_type, &format!("Agent error: {}", error));
+                        self.logger
+                            .log_error(&self.agent_type, &format!("Agent error: {}", error));
                         self.status = AgentStatus::Failed(error);
                     }
                     ConversationResponse::StatusUpdate(status) => {
@@ -561,7 +657,8 @@ Query result presentation:
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.processing = false;
                 self.status_message = None;
-                self.logger.log_error(&self.agent_type, "Response channel disconnected");
+                self.logger
+                    .log_error(&self.agent_type, "Response channel disconnected");
                 false
             }
         }
@@ -582,29 +679,6 @@ Query result presentation:
         self.logger
             .log_system_message(&self.agent_type, "Agent fully initialized and ready");
         Ok(())
-    }
-
-    /// Change the agent's model (requires re-initialization)
-    ///
-    /// This updates the agent metadata and clears the stood agent,
-    /// which will be re-created with the new model on next message send.
-    pub fn change_model(&mut self, new_model_id: String) {
-        let old_model = self.metadata.model_id.clone();
-
-        // Update metadata
-        self.metadata.model_id = new_model_id.clone();
-        self.metadata.updated_at = chrono::Utc::now();
-
-        // Log model change
-        self.logger.log_model_changed(&self.agent_type, &old_model, &new_model_id);
-
-        // Clear stood agent - will be re-created with new model on next initialize()
-        *self.stood_agent.lock().unwrap() = None;
-
-        self.logger.log_system_message(&self.agent_type, &format!(
-            "Model changed from {} to {}. Agent will re-initialize on next message.",
-            old_model, new_model_id
-        ));
     }
 
     /// Get mutable reference to metadata (for external updates)
@@ -639,7 +713,8 @@ Query result presentation:
     pub fn terminate(&mut self) {
         self.status = AgentStatus::Cancelled;
         self.processing = false;
-        self.logger.log_system_message(&self.agent_type, "Agent terminated");
+        self.logger
+            .log_system_message(&self.agent_type, "Agent terminated");
     }
 }
 
@@ -650,10 +725,11 @@ mod tests {
     use chrono::Utc;
 
     fn create_test_metadata() -> AgentMetadata {
+        use crate::app::agent_framework::AgentModel;
         AgentMetadata {
             name: "Test Agent".to_string(),
             description: "A test agent".to_string(),
-            model_id: "anthropic.claude-3-haiku-20240307-v1:0".to_string(),
+            model: AgentModel::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

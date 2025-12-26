@@ -36,25 +36,22 @@ impl AsyncResourceNormalizer for ElastiCacheCacheClusterNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
-            .fetch_tags_for_resource("AWS::ElastiCache::CacheCluster", &resource_id, account, region)
-
-
+            .fetch_tags_for_resource(
+                "AWS::ElastiCache::CacheCluster",
+                &resource_id,
+                account,
+                region,
+            )
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::ElastiCache::CacheCluster {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::ElastiCache::CacheCluster {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -169,25 +166,22 @@ impl AsyncResourceNormalizer for ElastiCacheReplicationGroupNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
-            .fetch_tags_for_resource("AWS::ElastiCache::ReplicationGroup", &resource_id, account, region)
-
-
+            .fetch_tags_for_resource(
+                "AWS::ElastiCache::ReplicationGroup",
+                &resource_id,
+                account,
+                region,
+            )
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::ElastiCache::ReplicationGroup {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::ElastiCache::ReplicationGroup {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -250,4 +244,3 @@ impl AsyncResourceNormalizer for ElastiCacheReplicationGroupNormalizer {
         "AWS::ElastiCache::ReplicationGroup"
     }
 }
-

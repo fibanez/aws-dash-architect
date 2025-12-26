@@ -1,7 +1,7 @@
-use anyhow::{Result, Context};
+use super::super::credentials::CredentialCoordinator;
+use anyhow::{Context, Result};
 use aws_sdk_detective as detective;
 use std::sync::Arc;
-use super::super::credentials::CredentialCoordinator;
 
 pub struct DetectiveService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -20,10 +20,16 @@ impl DetectiveService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = detective::Client::new(&aws_config);
         let mut graphs = Vec::new();
@@ -60,10 +66,16 @@ impl DetectiveService {
         region: &str,
         graph_arn: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = detective::Client::new(&aws_config);
         self.describe_graph_internal(&client, graph_arn).await
@@ -94,26 +106,47 @@ impl DetectiveService {
         let mut json = serde_json::Map::new();
 
         if let Some(arn) = &graph.arn {
-            json.insert("GraphArn".to_string(), serde_json::Value::String(arn.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(arn.clone()));
-            
+            json.insert(
+                "GraphArn".to_string(),
+                serde_json::Value::String(arn.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(arn.clone()),
+            );
+
             // Extract graph name from ARN
             if let Some(graph_name) = arn.split('/').next_back() {
-                json.insert("GraphName".to_string(), serde_json::Value::String(graph_name.to_string()));
-                json.insert("Name".to_string(), serde_json::Value::String(format!("Detective-{}", graph_name)));
+                json.insert(
+                    "GraphName".to_string(),
+                    serde_json::Value::String(graph_name.to_string()),
+                );
+                json.insert(
+                    "Name".to_string(),
+                    serde_json::Value::String(format!("Detective-{}", graph_name)),
+                );
             }
         }
 
         if let Some(created_time) = graph.created_time {
-            json.insert("CreatedTime".to_string(), serde_json::Value::String(created_time.to_string()));
+            json.insert(
+                "CreatedTime".to_string(),
+                serde_json::Value::String(created_time.to_string()),
+            );
         }
 
         // Status is always ACTIVE if the graph exists
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         // Set default name if not available
         if !json.contains_key("Name") {
-            json.insert("Name".to_string(), serde_json::Value::String("Detective Graph".to_string()));
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String("Detective Graph".to_string()),
+            );
         }
 
         serde_json::Value::Object(json)
@@ -132,10 +165,16 @@ impl DetectiveService {
         region: &str,
         graph_arn: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = detective::Client::new(&aws_config);
         let mut members = Vec::new();
@@ -169,31 +208,52 @@ impl DetectiveService {
         let mut json = serde_json::Map::new();
 
         if let Some(account_id) = &member.account_id {
-            json.insert("AccountId".to_string(), serde_json::Value::String(account_id.clone()));
+            json.insert(
+                "AccountId".to_string(),
+                serde_json::Value::String(account_id.clone()),
+            );
         }
 
         if let Some(email_address) = &member.email_address {
-            json.insert("EmailAddress".to_string(), serde_json::Value::String(email_address.clone()));
+            json.insert(
+                "EmailAddress".to_string(),
+                serde_json::Value::String(email_address.clone()),
+            );
         }
 
         if let Some(graph_arn) = &member.graph_arn {
-            json.insert("GraphArn".to_string(), serde_json::Value::String(graph_arn.clone()));
+            json.insert(
+                "GraphArn".to_string(),
+                serde_json::Value::String(graph_arn.clone()),
+            );
         }
 
         if let Some(status) = &member.status {
-            json.insert("Status".to_string(), serde_json::Value::String(status.as_str().to_string()));
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
         }
 
         if let Some(disabled_reason) = &member.disabled_reason {
-            json.insert("DisabledReason".to_string(), serde_json::Value::String(disabled_reason.as_str().to_string()));
+            json.insert(
+                "DisabledReason".to_string(),
+                serde_json::Value::String(disabled_reason.as_str().to_string()),
+            );
         }
 
         if let Some(invited_time) = member.invited_time {
-            json.insert("InvitedTime".to_string(), serde_json::Value::String(invited_time.to_string()));
+            json.insert(
+                "InvitedTime".to_string(),
+                serde_json::Value::String(invited_time.to_string()),
+            );
         }
 
         if let Some(updated_time) = member.updated_time {
-            json.insert("UpdatedTime".to_string(), serde_json::Value::String(updated_time.to_string()));
+            json.insert(
+                "UpdatedTime".to_string(),
+                serde_json::Value::String(updated_time.to_string()),
+            );
         }
 
         serde_json::Value::Object(json)

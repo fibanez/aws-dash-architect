@@ -32,7 +32,10 @@ impl AutoScalingService {
             })?;
 
         let client = autoscaling::Client::new(&aws_config);
-        let mut paginator = client.describe_auto_scaling_groups().into_paginator().send();
+        let mut paginator = client
+            .describe_auto_scaling_groups()
+            .into_paginator()
+            .send();
 
         let mut groups = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -111,14 +114,23 @@ impl AutoScalingService {
             if let Some(group) = groups.first() {
                 Ok(self.auto_scaling_group_to_json(group))
             } else {
-                Err(anyhow::anyhow!("Auto Scaling Group {} not found", group_name))
+                Err(anyhow::anyhow!(
+                    "Auto Scaling Group {} not found",
+                    group_name
+                ))
             }
         } else {
-            Err(anyhow::anyhow!("Auto Scaling Group {} not found", group_name))
+            Err(anyhow::anyhow!(
+                "Auto Scaling Group {} not found",
+                group_name
+            ))
         }
     }
 
-    fn auto_scaling_group_to_json(&self, group: &autoscaling::types::AutoScalingGroup) -> serde_json::Value {
+    fn auto_scaling_group_to_json(
+        &self,
+        group: &autoscaling::types::AutoScalingGroup,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(group_name) = &group.auto_scaling_group_name {
@@ -178,14 +190,14 @@ impl AutoScalingService {
                 serde_json::Value::Number(serde_json::Number::from(min_size)),
             );
         }
-        
+
         if let Some(max_size) = group.max_size {
             json.insert(
                 "MaxSize".to_string(),
                 serde_json::Value::Number(serde_json::Number::from(max_size)),
             );
         }
-        
+
         if let Some(desired_capacity) = group.desired_capacity {
             json.insert(
                 "DesiredCapacity".to_string(),
@@ -294,10 +306,14 @@ impl AutoScalingService {
                     .map(|tag| {
                         let mut tag_json = serde_json::Map::new();
                         if let Some(key) = &tag.key {
-                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
                         }
                         if let Some(value) = &tag.value {
-                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                         }
                         serde_json::Value::Object(tag_json)
                     })
@@ -315,7 +331,10 @@ impl AutoScalingService {
         serde_json::Value::Object(json)
     }
 
-    fn scaling_policy_to_json(&self, policy: &autoscaling::types::ScalingPolicy) -> serde_json::Value {
+    fn scaling_policy_to_json(
+        &self,
+        policy: &autoscaling::types::ScalingPolicy,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(policy_name) = &policy.policy_name {
@@ -372,13 +391,10 @@ impl AutoScalingService {
         }
 
         if let Some(enabled) = policy.enabled {
-            json.insert(
-                "Enabled".to_string(),
-                serde_json::Value::Bool(enabled),
-            );
+            json.insert("Enabled".to_string(), serde_json::Value::Bool(enabled));
         }
 
-        // Default status for consistency  
+        // Default status for consistency
         json.insert(
             "Status".to_string(),
             serde_json::Value::String("Active".to_string()),

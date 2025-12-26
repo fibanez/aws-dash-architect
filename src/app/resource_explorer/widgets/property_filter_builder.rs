@@ -23,7 +23,6 @@ impl PropertyFilterBuilderWidget {
         }
     }
 
-
     /// Render the filter builder UI
     pub fn show(&mut self, ui: &mut Ui) -> PropertyFilterGroup {
         self.frame_count += 1;
@@ -262,8 +261,9 @@ impl PropertyFilterBuilderWidget {
                 }
 
                 let mut values_str = filter.values.join(",");
-                let text_edit = ui
-                    .add(egui::TextEdit::singleline(&mut values_str).hint_text("value1,value2,..."));
+                let text_edit = ui.add(
+                    egui::TextEdit::singleline(&mut values_str).hint_text("value1,value2,..."),
+                );
 
                 if text_edit.changed() {
                     filter.values = values_str

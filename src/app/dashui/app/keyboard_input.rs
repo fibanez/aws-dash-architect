@@ -201,7 +201,11 @@ impl DashApp {
     }
 
     /// Handle activation of ResourceFormWindow elements
-    pub(super) fn handle_resource_form_element_activation(&mut self, element_id: &str, action: ElementAction) {
+    pub(super) fn handle_resource_form_element_activation(
+        &mut self,
+        element_id: &str,
+        action: ElementAction,
+    ) {
         info!(
             "Activating ResourceFormWindow element: {} with action: {:?}",
             element_id, action
@@ -471,7 +475,11 @@ impl DashApp {
     }
 
     /// Queue action on PropertyTypeFormWindow (via ResourceFormWindow)
-    pub(super) fn queue_property_type_form_action(&mut self, _element_id: &str, _action: ElementAction) {
+    pub(super) fn queue_property_type_form_action(
+        &mut self,
+        _element_id: &str,
+        _action: ElementAction,
+    ) {
         // Resource/template editor windows removed
     }
 
@@ -629,15 +637,26 @@ impl DashApp {
                 // Debug validation logs for hint mode element collection
                 #[cfg(debug_assertions)]
                 {
-                    tracing::debug!("Hint mode: Collected {} navigable elements from all sources", elements.len());
+                    tracing::debug!(
+                        "Hint mode: Collected {} navigable elements from all sources",
+                        elements.len()
+                    );
 
                     // Validation logging for hint mode
                     if elements.len() >= 80 {
-                        tracing::info!("Hint mode activated with {} elements (exceeds 80+ target)", elements.len());
+                        tracing::info!(
+                            "Hint mode activated with {} elements (exceeds 80+ target)",
+                            elements.len()
+                        );
                     } else if !elements.is_empty() {
-                        tracing::info!("Hint mode activated with {} elements (below 80+ target)", elements.len());
+                        tracing::info!(
+                            "Hint mode activated with {} elements (below 80+ target)",
+                            elements.len()
+                        );
                     } else {
-                        tracing::warn!("Hint mode activated with 0 elements - no widgets to navigate");
+                        tracing::warn!(
+                            "Hint mode activated with 0 elements - no widgets to navigate"
+                        );
                     }
                 }
 
@@ -719,34 +738,17 @@ impl DashApp {
     /// Focus the next window in the window order
     pub(super) fn focus_next_window(&mut self) {
         // Implement window cycling logic
-        if let Some(current) = self.currently_focused_window {
-            // For now, just cycle through a few common windows
-            match current {
-                FocusedWindow::Help => {
-                    // Resource/template editor windows removed
-                }
-                _ => {
-                    // Resource/template editor windows removed
-                }
-            }
-        } else {
-            // Resource/template editor windows removed
-        }
+        // Resource/template editor windows removed - this is a placeholder
+        // for future window cycling implementation
+        let _ = self.currently_focused_window; // Acknowledge the field exists
     }
 
     /// Focus the previous window in the window order
     pub(super) fn focus_previous_window(&mut self) {
         // Implement reverse window cycling logic
-        if let Some(current) = self.currently_focused_window {
-            match current {
-                FocusedWindow::Help => {
-                    // Resource/template editor windows removed
-                }
-                _ => {
-                    self.help_window.open = true;
-                    self.set_focused_window(FocusedWindow::Help);
-                }
-            }
+        // For non-Help windows, cycle to Help window
+        if let Some(FocusedWindow::Help) = self.currently_focused_window {
+            // Already on Help, no-op for now (resource/template editor windows removed)
         } else {
             self.help_window.open = true;
             self.set_focused_window(FocusedWindow::Help);

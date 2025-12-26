@@ -86,9 +86,7 @@ impl ChildResourceConfig {
             }],
         );
 
-        Self {
-            parent_to_children,
-        }
+        Self { parent_to_children }
     }
 
     /// Get child resource definitions for a parent resource type

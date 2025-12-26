@@ -17,11 +17,11 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LogFilter {
     All,
-    Messages,      // User/Assistant/System messages
-    ModelCalls,    // Model requests/responses
-    Tools,         // Tool executions
-    Errors,        // Error messages only
-    Lifecycle,     // Agent creation/termination
+    Messages,   // User/Assistant/System messages
+    ModelCalls, // Model requests/responses
+    Tools,      // Tool executions
+    Errors,     // Error messages only
+    Lifecycle,  // Agent creation/termination
 }
 
 pub struct AgentLogWindow {
@@ -58,8 +58,17 @@ impl AgentLogWindow {
     }
 
     /// Open the log viewer for a specific agent
-    pub fn show_log_for_agent(&mut self, agent_id: AgentId, agent_name: String, logger: &Arc<AgentLogger>) {
-        tracing::info!("🔍 Opening agent log window for agent {} ({})", agent_id, agent_name);
+    pub fn show_log_for_agent(
+        &mut self,
+        agent_id: AgentId,
+        agent_name: String,
+        logger: &Arc<AgentLogger>,
+    ) {
+        tracing::info!(
+            "🔍 Opening agent log window for agent {} ({})",
+            agent_id,
+            agent_name
+        );
         tracing::info!("🔍 Log path: {}", logger.log_path().display());
         self.open = true;
         self.agent_id = Some(agent_id);
@@ -67,7 +76,11 @@ impl AgentLogWindow {
         self.log_path = logger.log_path().clone();
         self.refresh_log_content();
         self.scroll_to_bottom = true;
-        tracing::info!("🔍 Agent log window opened: open={}, agent_name={}", self.open, self.agent_name);
+        tracing::info!(
+            "🔍 Agent log window opened: open={}, agent_name={}",
+            self.open,
+            self.agent_name
+        );
     }
 
     /// Refresh log content from file
@@ -95,7 +108,8 @@ impl AgentLogWindow {
 
         for line in self.log_content.lines() {
             // Check if this line starts a new log entry
-            let is_event_start = line.starts_with('[') || line.starts_with("===") || line.starts_with("🤖");
+            let is_event_start =
+                line.starts_with('[') || line.starts_with("===") || line.starts_with("🤖");
 
             if is_event_start {
                 // Process previous block
@@ -130,8 +144,7 @@ impl AgentLogWindow {
                     || line.contains("SYSTEM_MESSAGE")
             }
             LogFilter::ModelCalls => {
-                line.contains("MODEL_REQUEST")
-                    || line.contains("MODEL_RESPONSE")
+                line.contains("MODEL_REQUEST") || line.contains("MODEL_RESPONSE")
             }
             LogFilter::Tools => {
                 line.contains("TOOL_START")
@@ -139,9 +152,7 @@ impl AgentLogWindow {
                     || line.contains("TOOL_FAILED")
                     || line.contains("SUBTASK_CREATED")
             }
-            LogFilter::Errors => {
-                line.contains("❌ ERROR") || line.contains("TOOL_FAILED")
-            }
+            LogFilter::Errors => line.contains("❌ ERROR") || line.contains("TOOL_FAILED"),
             LogFilter::Lifecycle => {
                 line.contains("AGENT_CREATED")
                     || line.contains("AGENT_RENAMED")
@@ -153,7 +164,10 @@ impl AgentLogWindow {
 
         // Apply search query if present
         if !self.search_query.is_empty() {
-            filter_match && line.to_lowercase().contains(&self.search_query.to_lowercase())
+            filter_match
+                && line
+                    .to_lowercase()
+                    .contains(&self.search_query.to_lowercase())
         } else {
             filter_match
         }
@@ -282,7 +296,7 @@ impl AgentLogWindow {
                             if line_lower.contains(&query_lower) {
                                 ui.label(
                                     RichText::new(line)
-                                        .background_color(Color32::from_rgb(80, 80, 0))
+                                        .background_color(Color32::from_rgb(80, 80, 0)),
                                 );
                             } else {
                                 ui.label(line);

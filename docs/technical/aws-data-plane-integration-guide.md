@@ -63,7 +63,7 @@ This is distinct from **control plane** operations (resource discovery in the Re
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  Layer 1: AWS SDK Client (REQUIRED)                             │
-│  ├─ Location: src/app/{service}/                                │
+│  ├─ Location: src/app/data_plane/{service}/                     │
 │  ├─ Files: client.rs, types.rs, mod.rs, resource_mapping.rs    │
 │  └─ Purpose: Wrap AWS SDK with credential management           │
 │                                                                  │
@@ -181,7 +181,7 @@ Create a Rust client that wraps the AWS SDK and provides:
 ### File Structure
 
 ```
-src/app/{service}/
+src/app/data_plane/{service}/
 ├── mod.rs                    # Module definition and public API
 ├── types.rs                  # Data structures with Serde support
 ├── client.rs                 # AWS SDK wrapper
@@ -191,10 +191,10 @@ src/app/{service}/
 ### 1.1 Create Module Directory
 
 ```bash
-mkdir -p src/app/{service}
+mkdir -p src/app/data_plane/{service}
 ```
 
-Example: `mkdir -p src/app/cloudwatch_logs`
+Example: `mkdir -p src/app/data_plane/cloudwatch_logs`
 
 ---
 
@@ -378,7 +378,7 @@ mod tests {
 }
 ```
 
-**Reference**: `src/app/cloudwatch_logs/types.rs` (lines 1-273)
+**Reference**: `src/app/data_plane/cloudwatch_logs/types.rs`
 
 **Critical Points**:
 - ✅ Always derive `Serialize` and `Deserialize` for types exposed to JavaScript
@@ -619,7 +619,7 @@ mod tests {
 }
 ```
 
-**Reference**: `src/app/cloudwatch_logs/client.rs` (lines 1-224)
+**Reference**: `src/app/data_plane/cloudwatch_logs/client.rs`
 
 **Critical Points**:
 - ✅ Use `CredentialCoordinator` for ALL AWS API calls (multi-account support)
@@ -763,7 +763,7 @@ mod tests {
 }
 ```
 
-**Reference**: `src/app/cloudwatch_logs/resource_mapping.rs` (lines 1-292)
+**Reference**: `src/app/data_plane/cloudwatch_logs/resource_mapping.rs`
 
 **Critical Points**:
 - ✅ Use `matches!` macro for cleaner support checks
@@ -868,7 +868,7 @@ pub use resource_mapping::{get_{service}_identifier, get_all_{service}_identifie
 pub use types::{QueryOptions, QueryResult, QueryStatistics, ResultItem};
 ```
 
-**Reference**: `src/app/cloudwatch_logs/mod.rs` (lines 1-47)
+**Reference**: `src/app/data_plane/cloudwatch_logs/mod.rs`
 
 **Critical Points**:
 - ✅ Comprehensive module documentation with examples
@@ -903,16 +903,20 @@ aws-sdk-athena = "1.52.0"
 
 ### 1.7 Export Module
 
-**File**: `src/app/mod.rs`
+**File**: `src/app/data_plane/mod.rs`
 
 Add your module to the exports:
 
 ```rust
-pub mod cloudformation;
-pub mod cloudwatch_logs;  // ADD THIS LINE
-pub mod identity_center;
-// ... other modules
+pub mod cloudtrail_events;
+pub mod cloudwatch_logs;
+pub mod {service};  // ADD THIS LINE
+
+// Re-export commonly used types
+pub use {service}::{Service}Client;
 ```
+
+**Note**: The `data_plane` module is already exported from `src/app/mod.rs`.
 
 ---
 
@@ -2049,7 +2053,7 @@ Use this checklist when integrating a new data plane service:
 
 ### Phase 1: AWS SDK Client Layer (2-3 hours)
 
-- [ ] **1.1** Create module directory `src/app/{service}/`
+- [ ] **1.1** Create module directory `src/app/data_plane/{service}/`
 - [ ] **1.2** Implement `types.rs`
   - [ ] Define `QueryOptions` with builder pattern
   - [ ] Define `QueryResult` with `Serialize/Deserialize`
@@ -2078,8 +2082,9 @@ Use this checklist when integrating a new data plane service:
   - [ ] Re-export commonly used types
 - [ ] **1.6** Add AWS SDK dependency to `Cargo.toml`
   - [ ] Add `aws-sdk-{service} = "1.x"`
-- [ ] **1.7** Export module in `src/app/mod.rs`
+- [ ] **1.7** Export module in `src/app/data_plane/mod.rs`
   - [ ] Add `pub mod {service};`
+  - [ ] Add re-exports for commonly used types
 - [ ] **1.8** Test compilation: `cargo build`
 
 ### Phase 2: V8 JavaScript Binding (1-2 hours)
@@ -2638,7 +2643,7 @@ pub struct QueryResult {
 ## File Path Quick Reference
 
 ```
-src/app/{service}/
+src/app/data_plane/{service}/
 ├── mod.rs                       # Module definition and public API
 ├── types.rs                     # Data structures
 ├── client.rs                    # AWS SDK wrapper
@@ -2663,7 +2668,7 @@ src/app/dashui/
     └── window_rendering.rs      # Action handler (MODIFY)
 
 Cargo.toml                       # Add aws-sdk-{service} dependency (MODIFY)
-src/app/mod.rs                   # Export {service} module (MODIFY)
+src/app/data_plane/mod.rs        # Export {service} module (MODIFY)
 ```
 
 ---

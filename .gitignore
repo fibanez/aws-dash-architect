@@ -58,3 +58,10 @@ Thumbs.db
 
 **/.claude/settings.local.json
 stood/
+stood-source/
+
+# Security scan reports (generated)
+.security-reports/
+
+# MeiliSearch data directory (runtime data)
+data.ms/

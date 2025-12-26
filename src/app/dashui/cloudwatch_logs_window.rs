@@ -12,8 +12,8 @@ use eframe::egui;
 use egui::{Color32, Context, RichText, Ui};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 
 /// Maximum number of log events to display in the UI
 const MAX_DISPLAY_EVENTS: usize = 1000;
@@ -107,9 +107,16 @@ impl CloudWatchLogsWindow {
 
             // Run the async operation
             runtime.block_on(async move {
-                let result = match client.get_latest_log_events(&account_id, &region, &log_group_name, 100).await {
+                let result = match client
+                    .get_latest_log_events(&account_id, &region, &log_group_name, 100)
+                    .await
+                {
                     Ok(result) => {
-                        log::info!("Loaded {} log events from {}", result.events.len(), log_group_name);
+                        log::info!(
+                            "Loaded {} log events from {}",
+                            result.events.len(),
+                            log_group_name
+                        );
                         Ok(result)
                     }
                     Err(e) => {
@@ -283,14 +290,17 @@ impl CloudWatchLogsWindow {
 
     fn render_log_event(&self, ui: &mut Ui, event: &LogEvent) {
         // Format timestamp
-        let timestamp = DateTime::from_timestamp_millis(event.timestamp)
-            .unwrap_or_else(|| Utc::now());
+        let timestamp = DateTime::from_timestamp_millis(event.timestamp).unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
 
         // Event header: timestamp and stream name
         ui.horizontal(|ui| {
             ui.label(RichText::new(timestamp_str).monospace().weak());
-            ui.label(RichText::new(&format!("[{}]", event.log_stream_name)).monospace().weak());
+            ui.label(
+                RichText::new(format!("[{}]", event.log_stream_name))
+                    .monospace()
+                    .weak(),
+            );
         });
 
         // Event message - try to format as JSON if possible
@@ -313,7 +323,8 @@ impl CloudWatchLogsWindow {
 
         // First, try to parse the entire message as JSON
         if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-            || (trimmed.starts_with('[') && trimmed.ends_with(']')) {
+            || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        {
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
                     return formatted;
@@ -470,7 +481,7 @@ impl CloudWatchLogsWindow {
                             RichText::new(matched)
                                 .monospace()
                                 .background_color(highlight_bg)
-                                .color(Color32::BLACK)
+                                .color(Color32::BLACK),
                         );
 
                         current_pos += match_end;

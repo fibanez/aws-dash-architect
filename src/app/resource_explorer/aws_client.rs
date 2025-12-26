@@ -56,6 +56,10 @@ pub enum QueryStatus {
     InProgress,
     Completed,
     Failed,
+    // Phase 2 enrichment statuses
+    EnrichmentStarted,
+    EnrichmentInProgress,
+    EnrichmentCompleted,
 }
 
 pub struct AWSResourceClient {
@@ -454,7 +458,11 @@ impl AWSResourceClient {
         region: &str,
     ) -> Result<Vec<ResourceTag>> {
         // Check cache first
-        if let Some(cached_tags) = self.tag_cache.get(resource_type, resource_id, account, region).await {
+        if let Some(cached_tags) = self
+            .tag_cache
+            .get(resource_type, resource_id, account, region)
+            .await
+        {
             tracing::debug!(
                 "Tag cache hit for {}: {} in {}/{}",
                 resource_type,
@@ -609,7 +617,9 @@ impl AWSResourceClient {
         };
 
         // Cache the result
-        self.tag_cache.set(resource_type, resource_id, account, region, tags.clone()).await;
+        self.tag_cache
+            .set(resource_type, resource_id, account, region, tags.clone())
+            .await;
 
         Ok(tags)
     }
@@ -622,7 +632,9 @@ impl AWSResourceClient {
         account: &str,
         region: &str,
     ) {
-        self.tag_cache.invalidate(resource_type, resource_id, account, region).await;
+        self.tag_cache
+            .invalidate(resource_type, resource_id, account, region)
+            .await;
     }
 
     /// Invalidate all cached tags
@@ -663,7 +675,7 @@ impl AWSResourceClient {
         // Create futures for all combinations
         let mut futures: FuturesUnordered<BoxFuture<'static, ()>> = FuturesUnordered::new();
         let mut total_queries = 0;
-        
+
         // Track which global services have been queried per account to avoid duplicates
         let mut queried_global_services: HashSet<(String, String)> = HashSet::new();
         let global_registry = GlobalServiceRegistry::new();
@@ -673,22 +685,25 @@ impl AWSResourceClient {
                 // Check if this is a global service
                 if global_registry.is_global(&resource_type.resource_type) {
                     // For global services, only query once per account
-                    let global_key = (account.account_id.clone(), resource_type.resource_type.clone());
-                    
+                    let global_key = (
+                        account.account_id.clone(),
+                        resource_type.resource_type.clone(),
+                    );
+
                     if queried_global_services.contains(&global_key) {
                         // Already queried this global service for this account, skip
                         continue;
                     }
-                    
+
                     queried_global_services.insert(global_key);
-                    
+
                     // Query from the designated global region (us-east-1)
                     let query_region = global_registry.get_query_region();
                     let cache_key = format!(
                         "{}:Global:{}",
                         account.account_id, resource_type.resource_type
                     );
-                    
+
                     // Check cache first
                     {
                         let cache_read = cache.read().await;
@@ -710,7 +725,7 @@ impl AWSResourceClient {
                             continue;
                         }
                     }
-                    
+
                     // Create query future for global service
                     let account_id = account.account_id.clone();
                     let resource_type_str = resource_type.resource_type.clone();
@@ -722,7 +737,7 @@ impl AWSResourceClient {
                     let cache_clone = cache.clone();
                     let cache_key_clone = cache_key.clone();
                     let query_region = query_region.to_string();
-                    
+
                     let future = async move {
                         // Acquire semaphore permit
                         let _permit = semaphore_clone.acquire().await.unwrap();
@@ -735,10 +750,7 @@ impl AWSResourceClient {
                                     region: "Global".to_string(),
                                     resource_type: resource_type_str.clone(),
                                     status: QueryStatus::Started,
-                                    message: format!(
-                                        "Querying global service {}",
-                                        display_name
-                                    ),
+                                    message: format!("Querying global service {}", display_name),
                                     items_processed: Some(0),
                                     estimated_total: None,
                                 })
@@ -757,7 +769,7 @@ impl AWSResourceClient {
                                 for resource in &mut resources {
                                     resource.region = "Global".to_string();
                                 }
-                                
+
                                 let resource_count = resources.len();
                                 info!(
                                     "Global service query completed: {} resources for {}",
@@ -823,172 +835,172 @@ impl AWSResourceClient {
                             warn!("Failed to send global query result: {}", e);
                         }
                     };
-                    
+
                     futures.push(Box::pin(future));
                     total_queries += 1;
-                    
                 } else {
                     // Regular regional service - query for each selected region
                     for region in &scope.regions {
-                    let cache_key = format!(
-                        "{}:{}:{}",
-                        account.account_id, region.region_code, resource_type.resource_type
-                    );
+                        let cache_key = format!(
+                            "{}:{}:{}",
+                            account.account_id, region.region_code, resource_type.resource_type
+                        );
 
-                    // Check cache first
-                    {
-                        let cache_read = cache.read().await;
-                        if let Some(cached_resources) = cache_read.get(&cache_key) {
-                            info!("Using cached resources for {}", cache_key);
+                        // Check cache first
+                        {
+                            let cache_read = cache.read().await;
+                            if let Some(cached_resources) = cache_read.get(&cache_key) {
+                                info!("Using cached resources for {}", cache_key);
 
-                            // Send cached result immediately
-                            let cached_result = QueryResult {
-                                account_id: account.account_id.clone(),
-                                region: region.region_code.clone(),
-                                resource_type: resource_type.resource_type.clone(),
-                                resources: Ok(cached_resources.clone()),
-                                cache_key: cache_key.clone(),
-                            };
-
-                            if let Err(e) = result_sender.send(cached_result).await {
-                                warn!("Failed to send cached result: {}", e);
-                            }
-                            continue;
-                        }
-                    }
-
-                    // Create parallel query future
-                    let account_id = account.account_id.clone();
-                    let region_code = region.region_code.clone();
-                    let resource_type_str = resource_type.resource_type.clone();
-                    let display_name = resource_type.display_name.clone();
-                    let client = self.clone();
-                    let semaphore_clone = semaphore.clone();
-                    let progress_sender_clone = progress_sender.clone();
-                    let result_sender_clone = result_sender.clone();
-                    let cache_clone = cache.clone();
-                    let cache_key_clone = cache_key.clone();
-
-                    let future = async move {
-                        // Acquire semaphore permit
-                        let _permit = semaphore_clone.acquire().await.unwrap();
-
-                        // Send start progress
-                        if let Some(sender) = &progress_sender_clone {
-                            let _ = sender
-                                .send(QueryProgress {
-                                    account: account_id.clone(),
-                                    region: region_code.clone(),
-                                    resource_type: resource_type_str.clone(),
-                                    status: QueryStatus::Started,
-                                    message: format!(
-                                        "Starting parallel query for {}",
-                                        display_name
-                                    ),
-                                    items_processed: Some(0),
-                                    estimated_total: None,
-                                })
-                                .await;
-                        }
-
-                        // Execute the query
-                        let query_result = client
-                            .query_resource_type(&account_id, &region_code, &resource_type_str)
-                            .await;
-
-                        // Handle the result
-                        let resources_result = match query_result {
-                            Ok(resources) => {
-                                let resource_count = resources.len();
-                                info!(
-                                    "Parallel query completed: {} resources for {}",
-                                    resource_count, cache_key_clone
-                                );
-
-                                // Cache the results
-                                {
-                                    let mut cache_write = cache_clone.write().await;
-                                    cache_write.insert(cache_key_clone.clone(), resources.clone());
-                                }
-
-                                // Send completion progress
-                                if let Some(sender) = &progress_sender_clone {
-                                    let _ = sender
-                                        .send(QueryProgress {
-                                            account: account_id.clone(),
-                                            region: region_code.clone(),
-                                            resource_type: resource_type_str.clone(),
-                                            status: QueryStatus::Completed,
-                                            message: format!(
-                                                "Parallel query completed for {} ({} items)",
-                                                display_name, resource_count
-                                            ),
-                                            items_processed: Some(resource_count),
-                                            estimated_total: Some(resource_count),
-                                        })
-                                        .await;
-                                }
-
-                                Ok(resources)
-                            }
-                            Err(e) => {
-                                // Get credential information for error context
-                                let role_info = match client
-                                    .credential_coordinator
-                                    .get_credentials_for_account(&account_id)
-                                    .await
-                                {
-                                    Ok(creds) => format!("role: {}", creds.role_name),
-                                    Err(_) => "role: unknown".to_string(),
+                                // Send cached result immediately
+                                let cached_result = QueryResult {
+                                    account_id: account.account_id.clone(),
+                                    region: region.region_code.clone(),
+                                    resource_type: resource_type.resource_type.clone(),
+                                    resources: Ok(cached_resources.clone()),
+                                    cache_key: cache_key.clone(),
                                 };
 
-                                // Create detailed service-specific error message
-                                let detailed_error = client.format_service_error(
-                                    &e,
-                                    &resource_type_str,
-                                    &display_name,
-                                    &account_id,
-                                    &region_code,
-                                    &role_info,
-                                );
-
-                                error!("Parallel query failed: {}", detailed_error);
-
-                                // Send failure progress
-                                if let Some(sender) = &progress_sender_clone {
-                                    let _ = sender
-                                        .send(QueryProgress {
-                                            account: account_id.clone(),
-                                            region: region_code.clone(),
-                                            resource_type: resource_type_str.clone(),
-                                            status: QueryStatus::Failed,
-                                            message: detailed_error,
-                                            items_processed: Some(0),
-                                            estimated_total: None,
-                                        })
-                                        .await;
+                                if let Err(e) = result_sender.send(cached_result).await {
+                                    warn!("Failed to send cached result: {}", e);
                                 }
+                                continue;
+                            }
+                        }
 
-                                Err(e)
+                        // Create parallel query future
+                        let account_id = account.account_id.clone();
+                        let region_code = region.region_code.clone();
+                        let resource_type_str = resource_type.resource_type.clone();
+                        let display_name = resource_type.display_name.clone();
+                        let client = self.clone();
+                        let semaphore_clone = semaphore.clone();
+                        let progress_sender_clone = progress_sender.clone();
+                        let result_sender_clone = result_sender.clone();
+                        let cache_clone = cache.clone();
+                        let cache_key_clone = cache_key.clone();
+
+                        let future = async move {
+                            // Acquire semaphore permit
+                            let _permit = semaphore_clone.acquire().await.unwrap();
+
+                            // Send start progress
+                            if let Some(sender) = &progress_sender_clone {
+                                let _ = sender
+                                    .send(QueryProgress {
+                                        account: account_id.clone(),
+                                        region: region_code.clone(),
+                                        resource_type: resource_type_str.clone(),
+                                        status: QueryStatus::Started,
+                                        message: format!(
+                                            "Starting parallel query for {}",
+                                            display_name
+                                        ),
+                                        items_processed: Some(0),
+                                        estimated_total: None,
+                                    })
+                                    .await;
+                            }
+
+                            // Execute the query
+                            let query_result = client
+                                .query_resource_type(&account_id, &region_code, &resource_type_str)
+                                .await;
+
+                            // Handle the result
+                            let resources_result = match query_result {
+                                Ok(resources) => {
+                                    let resource_count = resources.len();
+                                    info!(
+                                        "Parallel query completed: {} resources for {}",
+                                        resource_count, cache_key_clone
+                                    );
+
+                                    // Cache the results
+                                    {
+                                        let mut cache_write = cache_clone.write().await;
+                                        cache_write
+                                            .insert(cache_key_clone.clone(), resources.clone());
+                                    }
+
+                                    // Send completion progress
+                                    if let Some(sender) = &progress_sender_clone {
+                                        let _ = sender
+                                            .send(QueryProgress {
+                                                account: account_id.clone(),
+                                                region: region_code.clone(),
+                                                resource_type: resource_type_str.clone(),
+                                                status: QueryStatus::Completed,
+                                                message: format!(
+                                                    "Parallel query completed for {} ({} items)",
+                                                    display_name, resource_count
+                                                ),
+                                                items_processed: Some(resource_count),
+                                                estimated_total: Some(resource_count),
+                                            })
+                                            .await;
+                                    }
+
+                                    Ok(resources)
+                                }
+                                Err(e) => {
+                                    // Get credential information for error context
+                                    let role_info = match client
+                                        .credential_coordinator
+                                        .get_credentials_for_account(&account_id)
+                                        .await
+                                    {
+                                        Ok(creds) => format!("role: {}", creds.role_name),
+                                        Err(_) => "role: unknown".to_string(),
+                                    };
+
+                                    // Create detailed service-specific error message
+                                    let detailed_error = client.format_service_error(
+                                        &e,
+                                        &resource_type_str,
+                                        &display_name,
+                                        &account_id,
+                                        &region_code,
+                                        &role_info,
+                                    );
+
+                                    error!("Parallel query failed: {}", detailed_error);
+
+                                    // Send failure progress
+                                    if let Some(sender) = &progress_sender_clone {
+                                        let _ = sender
+                                            .send(QueryProgress {
+                                                account: account_id.clone(),
+                                                region: region_code.clone(),
+                                                resource_type: resource_type_str.clone(),
+                                                status: QueryStatus::Failed,
+                                                message: detailed_error,
+                                                items_processed: Some(0),
+                                                estimated_total: None,
+                                            })
+                                            .await;
+                                    }
+
+                                    Err(e)
+                                }
+                            };
+
+                            // Send result back
+                            let query_result = QueryResult {
+                                account_id,
+                                region: region_code,
+                                resource_type: resource_type_str,
+                                resources: resources_result,
+                                cache_key: cache_key_clone,
+                            };
+
+                            if let Err(e) = result_sender_clone.send(query_result).await {
+                                warn!("Failed to send query result: {}", e);
                             }
                         };
 
-                        // Send result back
-                        let query_result = QueryResult {
-                            account_id,
-                            region: region_code,
-                            resource_type: resource_type_str,
-                            resources: resources_result,
-                            cache_key: cache_key_clone,
-                        };
-
-                        if let Err(e) = result_sender_clone.send(query_result).await {
-                            warn!("Failed to send query result: {}", e);
-                        }
-                    };
-
-                    futures.push(Box::pin(future));
-                    total_queries += 1;
+                        futures.push(Box::pin(future));
+                        total_queries += 1;
                     }
                 }
             }
@@ -1138,11 +1150,22 @@ impl AWSResourceClient {
                     .list_fargate_profiles(account, region)
                     .await?
             }
-            "AWS::IAM::Role" => self.get_iam_service().list_roles(account, region).await?,
-            "AWS::IAM::User" => self.get_iam_service().list_users(account, region).await?,
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::IAM::Role" => {
+                self.get_iam_service()
+                    .list_roles(account, region, false)
+                    .await?
+            }
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::IAM::User" => {
+                self.get_iam_service()
+                    .list_users(account, region, false)
+                    .await?
+            }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::IAM::Policy" => {
                 self.get_iam_service()
-                    .list_policies(account, region)
+                    .list_policies(account, region, false)
                     .await?
             }
             "AWS::Bedrock::Model" => {
@@ -1257,10 +1280,16 @@ impl AWSResourceClient {
                     .list_workload_identities(account, region)
                     .await?
             }
-            "AWS::S3::Bucket" => self.get_s3_service().list_buckets(account, region).await?,
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::S3::Bucket" => {
+                self.get_s3_service()
+                    .list_buckets(account, region, false)
+                    .await?
+            }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::CloudFormation::Stack" => {
                 self.get_cloudformation_service()
-                    .list_stacks(account, region)
+                    .list_stacks(account, region, false)
                     .await?
             }
             "AWS::RDS::DBInstance" => {
@@ -1278,14 +1307,16 @@ impl AWSResourceClient {
                     .list_db_snapshots(account, region)
                     .await?
             }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::Lambda::Function" => {
                 self.get_lambda_service()
-                    .list_functions(account, region)
+                    .list_functions(account, region, false)
                     .await?
             }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::DynamoDB::Table" => {
                 self.get_dynamodb_service()
-                    .list_tables(account, region)
+                    .list_tables(account, region, false)
                     .await?
             }
             "AWS::CloudWatch::Alarm" => {
@@ -1298,11 +1329,21 @@ impl AWSResourceClient {
                     .list_rest_apis(account, region)
                     .await?
             }
-            "AWS::SNS::Topic" => self.get_sns_service().list_topics(account, region).await?,
-            "AWS::SQS::Queue" => self.get_sqs_service().list_queues(account, region).await?,
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::SNS::Topic" => {
+                self.get_sns_service()
+                    .list_topics(account, region, false)
+                    .await?
+            }
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::SQS::Queue" => {
+                self.get_sqs_service()
+                    .list_queues(account, region, false)
+                    .await?
+            }
             "AWS::ECS::Cluster" => {
                 self.get_ecs_service()
-                    .list_clusters(account, region)
+                    .list_clusters(account, region, false)
                     .await?
             }
             "AWS::EKS::Cluster" => {
@@ -1332,10 +1373,14 @@ impl AWSResourceClient {
             }
             "AWS::Redshift::Cluster" => {
                 self.get_redshift_service()
-                    .list_clusters(account, region)
+                    .list_clusters(account, region, false)
                     .await?
             }
-            "AWS::Glue::Job" => self.get_glue_service().list_jobs(account, region).await?,
+            "AWS::Glue::Job" => {
+                self.get_glue_service()
+                    .list_jobs(account, region, false)
+                    .await?
+            }
             "AWS::LakeFormation::DataLakeSettings" => {
                 self.get_lakeformation_service()
                     .list_data_lake_settings(account, region)
@@ -1353,7 +1398,7 @@ impl AWSResourceClient {
             }
             "AWS::EMR::Cluster" => {
                 self.get_emr_service()
-                    .list_clusters(account, region)
+                    .list_clusters(account, region, false)
                     .await?
             }
             "AWS::SecretsManager::Secret" => {
@@ -1361,10 +1406,15 @@ impl AWSResourceClient {
                     .list_secrets(account, region)
                     .await?
             }
-            "AWS::KMS::Key" => self.get_kms_service().list_keys(account, region).await?,
+            // Phase 1: Quick list without details for fast UI update
+            "AWS::KMS::Key" => {
+                self.get_kms_service()
+                    .list_keys(account, region, false)
+                    .await?
+            }
             "AWS::StepFunctions::StateMachine" => {
                 self.get_stepfunctions_service()
-                    .list_state_machines(account, region)
+                    .list_state_machines(account, region, false)
                     .await?
             }
             "AWS::Route53::HostedZone" => {
@@ -1385,15 +1435,15 @@ impl AWSResourceClient {
             "AWS::CloudTrail::Event" => {
                 // Query recent CloudTrail management events from the 90-day event history
                 use super::aws_services::cloudtrail::LookupEventsParams;
-                
+
                 let params = LookupEventsParams {
                     start_time: Some(chrono::Utc::now() - chrono::Duration::days(7)), // Last 7 days
                     end_time: Some(chrono::Utc::now()),
                     lookup_attribute: None, // No filtering
-                    max_results: 50, // Reasonable default
-                    event_category: None, // Management events (default)
+                    max_results: 50,        // Reasonable default
+                    event_category: None,   // Management events (default)
                 };
-                
+
                 self.get_cloudtrail_service()
                     .lookup_events(account, region, params)
                     .await?
@@ -1512,7 +1562,7 @@ impl AWSResourceClient {
             // Analytics & search services
             "AWS::OpenSearchService::Domain" => {
                 self.get_opensearch_service()
-                    .list_domains(account, region)
+                    .list_domains(account, region, false)
                     .await?
             }
             "AWS::QuickSight::DataSource" => {
@@ -1532,23 +1582,25 @@ impl AWSResourceClient {
             }
             "AWS::Backup::BackupPlan" => {
                 self.get_backup_service()
-                    .list_backup_plans(account, region)
+                    .list_backup_plans(account, region, false)
                     .await?
             }
             "AWS::Backup::BackupVault" => {
                 self.get_backup_service()
-                    .list_backup_vaults(account, region)
+                    .list_backup_vaults(account, region, false)
                     .await?
             }
             // Identity & messaging services
+            // Phase 1: Quick list without details for fast UI update
             "AWS::Cognito::UserPool" => {
                 self.get_cognito_service()
-                    .list_user_pools(account, region)
+                    .list_user_pools(account, region, false)
                     .await?
             }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::Cognito::IdentityPool" => {
                 self.get_cognito_service()
-                    .list_identity_pools(account, region)
+                    .list_identity_pools(account, region, false)
                     .await?
             }
             "AWS::MQ::Broker" => self.get_mq_service().list_brokers(account, region).await?,
@@ -1605,7 +1657,7 @@ impl AWSResourceClient {
             }
             "AWS::ElasticLoadBalancingV2::LoadBalancer" => {
                 self.get_elbv2_service()
-                    .list_load_balancers(account, region)
+                    .list_load_balancers(account, region, false)
                     .await?
             }
             "AWS::ElasticLoadBalancingV2::TargetGroup" => {
@@ -1634,14 +1686,15 @@ impl AWSResourceClient {
                     .list_projects(account, region)
                     .await?
             }
+            // Phase 1: Quick list without details for fast UI update
             "AWS::CodeCommit::Repository" => {
                 self.get_codecommit_service()
-                    .list_repositories(account, region)
+                    .list_repositories(account, region, false)
                     .await?
             }
             "AWS::Events::EventBus" => {
                 self.get_eventbridge_service()
-                    .list_event_buses(account, region)
+                    .list_event_buses(account, region, false)
                     .await?
             }
             "AWS::Events::Rule" => {
@@ -1737,11 +1790,7 @@ impl AWSResourceClient {
                     .list_file_systems(account, region)
                     .await?
             }
-            "AWS::FSx::Backup" => {
-                self.get_fsx_service()
-                    .list_backups(account, region)
-                    .await?
-            }
+            "AWS::FSx::Backup" => self.get_fsx_service().list_backups(account, region).await?,
             "AWS::WorkSpaces::Workspace" => {
                 self.get_workspaces_service()
                     .list_workspaces(account, region)
@@ -1792,11 +1841,7 @@ impl AWSResourceClient {
                     .list_apps(account, region)
                     .await?
             }
-            "AWS::Lex::Bot" => {
-                self.get_lex_service()
-                    .list_bots(account, region)
-                    .await?
-            }
+            "AWS::Lex::Bot" => self.get_lex_service().list_bots(account, region).await?,
             "AWS::Rekognition::Collection" => {
                 self.get_rekognition_service()
                     .list_collections(account, region)
@@ -1829,7 +1874,9 @@ impl AWSResourceClient {
         };
 
         // Normalize the parent resources (with async tag fetching)
-        let mut all_entries = self.normalize_resources(raw_resources, account, region, resource_type).await?;
+        let mut all_entries = self
+            .normalize_resources(raw_resources, account, region, resource_type)
+            .await?;
 
         // Query child resources recursively
         let child_config = ChildResourceConfig::new();
@@ -1841,8 +1888,8 @@ impl AWSResourceClient {
                     .query_children_recursive(
                         parent_entry,
                         &child_config,
-                        0,  // current depth
-                        3,  // max depth (prevents infinite loops)
+                        0, // current depth
+                        3, // max depth (prevents infinite loops)
                     )
                     .await
                 {
@@ -1875,51 +1922,56 @@ impl AWSResourceClient {
         max_depth: usize,
     ) -> BoxFuture<'a, Result<Vec<ResourceEntry>>> {
         Box::pin(async move {
-        // Prevent infinite recursion
-        if current_depth >= max_depth {
-            warn!(
-                "Max recursion depth {} reached for resource {} (type: {})",
-                max_depth, parent.resource_id, parent.resource_type
-            );
-            return Ok(vec![]);
-        }
+            // Prevent infinite recursion
+            if current_depth >= max_depth {
+                warn!(
+                    "Max recursion depth {} reached for resource {} (type: {})",
+                    max_depth, parent.resource_id, parent.resource_type
+                );
+                return Ok(vec![]);
+            }
 
-        let mut all_descendants = Vec::new();
+            let mut all_descendants = Vec::new();
 
-        // Get direct children
-        match self.query_child_resources(parent, child_config).await {
-            Ok(children) => {
-                // Recursively get grandchildren for each child
-                for child in children {
-                    match self
-                        .query_children_recursive(&child, child_config, current_depth + 1, max_depth)
-                        .await
-                    {
-                        Ok(grandchildren) => {
-                            all_descendants.extend(grandchildren);
+            // Get direct children
+            match self.query_child_resources(parent, child_config).await {
+                Ok(children) => {
+                    // Recursively get grandchildren for each child
+                    for child in children {
+                        match self
+                            .query_children_recursive(
+                                &child,
+                                child_config,
+                                current_depth + 1,
+                                max_depth,
+                            )
+                            .await
+                        {
+                            Ok(grandchildren) => {
+                                all_descendants.extend(grandchildren);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to query grandchildren for {} ({}): {}",
+                                    child.resource_id, child.resource_type, e
+                                );
+                                // Continue despite errors - don't fail entire hierarchy
+                            }
                         }
-                        Err(e) => {
-                            warn!(
-                                "Failed to query grandchildren for {} ({}): {}",
-                                child.resource_id, child.resource_type, e
-                            );
-                            // Continue despite errors - don't fail entire hierarchy
-                        }
+
+                        all_descendants.push(child);
                     }
-
-                    all_descendants.push(child);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to query children for {} ({}): {}",
+                        parent.resource_id, parent.resource_type, e
+                    );
+                    // Continue despite errors - don't fail parent query
                 }
             }
-            Err(e) => {
-                warn!(
-                    "Failed to query children for {} ({}): {}",
-                    parent.resource_id, parent.resource_type, e
-                );
-                // Continue despite errors - don't fail parent query
-            }
-        }
 
-        Ok(all_descendants)
+            Ok(all_descendants)
         })
     }
 
@@ -2042,7 +2094,10 @@ impl AWSResourceClient {
                     .await?
             }
             _ => {
-                warn!("Unsupported multi-parent child resource type: {}", child_type);
+                warn!(
+                    "Unsupported multi-parent child resource type: {}",
+                    child_type
+                );
                 return Ok(vec![]);
             }
         };
@@ -2842,21 +2897,24 @@ impl AWSResourceClient {
                     .await
             }
             "AWS::Redshift::Cluster" => {
+                let cluster_identifier = resource
+                    .raw_properties
+                    .get("ClusterIdentifier")
+                    .or_else(|| resource.raw_properties.get("Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_redshift_service()
-                    .describe_cluster(
-                        &resource.account_id,
-                        &resource.region,
-                        &resource.resource_id,
-                    )
+                    .get_cluster_details(&resource.account_id, &resource.region, cluster_identifier)
                     .await
             }
             "AWS::Glue::Job" => {
+                let job_name = resource
+                    .raw_properties
+                    .get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_glue_service()
-                    .describe_job(
-                        &resource.account_id,
-                        &resource.region,
-                        &resource.resource_id,
-                    )
+                    .get_job_details(&resource.account_id, &resource.region, job_name)
                     .await
             }
             "AWS::LakeFormation::DataLakeSettings" => {
@@ -2914,11 +2972,16 @@ impl AWSResourceClient {
                     .await
             }
             "AWS::StepFunctions::StateMachine" => {
+                let state_machine_arn = resource
+                    .raw_properties
+                    .get("StateMachineArn")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_stepfunctions_service()
-                    .describe_state_machine(
+                    .get_state_machine_details(
                         &resource.account_id,
                         &resource.region,
-                        &resource.resource_id,
+                        state_machine_arn,
                     )
                     .await
             }
@@ -3155,12 +3218,14 @@ impl AWSResourceClient {
             }
             // Analytics & search services
             "AWS::OpenSearchService::Domain" => {
+                let domain_name = resource
+                    .raw_properties
+                    .get("DomainName")
+                    .or_else(|| resource.raw_properties.get("Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_opensearch_service()
-                    .describe_domain(
-                        &resource.account_id,
-                        &resource.region,
-                        &resource.resource_id,
-                    )
+                    .get_domain_details(&resource.account_id, &resource.region, domain_name)
                     .await
             }
             "AWS::QuickSight::DataSource" => {
@@ -3191,21 +3256,24 @@ impl AWSResourceClient {
                     .await
             }
             "AWS::Backup::BackupPlan" => {
+                let backup_plan_id = resource
+                    .raw_properties
+                    .get("BackupPlanId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_backup_service()
-                    .describe_backup_plan(
-                        &resource.account_id,
-                        &resource.region,
-                        &resource.resource_id,
-                    )
+                    .get_backup_plan_details(&resource.account_id, &resource.region, backup_plan_id)
                     .await
             }
             "AWS::Backup::BackupVault" => {
+                let vault_name = resource
+                    .raw_properties
+                    .get("BackupVaultName")
+                    .or_else(|| resource.raw_properties.get("Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
                 self.get_backup_service()
-                    .describe_backup_vault(
-                        &resource.account_id,
-                        &resource.region,
-                        &resource.resource_id,
-                    )
+                    .get_backup_vault_details(&resource.account_id, &resource.region, vault_name)
                     .await
             }
             // Identity & messaging services
@@ -3275,10 +3343,7 @@ impl AWSResourceClient {
             }
             "AWS::Organizations::Organization" => {
                 self.get_organizations_service()
-                    .describe_organization(
-                        &resource.account_id,
-                        &resource.region,
-                    )
+                    .describe_organization(&resource.account_id, &resource.region)
                     .await
             }
             "AWS::Organizations::OrganizationalUnit" => {
@@ -3688,6 +3753,359 @@ impl AWSResourceClient {
             }
             _ => Err(anyhow::anyhow!(
                 "Describe operation not supported for resource type: {}",
+                resource.resource_type
+            )),
+        }
+    }
+
+    /// Start Phase 2 enrichment for resources that support detail fetching
+    ///
+    /// This method spawns a background task that fetches detailed information
+    /// for each resource and sends updates via the result_sender channel.
+    /// The cache is automatically updated with enriched resources.
+    pub fn start_phase2_enrichment(
+        &self,
+        resources: Vec<ResourceEntry>,
+        _result_sender: mpsc::Sender<QueryResult>,
+        progress_sender: Option<mpsc::Sender<QueryProgress>>,
+        cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
+    ) {
+        let client = self.clone();
+
+        tokio::spawn(async move {
+            // Filter resources that support Phase 2 enrichment
+            let enrichable_types = [
+                "AWS::Lambda::Function",
+                "AWS::KMS::Key",
+                "AWS::IAM::Role",
+                "AWS::IAM::User",
+                "AWS::IAM::Policy",
+                "AWS::S3::Bucket",
+                "AWS::SQS::Queue",
+                "AWS::SNS::Topic",
+                "AWS::Cognito::UserPool",
+                "AWS::Cognito::IdentityPool",
+                "AWS::CodeCommit::Repository",
+                "AWS::DynamoDB::Table",
+                "AWS::CloudFormation::Stack",
+                "AWS::ECS::Cluster",
+                "AWS::ECS::Service",
+                "AWS::ElasticLoadBalancingV2::LoadBalancer",
+                "AWS::EMR::Cluster",
+                "AWS::Events::EventBus",
+                "AWS::Glue::Job",
+                "AWS::Backup::BackupPlan",
+                "AWS::Backup::BackupVault",
+                "AWS::StepFunctions::StateMachine",
+                "AWS::OpenSearchService::Domain",
+                "AWS::Redshift::Cluster",
+            ];
+
+            let resources_to_enrich: Vec<_> = resources
+                .into_iter()
+                .filter(|r| enrichable_types.contains(&r.resource_type.as_str()))
+                .collect();
+
+            if resources_to_enrich.is_empty() {
+                return;
+            }
+
+            let total = resources_to_enrich.len();
+            info!("Starting Phase 2 enrichment for {} resources", total);
+
+            // Send enrichment started progress
+            if let Some(ref sender) = progress_sender {
+                let _ = sender
+                    .send(QueryProgress {
+                        account: "All".to_string(),
+                        region: "All".to_string(),
+                        resource_type: "Phase 2 Enrichment".to_string(),
+                        status: QueryStatus::EnrichmentStarted,
+                        message: format!("Starting detail fetch for {} resources", total),
+                        items_processed: Some(0),
+                        estimated_total: Some(total),
+                    })
+                    .await;
+            }
+
+            // Group resources by account/region/type for batch processing
+            let mut grouped: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
+            for resource in resources_to_enrich {
+                let key = format!(
+                    "{}:{}:{}",
+                    resource.account_id, resource.region, resource.resource_type
+                );
+                grouped.entry(key).or_default().push(resource);
+            }
+
+            let mut processed = 0;
+
+            for (cache_key_prefix, resources) in grouped {
+                for mut resource in resources {
+                    // Fetch details based on resource type
+                    let details_result = client.fetch_resource_details(&resource).await;
+
+                    if let Ok(details) = details_result {
+                        // Merge details into resource
+                        resource.detailed_properties = Some(details);
+                        resource.detailed_timestamp = Some(Utc::now());
+
+                        // Update cache with enriched resource (use cache_key_prefix from grouping)
+                        {
+                            let mut cache_write = cache.write().await;
+                            if let Some(cached_resources) = cache_write.get_mut(&cache_key_prefix) {
+                                // Find and update the resource in cache
+                                if let Some(cached) = cached_resources
+                                    .iter_mut()
+                                    .find(|r| r.resource_id == resource.resource_id)
+                                {
+                                    cached.detailed_properties =
+                                        resource.detailed_properties.clone();
+                                    cached.detailed_timestamp = resource.detailed_timestamp;
+                                }
+                            }
+                        }
+                    }
+
+                    processed += 1;
+
+                    // Send progress update
+                    if let Some(ref sender) = progress_sender {
+                        if processed % 10 == 0 || processed == total {
+                            let _ = sender
+                                .send(QueryProgress {
+                                    account: resource.account_id.clone(),
+                                    region: resource.region.clone(),
+                                    resource_type: "Phase 2 Enrichment".to_string(),
+                                    status: QueryStatus::EnrichmentInProgress,
+                                    message: format!("Enriched {}/{} resources", processed, total),
+                                    items_processed: Some(processed),
+                                    estimated_total: Some(total),
+                                })
+                                .await;
+                        }
+                    }
+                }
+            }
+
+            // Send enrichment completed progress
+            if let Some(ref sender) = progress_sender {
+                let _ = sender
+                    .send(QueryProgress {
+                        account: "All".to_string(),
+                        region: "All".to_string(),
+                        resource_type: "Phase 2 Enrichment".to_string(),
+                        status: QueryStatus::EnrichmentCompleted,
+                        message: format!("Completed detail fetch for {} resources", total),
+                        items_processed: Some(total),
+                        estimated_total: Some(total),
+                    })
+                    .await;
+            }
+
+            info!("Phase 2 enrichment completed for {} resources", total);
+        });
+    }
+
+    /// Fetch detailed information for a single resource (Phase 2)
+    async fn fetch_resource_details(&self, resource: &ResourceEntry) -> Result<serde_json::Value> {
+        match resource.resource_type.as_str() {
+            "AWS::Lambda::Function" => {
+                self.get_lambda_service()
+                    .get_function_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::KMS::Key" => {
+                self.get_kms_service()
+                    .get_key_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::IAM::Role" => {
+                self.get_iam_service()
+                    .get_role_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::IAM::User" => {
+                self.get_iam_service()
+                    .get_user_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::IAM::Policy" => {
+                // For policies, the resource_id is the policy ARN
+                self.get_iam_service()
+                    .get_policy_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::S3::Bucket" => {
+                self.get_s3_service()
+                    .get_bucket_details(
+                        &resource.account_id,
+                        &resource.region,
+                        &resource.resource_id,
+                    )
+                    .await
+            }
+            "AWS::SQS::Queue" => {
+                // For SQS, resource_id might be the queue URL or name
+                // The get_queue_details expects queue_url
+                let queue_url = if resource.resource_id.starts_with("https://") {
+                    resource.resource_id.clone()
+                } else {
+                    // Try to get queue URL from raw_properties
+                    resource
+                        .raw_properties
+                        .get("QueueUrl")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&resource.resource_id)
+                        .to_string()
+                };
+                self.get_sqs_service()
+                    .get_queue_details(&resource.account_id, &resource.region, &queue_url)
+                    .await
+            }
+            "AWS::SNS::Topic" => {
+                // For SNS, resource_id might be the topic ARN
+                let topic_arn = if resource.resource_id.starts_with("arn:") {
+                    resource.resource_id.clone()
+                } else {
+                    resource
+                        .raw_properties
+                        .get("TopicArn")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&resource.resource_id)
+                        .to_string()
+                };
+                self.get_sns_service()
+                    .get_topic_details(&resource.account_id, &resource.region, &topic_arn)
+                    .await
+            }
+            "AWS::Cognito::UserPool" => {
+                // For Cognito, resource_id is the pool ID
+                let pool_id = resource
+                    .raw_properties
+                    .get("Id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_cognito_service()
+                    .get_user_pool_details(&resource.account_id, &resource.region, pool_id)
+                    .await
+            }
+            "AWS::Cognito::IdentityPool" => {
+                let pool_id = resource
+                    .raw_properties
+                    .get("IdentityPoolId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_cognito_service()
+                    .get_identity_pool_details(&resource.account_id, &resource.region, pool_id)
+                    .await
+            }
+            "AWS::CodeCommit::Repository" => {
+                let repo_name = resource
+                    .raw_properties
+                    .get("RepositoryName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_codecommit_service()
+                    .get_repository_details(&resource.account_id, &resource.region, repo_name)
+                    .await
+            }
+            "AWS::DynamoDB::Table" => {
+                let table_name = resource
+                    .raw_properties
+                    .get("TableName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_dynamodb_service()
+                    .get_table_details(&resource.account_id, &resource.region, table_name)
+                    .await
+            }
+            "AWS::CloudFormation::Stack" => {
+                let stack_name = resource
+                    .raw_properties
+                    .get("StackName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_cloudformation_service()
+                    .get_stack_details(&resource.account_id, &resource.region, stack_name)
+                    .await
+            }
+            "AWS::ECS::Cluster" => {
+                let cluster_name = resource
+                    .raw_properties
+                    .get("ClusterName")
+                    .or_else(|| resource.raw_properties.get("Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_ecs_service()
+                    .get_cluster_details(&resource.account_id, &resource.region, cluster_name)
+                    .await
+            }
+            "AWS::ECS::Service" => {
+                // For ECS services, we need the service ARN for full details
+                let service_arn = resource
+                    .raw_properties
+                    .get("ServiceArn")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_ecs_service()
+                    .get_service_details(&resource.account_id, &resource.region, service_arn)
+                    .await
+            }
+            "AWS::ElasticLoadBalancingV2::LoadBalancer" => {
+                let lb_arn = resource
+                    .raw_properties
+                    .get("LoadBalancerArn")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_elbv2_service()
+                    .get_load_balancer_details(&resource.account_id, &resource.region, lb_arn)
+                    .await
+            }
+            "AWS::EMR::Cluster" => {
+                let cluster_id = resource
+                    .raw_properties
+                    .get("ClusterId")
+                    .or_else(|| resource.raw_properties.get("Id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_emr_service()
+                    .get_cluster_details(&resource.account_id, &resource.region, cluster_id)
+                    .await
+            }
+            "AWS::Events::EventBus" => {
+                let event_bus_name = resource
+                    .raw_properties
+                    .get("Name")
+                    .or_else(|| resource.raw_properties.get("EventBusName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&resource.resource_id);
+                self.get_eventbridge_service()
+                    .get_event_bus_details(&resource.account_id, &resource.region, event_bus_name)
+                    .await
+            }
+            _ => Err(anyhow::anyhow!(
+                "Phase 2 enrichment not supported for resource type: {}",
                 resource.resource_type
             )),
         }

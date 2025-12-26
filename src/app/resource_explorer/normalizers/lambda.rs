@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for LambdaFunctionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Lambda::Function", &function_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Lambda::Function {}: {}", function_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Lambda::Function {}: {}",
+                    function_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -100,20 +99,19 @@ impl AsyncResourceNormalizer for LambdaLayerVersionNormalizer {
 
         let display_name = extract_display_name(&raw_response, &layer_name);
         let status = Some("Available".to_string()); // Layers don't have status, default to Available
-        // Fetch tags asynchronously from AWS API with caching
+                                                    // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Lambda::LayerVersion", &layer_name, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Lambda::LayerVersion {}: {}", layer_name, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Lambda::LayerVersion {}: {}",
+                    layer_name,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -191,25 +189,17 @@ impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::Lambda::EventSourceMapping", &uuid, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::Lambda::EventSourceMapping {}: {}", uuid, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Lambda::EventSourceMapping {}: {}",
+                    uuid,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -271,4 +261,3 @@ impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
         "AWS::Lambda::EventSourceMapping"
     }
 }
-

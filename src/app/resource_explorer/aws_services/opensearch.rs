@@ -1,7 +1,10 @@
 use super::super::credentials::CredentialCoordinator;
+use super::super::status::{report_status, report_status_done};
 use anyhow::{Context, Result};
 use aws_sdk_opensearch as opensearch;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct OpenSearchService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -19,6 +22,7 @@ impl OpenSearchService {
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
         let aws_config = self
             .credential_coordinator
@@ -41,28 +45,57 @@ impl OpenSearchService {
             for domain_info in domain_names {
                 if let Some(domain_name) = &domain_info.domain_name {
                     // Get detailed domain information
-                    if let Ok(domain_details) = self.get_domain_internal(&client, domain_name).await
+                    let mut domain_json = if let Ok(domain_details) =
+                        self.get_domain_internal(&client, domain_name).await
                     {
-                        domains.push(domain_details);
+                        domain_details
                     } else {
                         // Fallback to basic domain info if describe fails
-                        let mut domain_json = serde_json::Map::new();
-                        domain_json.insert(
+                        let mut fallback_json = serde_json::Map::new();
+                        fallback_json.insert(
                             "DomainName".to_string(),
                             serde_json::Value::String(domain_name.clone()),
                         );
-                        domain_json.insert(
+                        fallback_json.insert(
                             "Name".to_string(),
                             serde_json::Value::String(domain_name.clone()),
                         );
                         if let Some(engine_type) = &domain_info.engine_type {
-                            domain_json.insert(
+                            fallback_json.insert(
                                 "EngineType".to_string(),
                                 serde_json::Value::String(format!("{:?}", engine_type)),
                             );
                         }
-                        domains.push(serde_json::Value::Object(domain_json));
+                        serde_json::Value::Object(fallback_json)
+                    };
+
+                    // Phase 2: Fetch additional details if requested
+                    if include_details {
+                        report_status("OpenSearch", "get_domain_details", Some(domain_name));
+
+                        // Get domain config
+                        if let Ok(config) =
+                            self.get_domain_config_internal(&client, domain_name).await
+                        {
+                            if let serde_json::Value::Object(ref mut map) = domain_json {
+                                map.insert("DomainConfig".to_string(), config);
+                            }
+                        }
+
+                        // Get tags
+                        if let Ok(tags) = self
+                            .get_domain_tags_internal(&client, domain_name, account_id, region)
+                            .await
+                        {
+                            if let serde_json::Value::Object(ref mut map) = domain_json {
+                                map.insert("Tags".to_string(), tags);
+                            }
+                        }
+
+                        report_status_done("OpenSearch", "get_domain_details", Some(domain_name));
                     }
+
+                    domains.push(domain_json);
                 }
             }
         }
@@ -272,12 +305,16 @@ impl OpenSearchService {
             );
         }
 
-        // Access Policies
+        // Access Policies - parse as JSON for proper pretty-printing
         if let Some(access_policies) = &domain.access_policies {
-            json.insert(
-                "AccessPolicies".to_string(),
-                serde_json::Value::String(access_policies.clone()),
-            );
+            if let Ok(policy_json) = serde_json::from_str::<serde_json::Value>(access_policies) {
+                json.insert("AccessPolicies".to_string(), policy_json);
+            } else {
+                json.insert(
+                    "AccessPolicies".to_string(),
+                    serde_json::Value::String(access_policies.clone()),
+                );
+            }
         }
 
         // VPC Options
@@ -438,5 +475,184 @@ impl OpenSearchService {
         }
 
         serde_json::Value::Object(json)
+    }
+
+    /// Get detailed information for a domain (Phase 2 enrichment)
+    pub async fn get_domain_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        domain_name: &str,
+    ) -> Result<serde_json::Value> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = opensearch::Client::new(&aws_config);
+
+        let mut details = serde_json::Map::new();
+
+        // Get domain config
+        if let Ok(config) = self.get_domain_config_internal(&client, domain_name).await {
+            details.insert("DomainConfig".to_string(), config);
+        }
+
+        // Get tags
+        if let Ok(tags) = self
+            .get_domain_tags_internal(&client, domain_name, account_id, region)
+            .await
+        {
+            details.insert("Tags".to_string(), tags);
+        }
+
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Internal helper to get domain configuration
+    async fn get_domain_config_internal(
+        &self,
+        client: &opensearch::Client,
+        domain_name: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        let result = timeout(
+            timeout_duration,
+            client
+                .describe_domain_config()
+                .domain_name(domain_name)
+                .send(),
+        )
+        .await
+        .with_context(|| format!("Timeout getting domain config for {}", domain_name))?
+        .with_context(|| format!("Failed to get domain config for {}", domain_name))?;
+
+        let mut config_json = serde_json::Map::new();
+
+        if let Some(domain_config) = result.domain_config {
+            // Auto-Tune Options
+            if let Some(auto_tune_options) = domain_config.auto_tune_options {
+                let mut auto_tune_json = serde_json::Map::new();
+                if let Some(options) = auto_tune_options.options {
+                    if let Some(state) = options.desired_state {
+                        auto_tune_json.insert(
+                            "DesiredState".to_string(),
+                            serde_json::Value::String(state.as_str().to_string()),
+                        );
+                    }
+                }
+                if let Some(status) = auto_tune_options.status {
+                    auto_tune_json.insert(
+                        "State".to_string(),
+                        serde_json::Value::String(status.state.as_str().to_string()),
+                    );
+                    if let Some(error_message) = status.error_message {
+                        auto_tune_json.insert(
+                            "ErrorMessage".to_string(),
+                            serde_json::Value::String(error_message),
+                        );
+                    }
+                }
+                if !auto_tune_json.is_empty() {
+                    config_json.insert(
+                        "AutoTuneOptions".to_string(),
+                        serde_json::Value::Object(auto_tune_json),
+                    );
+                }
+            }
+
+            // Software Update Options
+            if let Some(software_update_options) = domain_config.software_update_options {
+                let mut update_json = serde_json::Map::new();
+                if let Some(options) = software_update_options.options {
+                    if let Some(auto_software_update_enabled) = options.auto_software_update_enabled
+                    {
+                        update_json.insert(
+                            "AutoSoftwareUpdateEnabled".to_string(),
+                            serde_json::Value::Bool(auto_software_update_enabled),
+                        );
+                    }
+                }
+                if !update_json.is_empty() {
+                    config_json.insert(
+                        "SoftwareUpdateOptions".to_string(),
+                        serde_json::Value::Object(update_json),
+                    );
+                }
+            }
+
+            // Off-peak window options
+            if let Some(off_peak_window_options) = domain_config.off_peak_window_options {
+                let mut off_peak_json = serde_json::Map::new();
+                if let Some(options) = off_peak_window_options.options {
+                    if let Some(enabled) = options.enabled {
+                        off_peak_json
+                            .insert("Enabled".to_string(), serde_json::Value::Bool(enabled));
+                    }
+                    if let Some(off_peak_window) = options.off_peak_window {
+                        if let Some(window_start_time) = off_peak_window.window_start_time {
+                            off_peak_json.insert(
+                                "WindowStartTime".to_string(),
+                                serde_json::Value::String(format!(
+                                    "{:02}:{:02}",
+                                    window_start_time.hours, window_start_time.minutes
+                                )),
+                            );
+                        }
+                    }
+                }
+                if !off_peak_json.is_empty() {
+                    config_json.insert(
+                        "OffPeakWindowOptions".to_string(),
+                        serde_json::Value::Object(off_peak_json),
+                    );
+                }
+            }
+        }
+
+        Ok(serde_json::Value::Object(config_json))
+    }
+
+    /// Internal helper to get domain tags
+    async fn get_domain_tags_internal(
+        &self,
+        client: &opensearch::Client,
+        domain_name: &str,
+        account_id: &str,
+        region: &str,
+    ) -> Result<serde_json::Value> {
+        let timeout_duration = Duration::from_secs(30);
+
+        // Build the domain ARN
+        let domain_arn = format!(
+            "arn:aws:es:{}:{}:domain/{}",
+            region, account_id, domain_name
+        );
+
+        let result = timeout(timeout_duration, client.list_tags().arn(&domain_arn).send())
+            .await
+            .with_context(|| format!("Timeout getting tags for {}", domain_name))?
+            .with_context(|| format!("Failed to get tags for {}", domain_name))?;
+
+        let tags: Vec<serde_json::Value> = result
+            .tag_list
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tag| {
+                let mut tag_json = serde_json::Map::new();
+                tag_json.insert("Key".to_string(), serde_json::Value::String(tag.key));
+                tag_json.insert("Value".to_string(), serde_json::Value::String(tag.value));
+                serde_json::Value::Object(tag_json)
+            })
+            .collect();
+
+        Ok(serde_json::Value::Array(tags))
     }
 }

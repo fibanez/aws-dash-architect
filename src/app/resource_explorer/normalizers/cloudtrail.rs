@@ -31,17 +31,16 @@ impl AsyncResourceNormalizer for CloudTrailNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::CloudTrail::Trail", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::CloudTrail::Trail {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::CloudTrail::Trail {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -104,7 +103,7 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
             .get("EventName")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown Event");
-        
+
         let event_time = raw_response
             .get("EventTime")
             .and_then(|v| v.as_str())
@@ -125,25 +124,17 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::CloudTrail::Event", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::CloudTrail::Event {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::CloudTrail::Event {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -177,7 +168,11 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
         let mut relationships = Vec::new();
 
         // CloudTrail events can be related to the resources they operated on
-        if let Some(resources) = entry.raw_properties.get("Resources").and_then(|r| r.as_array()) {
+        if let Some(resources) = entry
+            .raw_properties
+            .get("Resources")
+            .and_then(|r| r.as_array())
+        {
             for resource in resources {
                 if let (Some(resource_type), Some(resource_name)) = (
                     resource.get("ResourceType").and_then(|rt| rt.as_str()),
@@ -185,8 +180,10 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
                 ) {
                     // Find matching resource in all_resources
                     for other_resource in all_resources {
-                        if other_resource.resource_type == resource_type 
-                            && (other_resource.resource_id == resource_name || other_resource.display_name.contains(resource_name)) {
+                        if other_resource.resource_type == resource_type
+                            && (other_resource.resource_id == resource_name
+                                || other_resource.display_name.contains(resource_name))
+                        {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
                                 target_resource_id: other_resource.resource_id.clone(),
@@ -206,4 +203,3 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
         "AWS::CloudTrail::Event"
     }
 }
-

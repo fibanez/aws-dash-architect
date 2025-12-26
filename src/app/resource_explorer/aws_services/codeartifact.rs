@@ -1,9 +1,9 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Result, Context};
+use super::super::credentials::CredentialCoordinator;
+use anyhow::{Context, Result};
 use aws_sdk_codeartifact as codeartifact;
 use std::sync::Arc;
-use super::super::credentials::CredentialCoordinator;
 
 pub struct CodeArtifactService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -22,10 +22,16 @@ impl CodeArtifactService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = codeartifact::Client::new(&aws_config);
         let mut domains = Vec::new();
@@ -61,10 +67,16 @@ impl CodeArtifactService {
         account_id: &str,
         region: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account_id, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
 
         let client = codeartifact::Client::new(&aws_config);
         let mut repositories = Vec::new();
@@ -101,10 +113,16 @@ impl CodeArtifactService {
         region: &str,
         domain_name: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account, region
+                )
+            })?;
 
         let client = codeartifact::Client::new(&aws_config);
 
@@ -129,16 +147,22 @@ impl CodeArtifactService {
         region: &str,
         repository_name: &str,
     ) -> Result<serde_json::Value> {
-        let aws_config = self.credential_coordinator
+        let aws_config = self
+            .credential_coordinator
             .create_aws_config_for_account(account, region)
             .await
-            .with_context(|| format!("Failed to create AWS config for account {} in region {}", account, region))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account, region
+                )
+            })?;
 
         let client = codeartifact::Client::new(&aws_config);
 
         // We need the domain for describe_repository - try to extract from repository name or list all
         let repositories = self.list_repositories(account, region).await?;
-        
+
         for repo in repositories {
             if let Some(name) = repo.get("Name").and_then(|v| v.as_str()) {
                 if name == repository_name {
@@ -149,7 +173,12 @@ impl CodeArtifactService {
                             .repository(repository_name)
                             .send()
                             .await
-                            .with_context(|| format!("Failed to describe CodeArtifact repository: {}", repository_name))?;
+                            .with_context(|| {
+                                format!(
+                                    "Failed to describe CodeArtifact repository: {}",
+                                    repository_name
+                                )
+                            })?;
 
                         if let Some(repository) = response.repository {
                             return Ok(self.repository_detail_to_json(&repository));
@@ -165,12 +194,24 @@ impl CodeArtifactService {
     fn domain_to_json(&self, domain: &codeartifact::types::DomainSummary) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
-        json.insert("DomainName".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
-        json.insert("ResourceId".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
-        json.insert("Name".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
+        json.insert(
+            "DomainName".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "Name".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
 
         if let Some(owner) = &domain.owner {
-            json.insert("Owner".to_string(), serde_json::Value::String(owner.clone()));
+            json.insert(
+                "Owner".to_string(),
+                serde_json::Value::String(owner.clone()),
+            );
         }
 
         if let Some(arn) = &domain.arn {
@@ -178,33 +219,60 @@ impl CodeArtifactService {
         }
 
         if let Some(status) = &domain.status {
-            json.insert("Status".to_string(), serde_json::Value::String(status.as_str().to_string()));
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
         }
 
         if let Some(created_time) = domain.created_time {
-            json.insert("CreatedTime".to_string(), serde_json::Value::String(created_time.to_string()));
+            json.insert(
+                "CreatedTime".to_string(),
+                serde_json::Value::String(created_time.to_string()),
+            );
         }
 
         if let Some(encryption_key) = &domain.encryption_key {
-            json.insert("EncryptionKey".to_string(), serde_json::Value::String(encryption_key.clone()));
+            json.insert(
+                "EncryptionKey".to_string(),
+                serde_json::Value::String(encryption_key.clone()),
+            );
         }
 
         serde_json::Value::Object(json)
     }
 
-    fn repository_to_json(&self, repository: &codeartifact::types::RepositorySummary) -> serde_json::Value {
+    fn repository_to_json(
+        &self,
+        repository: &codeartifact::types::RepositorySummary,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
-        json.insert("RepositoryName".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
-        json.insert("ResourceId".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
-        json.insert("Name".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
+        json.insert(
+            "RepositoryName".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "Name".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
 
         if let Some(domain_name) = &repository.domain_name {
-            json.insert("DomainName".to_string(), serde_json::Value::String(domain_name.clone()));
+            json.insert(
+                "DomainName".to_string(),
+                serde_json::Value::String(domain_name.clone()),
+            );
         }
 
         if let Some(domain_owner) = &repository.domain_owner {
-            json.insert("DomainOwner".to_string(), serde_json::Value::String(domain_owner.clone()));
+            json.insert(
+                "DomainOwner".to_string(),
+                serde_json::Value::String(domain_owner.clone()),
+            );
         }
 
         if let Some(arn) = &repository.arn {
@@ -212,27 +280,51 @@ impl CodeArtifactService {
         }
 
         if let Some(description) = &repository.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(created_time) = repository.created_time {
-            json.insert("CreatedTime".to_string(), serde_json::Value::String(created_time.to_string()));
+            json.insert(
+                "CreatedTime".to_string(),
+                serde_json::Value::String(created_time.to_string()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }
 
-    fn domain_detail_to_json(&self, domain: &codeartifact::types::DomainDescription) -> serde_json::Value {
+    fn domain_detail_to_json(
+        &self,
+        domain: &codeartifact::types::DomainDescription,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
-        json.insert("DomainName".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
-        json.insert("ResourceId".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
-        json.insert("Name".to_string(), serde_json::Value::String(domain.name.clone().unwrap_or_default()));
+        json.insert(
+            "DomainName".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "Name".to_string(),
+            serde_json::Value::String(domain.name.clone().unwrap_or_default()),
+        );
 
         if let Some(owner) = &domain.owner {
-            json.insert("Owner".to_string(), serde_json::Value::String(owner.clone()));
+            json.insert(
+                "Owner".to_string(),
+                serde_json::Value::String(owner.clone()),
+            );
         }
 
         if let Some(arn) = &domain.arn {
@@ -240,41 +332,77 @@ impl CodeArtifactService {
         }
 
         if let Some(status) = &domain.status {
-            json.insert("Status".to_string(), serde_json::Value::String(status.as_str().to_string()));
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
         }
 
         if let Some(created_time) = domain.created_time {
-            json.insert("CreatedTime".to_string(), serde_json::Value::String(created_time.to_string()));
+            json.insert(
+                "CreatedTime".to_string(),
+                serde_json::Value::String(created_time.to_string()),
+            );
         }
 
         if let Some(encryption_key) = &domain.encryption_key {
-            json.insert("EncryptionKey".to_string(), serde_json::Value::String(encryption_key.clone()));
+            json.insert(
+                "EncryptionKey".to_string(),
+                serde_json::Value::String(encryption_key.clone()),
+            );
         }
 
-        json.insert("RepositoryCount".to_string(), serde_json::Value::Number(serde_json::Number::from(domain.repository_count)));
+        json.insert(
+            "RepositoryCount".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(domain.repository_count)),
+        );
 
-        json.insert("AssetSizeBytes".to_string(), serde_json::Value::Number(serde_json::Number::from(domain.asset_size_bytes)));
+        json.insert(
+            "AssetSizeBytes".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(domain.asset_size_bytes)),
+        );
 
         if let Some(s3_bucket_arn) = &domain.s3_bucket_arn {
-            json.insert("S3BucketArn".to_string(), serde_json::Value::String(s3_bucket_arn.clone()));
+            json.insert(
+                "S3BucketArn".to_string(),
+                serde_json::Value::String(s3_bucket_arn.clone()),
+            );
         }
 
         serde_json::Value::Object(json)
     }
 
-    fn repository_detail_to_json(&self, repository: &codeartifact::types::RepositoryDescription) -> serde_json::Value {
+    fn repository_detail_to_json(
+        &self,
+        repository: &codeartifact::types::RepositoryDescription,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
-        json.insert("RepositoryName".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
-        json.insert("ResourceId".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
-        json.insert("Name".to_string(), serde_json::Value::String(repository.name.clone().unwrap_or_default()));
+        json.insert(
+            "RepositoryName".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
+        json.insert(
+            "Name".to_string(),
+            serde_json::Value::String(repository.name.clone().unwrap_or_default()),
+        );
 
         if let Some(domain_name) = &repository.domain_name {
-            json.insert("DomainName".to_string(), serde_json::Value::String(domain_name.clone()));
+            json.insert(
+                "DomainName".to_string(),
+                serde_json::Value::String(domain_name.clone()),
+            );
         }
 
         if let Some(domain_owner) = &repository.domain_owner {
-            json.insert("DomainOwner".to_string(), serde_json::Value::String(domain_owner.clone()));
+            json.insert(
+                "DomainOwner".to_string(),
+                serde_json::Value::String(domain_owner.clone()),
+            );
         }
 
         if let Some(arn) = &repository.arn {
@@ -282,22 +410,37 @@ impl CodeArtifactService {
         }
 
         if let Some(description) = &repository.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         if let Some(created_time) = repository.created_time {
-            json.insert("CreatedTime".to_string(), serde_json::Value::String(created_time.to_string()));
+            json.insert(
+                "CreatedTime".to_string(),
+                serde_json::Value::String(created_time.to_string()),
+            );
         }
 
         if let Some(_upstreams) = &repository.upstreams {
-            json.insert("Upstreams".to_string(), serde_json::Value::String("TODO: Manual conversion needed".to_string()));
+            json.insert(
+                "Upstreams".to_string(),
+                serde_json::Value::String("TODO: Manual conversion needed".to_string()),
+            );
         }
 
         if let Some(_external_connections) = &repository.external_connections {
-            json.insert("ExternalConnections".to_string(), serde_json::Value::String("TODO: Manual conversion needed".to_string()));
+            json.insert(
+                "ExternalConnections".to_string(),
+                serde_json::Value::String("TODO: Manual conversion needed".to_string()),
+            );
         }
 
-        json.insert("Status".to_string(), serde_json::Value::String("ACTIVE".to_string()));
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
 
         serde_json::Value::Object(json)
     }

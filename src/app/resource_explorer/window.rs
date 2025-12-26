@@ -1,10 +1,13 @@
-use super::{aws_client::*, bookmarks::*, colors::*, dialogs::*, state::*, tree::*, widgets::*};
+use super::{
+    aws_client::*, bookmarks::*, colors::*, dialogs::*, state::*, status::global_status, tree::*,
+    widgets::*,
+};
 use crate::app::agent_framework::tools_registry::set_global_aws_client;
 use crate::app::aws_identity::AwsIdentityCenter;
 use egui::{Color32, Context, Ui, Window};
 use egui_dnd::dnd;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -45,8 +48,8 @@ pub struct ResourceExplorerWindow {
     failed_detail_requests: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>, // Track failed requests
     frame_count: u64, // Frame counter for debouncing logs
 
-    // Bookmark system (M5)
-    bookmark_manager: BookmarkManager,
+    // Bookmark system - Arc-wrapped for sharing with V8 bindings
+    bookmark_manager: Arc<StdRwLock<BookmarkManager>>,
     show_bookmark_dialog: bool,
     show_bookmark_manager: bool,
     bookmark_dialog_name: String,
@@ -100,7 +103,7 @@ impl ResourceExplorerWindow {
                 std::collections::HashSet::new(),
             )),
             frame_count: 0,
-            bookmark_manager: BookmarkManager::new().unwrap_or_default(),
+            bookmark_manager: Arc::new(StdRwLock::new(BookmarkManager::new().unwrap_or_default())),
             show_bookmark_dialog: false,
             show_bookmark_manager: false,
             bookmark_dialog_name: String::new(),
@@ -119,6 +122,16 @@ impl ResourceExplorerWindow {
             bookmark_clipboard_is_cut: false,
             pending_actions,
         }
+    }
+
+    /// Get the ResourceExplorerState for unified caching with V8 bindings
+    pub fn get_state(&self) -> Arc<RwLock<ResourceExplorerState>> {
+        self.state.clone()
+    }
+
+    /// Get the BookmarkManager for unified access with V8 bindings
+    pub fn get_bookmark_manager(&self) -> Arc<StdRwLock<BookmarkManager>> {
+        self.bookmark_manager.clone()
     }
 
     /// Set the AWS Identity Center reference to access real account data
@@ -186,9 +199,65 @@ impl ResourceExplorerWindow {
 
         // Request continuous repaints if we have active loading tasks to show spinner animation
         if let Ok(state) = self.state.try_read() {
-            if state.is_loading() {
+            if state.is_loading() || state.phase2_enrichment_in_progress {
                 // Request repaint every 100ms to keep spinner animated
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+
+        // Check if Phase 2 enrichment completed and refresh resources from cache
+        if let Ok(mut state) = self.state.try_write() {
+            if state.phase2_enrichment_completed {
+                // First, collect updates from cache (to avoid borrow conflicts)
+                let updates: Vec<(
+                    usize,
+                    Option<serde_json::Value>,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                )> = state
+                    .resources
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, resource)| {
+                        if resource.detailed_properties.is_some() {
+                            return None; // Already has details
+                        }
+                        let cache_key = format!(
+                            "{}:{}:{}",
+                            resource.account_id, resource.region, resource.resource_type
+                        );
+                        state
+                            .cached_queries
+                            .get(&cache_key)
+                            .and_then(|cached_resources| {
+                                cached_resources
+                                    .iter()
+                                    .find(|r| r.resource_id == resource.resource_id)
+                                    .and_then(|cached| {
+                                        cached.detailed_properties.as_ref().map(|props| {
+                                            (idx, Some(props.clone()), cached.detailed_timestamp)
+                                        })
+                                    })
+                            })
+                    })
+                    .collect();
+
+                // Now apply updates
+                let updated_count = updates.len();
+                for (idx, props, timestamp) in updates {
+                    if let Some(resource) = state.resources.get_mut(idx) {
+                        resource.detailed_properties = props;
+                        resource.detailed_timestamp = timestamp;
+                    }
+                }
+
+                if updated_count > 0 {
+                    tracing::info!(
+                        "Phase 2 enrichment: Updated {} resources with detailed properties",
+                        updated_count
+                    );
+                }
+                // Reset flag so we don't do this every frame
+                state.phase2_enrichment_completed = false;
             }
         }
 
@@ -211,35 +280,79 @@ impl ResourceExplorerWindow {
                     .ctx()
                     .memory(|mem| mem.focused().map(|id| id == ui.id()).unwrap_or(false));
 
-                // Bottom panel for memory usage (prevents window from growing)
-                egui::TopBottomPanel::bottom("explorer_memory_bar")
-                    .show_separator_line(false)
+                // Bottom panel for status bar and memory usage (prevents window from growing)
+                egui::TopBottomPanel::bottom("explorer_status_bar")
+                    .show_separator_line(true)
                     .show_inside(ui, |ui| {
-                        if let Ok(state) = self.state.try_read() {
-                            let cache_count = state.get_cache_resource_count();
-                            let active_count = state.resources.len();
+                        // Status bar showing active operations
+                        let status_line = global_status().get_status_line();
+                        let is_active = status_line != "Ready";
 
-                            // Get actual process memory usage
-                            if let Some(usage) = memory_stats::memory_stats() {
-                                let physical_mb = usage.physical_mem as f64 / (1024.0 * 1024.0);
-                                let virtual_mb = usage.virtual_mem as f64 / (1024.0 * 1024.0);
+                        ui.horizontal(|ui| {
+                            // Show status with appropriate styling
+                            if is_active {
+                                // Animated indicator for active operations
+                                let time = ui.ctx().input(|i| i.time);
+                                let pulse = ((time * 3.0).sin() * 0.3 + 0.7) as f32;
+                                let color = Color32::from_rgba_unmultiplied(
+                                    100,
+                                    180,
+                                    255,
+                                    (255.0 * pulse) as u8,
+                                );
+                                ui.label(egui::RichText::new("*").color(color).strong());
+                                ui.label(
+                                    egui::RichText::new(&status_line)
+                                        .color(Color32::from_rgb(100, 180, 255))
+                                        .small(),
+                                );
 
-                                ui.label(egui::RichText::new(format!(
-                                    "App Memory: {:.1} MB physical, {:.1} MB virtual | {} active resources, {} cached resources",
-                                    physical_mb,
-                                    virtual_mb,
-                                    active_count,
-                                    cache_count
-                                )).small());
+                                // Request repaint to keep animation going
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(50));
                             } else {
-                                // Fallback if memory stats unavailable
-                                ui.label(egui::RichText::new(format!(
-                                    "Resources: {} active, {} cached",
-                                    active_count,
-                                    cache_count
-                                )).small());
+                                ui.label(
+                                    egui::RichText::new(&status_line)
+                                        .color(Color32::GRAY)
+                                        .small(),
+                                );
                             }
-                        }
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if let Ok(state) = self.state.try_read() {
+                                        let cache_count = state.get_cache_resource_count();
+                                        let active_count = state.resources.len();
+
+                                        // Get actual process memory usage
+                                        if let Some(usage) = memory_stats::memory_stats() {
+                                            let physical_mb =
+                                                usage.physical_mem as f64 / (1024.0 * 1024.0);
+
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{:.0}MB | {} active, {} cached",
+                                                    physical_mb, active_count, cache_count
+                                                ))
+                                                .small()
+                                                .color(Color32::GRAY),
+                                            );
+                                        } else {
+                                            // Fallback if memory stats unavailable
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} active, {} cached",
+                                                    active_count, cache_count
+                                                ))
+                                                .small()
+                                                .color(Color32::GRAY),
+                                            );
+                                        }
+                                    }
+                                },
+                            );
+                        });
                     });
 
                 // Left sidebar for grouping and filter controls
@@ -254,66 +367,73 @@ impl ResourceExplorerWindow {
                     });
 
                 // Main content area
-                egui::CentralPanel::default()
-                    .show_inside(ui, |ui| {
-                        // Render unified toolbar with bookmarks menu and control buttons
-                        let (clicked_bookmark_id, show_add, show_manage, clear_clicked) =
-                            self.render_unified_toolbar(ui);
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    // Render unified toolbar with bookmarks menu and control buttons
+                    let (clicked_bookmark_id, show_add, show_manage, clear_clicked) =
+                        self.render_unified_toolbar(ui);
 
-                        // Apply bookmark menu actions
-                        if let Some(bookmark_id) = clicked_bookmark_id {
-                            // Find the bookmark (read-only)
-                            if let Some(bookmark) = self.bookmark_manager.get_bookmarks()
-                                .iter()
-                                .find(|b| b.id == bookmark_id) {
+                    // Apply bookmark menu actions
+                    if let Some(bookmark_id) = clicked_bookmark_id {
+                        // Find the bookmark (read-only)
+                        let bookmark_clone = self
+                            .bookmark_manager
+                            .read()
+                            .unwrap()
+                            .get_bookmarks()
+                            .iter()
+                            .find(|b| b.id == bookmark_id)
+                            .cloned();
 
-                                // Clone the bookmark to avoid borrow conflicts
-                                let bookmark_clone = bookmark.clone();
-
-                                // Apply the bookmark to state (reconstructs full selections)
-                                if let Ok(mut state) = self.state.try_write() {
-                                    self.apply_bookmark_to_state(&bookmark_clone, &mut state, ctx);
-                                }
-
-                                // Update access tracking (separate borrow)
-                                if let Some(bookmark_mut) = self.bookmark_manager.get_bookmark_mut(&bookmark_id) {
-                                    bookmark_mut.access_count += 1;
-                                    bookmark_mut.last_accessed = Some(chrono::Utc::now());
-                                    bookmark_mut.modified_at = chrono::Utc::now();
-
-                                    // Save updated bookmark with access tracking
-                                    if let Err(e) = self.bookmark_manager.save() {
-                                        tracing::error!("Failed to save bookmark access tracking: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                        if show_add {
-                            self.show_bookmark_dialog = true;
-                            tracing::info!("Add bookmark clicked");
-                        }
-                        if show_manage {
-                            self.show_bookmark_manager = true;
-                            tracing::info!("Manage bookmarks clicked");
-                        }
-                        if clear_clicked {
+                        if let Some(bookmark) = bookmark_clone {
+                            // Apply the bookmark to state (reconstructs full selections)
                             if let Ok(mut state) = self.state.try_write() {
-                                state.clear_all_selections();
+                                self.apply_bookmark_to_state(&bookmark, &mut state, ctx);
+                            }
+
+                            // Update access tracking (separate borrow)
+                            if let Some(bookmark_mut) = self
+                                .bookmark_manager
+                                .write()
+                                .unwrap()
+                                .get_bookmark_mut(&bookmark_id)
+                            {
+                                bookmark_mut.access_count += 1;
+                                bookmark_mut.last_accessed = Some(chrono::Utc::now());
+                                bookmark_mut.modified_at = chrono::Utc::now();
+                            }
+
+                            // Save updated bookmark with access tracking
+                            if let Err(e) = self.bookmark_manager.write().unwrap().save() {
+                                tracing::error!("Failed to save bookmark access tracking: {}", e);
                             }
                         }
-
-                        ui.separator();
-
+                    }
+                    if show_add {
+                        self.show_bookmark_dialog = true;
+                        tracing::info!("Add bookmark clicked");
+                    }
+                    if show_manage {
+                        self.show_bookmark_manager = true;
+                        tracing::info!("Manage bookmarks clicked");
+                    }
+                    if clear_clicked {
                         if let Ok(mut state) = self.state.try_write() {
-                            self.render_active_tags_static(ui, &mut state);
-                            ui.add_space(10.0);
-                            Self::render_search_bar_static(ui, &mut state);
-                            ui.separator();
-                            Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
-                        } else {
-                            ui.label("Loading...");
+                            state.clear_all_selections();
                         }
-                    });
+                    }
+
+                    ui.separator();
+
+                    if let Ok(mut state) = self.state.try_write() {
+                        self.render_active_tags_static(ui, &mut state);
+                        ui.add_space(10.0);
+                        Self::render_search_bar_static(ui, &mut state);
+                        ui.separator();
+                        Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
+                    } else {
+                        ui.label("Loading...");
+                    }
+                });
             });
 
         // Update is_open from the window response
@@ -1372,8 +1492,8 @@ impl ResourceExplorerWindow {
             ui.add_space(4.0);
 
             // Clear Filters button (only show if filters are active)
-            if total_filter_count > 0 {
-                if ui.button("Clear Filters").on_hover_text("Clear all tag and property filters").clicked() {
+            if total_filter_count > 0
+                && ui.button("Clear Filters").on_hover_text("Clear all tag and property filters").clicked() {
                     // Clear all tag filters
                     state.show_only_tagged = false;
                     state.show_only_untagged = false;
@@ -1385,7 +1505,6 @@ impl ResourceExplorerWindow {
 
                     tracing::info!("Cleared all filters (tags and properties)");
                 }
-            }
         });
     }
 
@@ -1448,7 +1567,11 @@ impl ResourceExplorerWindow {
                     state.show_refresh_dialog = true;
                 }
 
-                if ui.button("Reset").on_hover_text("Reset all selections to default state").clicked() {
+                if ui
+                    .button("Reset")
+                    .on_hover_text("Reset all selections to default state")
+                    .clicked()
+                {
                     clear_clicked = true;
                 }
 
@@ -1464,7 +1587,12 @@ impl ResourceExplorerWindow {
             }
         });
 
-        (clicked_bookmark_id, show_add_dialog, show_manage_dialog, clear_clicked)
+        (
+            clicked_bookmark_id,
+            show_add_dialog,
+            show_manage_dialog,
+            clear_clicked,
+        )
     }
 
     /// Recursively render a level of the bookmark menu hierarchy
@@ -1476,9 +1604,14 @@ impl ResourceExplorerWindow {
         clicked_bookmark_id: &mut Option<String>,
     ) {
         // Get bookmarks at this level
-        let bookmarks = self
+        let bookmarks: Vec<_> = self
             .bookmark_manager
-            .get_bookmarks_in_folder(parent_folder_id.as_ref());
+            .read()
+            .unwrap()
+            .get_bookmarks_in_folder(parent_folder_id.as_ref())
+            .into_iter()
+            .cloned()
+            .collect();
 
         // Render bookmarks
         for bookmark in &bookmarks {
@@ -1520,9 +1653,14 @@ impl ResourceExplorerWindow {
         }
 
         // Get folders at this level
-        let folders = self
+        let folders: Vec<_> = self
             .bookmark_manager
-            .get_subfolders(parent_folder_id.as_ref());
+            .read()
+            .unwrap()
+            .get_subfolders(parent_folder_id.as_ref())
+            .into_iter()
+            .cloned()
+            .collect();
 
         // Show separator between bookmarks and folders if both exist
         if !bookmarks.is_empty() && !folders.is_empty() {
@@ -1583,6 +1721,8 @@ impl ResourceExplorerWindow {
                         let current_folder_name =
                             if let Some(folder_id) = &self.bookmark_dialog_folder_id {
                                 self.bookmark_manager
+                                    .read()
+                                    .unwrap()
                                     .get_folder(folder_id)
                                     .map(|f| f.name.clone())
                                     .unwrap_or_else(|| "Top Folder".to_string())
@@ -1604,7 +1744,13 @@ impl ResourceExplorerWindow {
                                 }
 
                                 // Show all folders as options
-                                for folder in self.bookmark_manager.get_all_folders().iter() {
+                                for folder in self
+                                    .bookmark_manager
+                                    .read()
+                                    .unwrap()
+                                    .get_all_folders()
+                                    .iter()
+                                {
                                     let is_selected =
                                         self.bookmark_dialog_folder_id.as_ref() == Some(&folder.id);
                                     if ui.selectable_label(is_selected, &folder.name).clicked() {
@@ -1634,17 +1780,22 @@ impl ResourceExplorerWindow {
         // Handle bookmark creation
         if should_create && !self.bookmark_dialog_name.is_empty() {
             if let Ok(state) = self.state.try_read() {
-                let mut bookmark = Bookmark::new(self.bookmark_dialog_name.clone(), &*state);
+                let mut bookmark = Bookmark::new(self.bookmark_dialog_name.clone(), &state);
                 if !self.bookmark_dialog_description.is_empty() {
                     bookmark.description = Some(self.bookmark_dialog_description.clone());
                 }
                 // Set the folder_id
                 bookmark.folder_id = self.bookmark_dialog_folder_id.clone();
 
-                self.bookmark_manager.add_bookmark(bookmark);
+                self.bookmark_manager
+                    .write()
+                    .unwrap()
+                    .add_bookmark(bookmark);
 
                 let folder_name = if let Some(folder_id) = &self.bookmark_dialog_folder_id {
                     self.bookmark_manager
+                        .read()
+                        .unwrap()
                         .get_folder(folder_id)
                         .map(|f| format!(" in folder '{}'", f.name))
                         .unwrap_or_default()
@@ -1658,7 +1809,7 @@ impl ResourceExplorerWindow {
                 );
 
                 // Save bookmarks to disk
-                if let Err(e) = self.bookmark_manager.save() {
+                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                     tracing::error!("Failed to save bookmarks: {}", e);
                 }
             }
@@ -1725,7 +1876,12 @@ impl ResourceExplorerWindow {
         // Handle bookmark update
         if should_save && !self.bookmark_edit_name.is_empty() {
             if let Some(bookmark_id) = &self.editing_bookmark_id {
-                if let Some(bookmark) = self.bookmark_manager.get_bookmark_mut(bookmark_id) {
+                if let Some(bookmark) = self
+                    .bookmark_manager
+                    .write()
+                    .unwrap()
+                    .get_bookmark_mut(bookmark_id)
+                {
                     bookmark.name = self.bookmark_edit_name.clone();
                     bookmark.description = if self.bookmark_edit_description.is_empty() {
                         None
@@ -1735,11 +1891,11 @@ impl ResourceExplorerWindow {
                     bookmark.modified_at = chrono::Utc::now();
 
                     tracing::info!("Updated bookmark: {}", bookmark.name);
+                }
 
-                    // Save bookmarks to disk
-                    if let Err(e) = self.bookmark_manager.save() {
-                        tracing::error!("Failed to save bookmarks: {}", e);
-                    }
+                // Save bookmarks to disk
+                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
+                    tracing::error!("Failed to save bookmarks: {}", e);
                 }
             }
 
@@ -1906,9 +2062,9 @@ impl ResourceExplorerWindow {
                 ui.vertical(|ui| {
                     // Stats
                     ui.horizontal(|ui| {
-                        ui.label(format!("Total bookmarks: {}", self.bookmark_manager.get_bookmarks().len()));
+                        ui.label(format!("Total bookmarks: {}", self.bookmark_manager.read().unwrap().get_bookmarks().len()));
                         ui.add_space(10.0);
-                        ui.label(format!("Total folders: {}", self.bookmark_manager.get_all_folders().len()));
+                        ui.label(format!("Total folders: {}", self.bookmark_manager.read().unwrap().get_all_folders().len()));
                     });
 
                     // Toolbar
@@ -1959,12 +2115,10 @@ impl ResourceExplorerWindow {
                                         // Don't drop folder if it's already in Top Folder
                                         if current_parent.is_some() {
                                             // Move folder to Top Folder (parent_id = None)
-                                            if let Err(e) = self.bookmark_manager.move_folder_to_parent(dragged_folder_id, None) {
+                                            if let Err(e) = self.bookmark_manager.write().unwrap().move_folder_to_parent(dragged_folder_id, None) {
                                                 tracing::error!("Failed to move folder to Top Folder: {}", e);
-                                            } else {
-                                                if let Err(e) = self.bookmark_manager.save() {
-                                                    tracing::error!("Failed to save after folder move to Top Folder: {}", e);
-                                                }
+                                            } else if let Err(e) = self.bookmark_manager.write().unwrap().save() {
+                                                tracing::error!("Failed to save after folder move to Top Folder: {}", e);
                                             }
                                         }
                                     }
@@ -2001,7 +2155,7 @@ impl ResourceExplorerWindow {
 
         // Handle folder renaming
         if let Some(folder_id) = folder_to_rename {
-            if let Some(folder) = self.bookmark_manager.get_folder(&folder_id) {
+            if let Some(folder) = self.bookmark_manager.read().unwrap().get_folder(&folder_id) {
                 self.editing_folder_id = Some(folder.id.clone());
                 self.folder_dialog_name = folder.name.clone();
                 self.folder_dialog_parent_id = folder.parent_id.clone();
@@ -2011,13 +2165,18 @@ impl ResourceExplorerWindow {
 
         // Handle folder deletion
         if let Some(folder_id) = folder_to_delete {
-            match self.bookmark_manager.remove_folder(&folder_id) {
+            match self
+                .bookmark_manager
+                .write()
+                .unwrap()
+                .remove_folder(&folder_id)
+            {
                 Ok(Some(removed)) => {
                     tracing::info!("Deleted folder: {}", removed.name);
                     self.expanded_folders.remove(&folder_id);
 
                     // Save to disk
-                    if let Err(e) = self.bookmark_manager.save() {
+                    if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                         tracing::error!("Failed to save folders: {}", e);
                     }
                 }
@@ -2033,6 +2192,8 @@ impl ResourceExplorerWindow {
             // Check if this is a bookmark or a folder
             let is_bookmark = self
                 .bookmark_manager
+                .read()
+                .unwrap()
                 .get_bookmarks()
                 .iter()
                 .any(|b| b.id == item_id);
@@ -2042,21 +2203,26 @@ impl ResourceExplorerWindow {
                 if is_drag_drop_move || self.bookmark_clipboard_is_cut {
                     // Drag-drop or Cut: Move the bookmark to the new folder
                     self.bookmark_manager
+                        .write()
+                        .unwrap()
                         .move_bookmark_to_folder(&item_id, target_folder_id);
                 } else {
                     // Copy: Duplicate the bookmark and place the copy in the new folder
-                    if let Some(original) = self
+                    let original = self
                         .bookmark_manager
+                        .read()
+                        .unwrap()
                         .get_bookmarks()
                         .iter()
                         .find(|b| b.id == item_id)
-                        .cloned()
-                    {
+                        .cloned();
+
+                    if let Some(original) = original {
                         let mut copied = original.clone();
                         copied.id = uuid::Uuid::new_v4().to_string();
                         copied.folder_id = target_folder_id;
                         copied.created_at = chrono::Utc::now();
-                        self.bookmark_manager.add_bookmark(copied);
+                        self.bookmark_manager.write().unwrap().add_bookmark(copied);
                     }
                 }
 
@@ -2067,6 +2233,8 @@ impl ResourceExplorerWindow {
                 // Handle folder move (drag-drop only, no clipboard for folders)
                 if let Err(e) = self
                     .bookmark_manager
+                    .write()
+                    .unwrap()
                     .move_folder_to_parent(&item_id, target_folder_id)
                 {
                     tracing::error!("Failed to move folder: {}", e);
@@ -2075,19 +2243,23 @@ impl ResourceExplorerWindow {
             }
 
             // Save to disk
-            if let Err(e) = self.bookmark_manager.save() {
+            if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                 tracing::error!("Failed to save operation: {}", e);
             }
         }
 
         // Handle bookmark editing
         if let Some(bookmark_id) = bookmark_to_edit {
-            if let Some(bookmark) = self
+            let bookmark = self
                 .bookmark_manager
+                .read()
+                .unwrap()
                 .get_bookmarks()
                 .iter()
                 .find(|b| b.id == bookmark_id)
-            {
+                .cloned();
+
+            if let Some(bookmark) = bookmark {
                 // Populate edit dialog fields
                 self.editing_bookmark_id = Some(bookmark.id.clone());
                 self.bookmark_edit_name = bookmark.name.clone();
@@ -2099,11 +2271,16 @@ impl ResourceExplorerWindow {
 
         // Handle bookmark deletion
         if let Some(bookmark_id) = bookmark_to_delete {
-            if let Some(removed) = self.bookmark_manager.remove_bookmark(&bookmark_id) {
+            if let Some(removed) = self
+                .bookmark_manager
+                .write()
+                .unwrap()
+                .remove_bookmark(&bookmark_id)
+            {
                 tracing::info!("Deleted bookmark: {}", removed.name);
 
                 // Save bookmarks to disk
-                if let Err(e) = self.bookmark_manager.save() {
+                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                     tracing::error!("Failed to save bookmarks: {}", e);
                 }
             }
@@ -2116,6 +2293,7 @@ impl ResourceExplorerWindow {
     }
 
     /// Recursively render a folder tree level
+    #[allow(clippy::too_many_arguments)]
     fn render_folder_tree_level(
         &mut self,
         ui: &mut Ui,
@@ -2130,6 +2308,8 @@ impl ResourceExplorerWindow {
         // Get folders at this level
         let folders = self
             .bookmark_manager
+            .read()
+            .unwrap()
             .get_subfolders(parent_id.as_ref())
             .iter()
             .map(|f| (*f).clone())
@@ -2223,6 +2403,8 @@ impl ResourceExplorerWindow {
                         dragged_folder_id != &folder_id
                             && !self
                                 .bookmark_manager
+                                .read()
+                                .unwrap()
                                 .is_descendant(&folder_id, dragged_folder_id)
                     }
                 };
@@ -2257,18 +2439,20 @@ impl ResourceExplorerWindow {
                         if dragged_folder_id != &folder_id
                             && !self
                                 .bookmark_manager
+                                .read()
+                                .unwrap()
                                 .is_descendant(&folder_id, dragged_folder_id)
                         {
                             // Move folder to be child of this folder
                             if let Err(e) = self
                                 .bookmark_manager
+                                .write()
+                                .unwrap()
                                 .move_folder_to_parent(dragged_folder_id, Some(folder_id.clone()))
                             {
                                 tracing::error!("Failed to move folder: {}", e);
-                            } else {
-                                if let Err(e) = self.bookmark_manager.save() {
-                                    tracing::error!("Failed to save after folder move: {}", e);
-                                }
+                            } else if let Err(e) = self.bookmark_manager.write().unwrap().save() {
+                                tracing::error!("Failed to save after folder move: {}", e);
                             }
                         }
                     }
@@ -2279,6 +2463,8 @@ impl ResourceExplorerWindow {
         // Get bookmarks at this level
         let mut bookmarks = self
             .bookmark_manager
+            .read()
+            .unwrap()
             .get_bookmarks_in_folder(parent_id.as_ref())
             .iter()
             .map(|b| (*b).clone())
@@ -2288,10 +2474,7 @@ impl ResourceExplorerWindow {
         if !bookmarks.is_empty() {
             let dnd_id = format!(
                 "bookmark_dnd_{}",
-                parent_id
-                    .as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or("top_folder")
+                parent_id.as_deref().unwrap_or("top_folder")
             );
             let dnd_response =
                 dnd(ui, &dnd_id).show_vec(&mut bookmarks, |ui, bookmark, handle, _state| {
@@ -2396,6 +2579,8 @@ impl ResourceExplorerWindow {
                 // Get all bookmarks in this folder (fresh from manager)
                 let folder_bookmarks: Vec<_> = self
                     .bookmark_manager
+                    .read()
+                    .unwrap()
                     .get_bookmarks_in_folder(parent_id.as_ref())
                     .iter()
                     .map(|b| b.id.clone())
@@ -2407,15 +2592,23 @@ impl ResourceExplorerWindow {
                     let to_id = &folder_bookmarks[update.to];
 
                     // Find indices in the global bookmark list
-                    let all_bookmarks = self.bookmark_manager.get_bookmarks();
+                    let all_bookmarks = self
+                        .bookmark_manager
+                        .read()
+                        .unwrap()
+                        .get_bookmarks()
+                        .to_vec();
                     if let (Some(from_global), Some(to_global)) = (
                         all_bookmarks.iter().position(|b| &b.id == from_id),
                         all_bookmarks.iter().position(|b| &b.id == to_id),
                     ) {
-                        self.bookmark_manager.reorder(from_global, to_global);
+                        self.bookmark_manager
+                            .write()
+                            .unwrap()
+                            .reorder(from_global, to_global);
 
                         // Save to disk
-                        if let Err(e) = self.bookmark_manager.save() {
+                        if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                             tracing::error!("Failed to save bookmark reorder: {}", e);
                         }
                     }
@@ -2459,6 +2652,8 @@ impl ResourceExplorerWindow {
                     let current_parent_name = if let Some(parent_id) = &self.folder_dialog_parent_id
                     {
                         self.bookmark_manager
+                            .read()
+                            .unwrap()
                             .get_folder(parent_id)
                             .map(|f| f.name.clone())
                             .unwrap_or_else(|| "Top Folder".to_string())
@@ -2480,7 +2675,13 @@ impl ResourceExplorerWindow {
                             }
 
                             // Show all folders as potential parents (except the one being edited)
-                            for folder in self.bookmark_manager.get_all_folders().iter() {
+                            for folder in self
+                                .bookmark_manager
+                                .read()
+                                .unwrap()
+                                .get_all_folders()
+                                .iter()
+                            {
                                 if self.editing_folder_id.as_ref() != Some(&folder.id) {
                                     let is_selected =
                                         self.folder_dialog_parent_id.as_ref() == Some(&folder.id);
@@ -2497,10 +2698,9 @@ impl ResourceExplorerWindow {
                         if ui
                             .button(if is_editing { "Update" } else { "Create" })
                             .clicked()
+                            && !self.folder_dialog_name.is_empty()
                         {
-                            if !self.folder_dialog_name.is_empty() {
-                                should_create = true;
-                            }
+                            should_create = true;
                         }
 
                         if ui.button("Cancel").clicked() {
@@ -2515,17 +2715,22 @@ impl ResourceExplorerWindow {
         if should_create {
             if let Some(editing_id) = &self.editing_folder_id {
                 // Update existing folder
-                if let Some(folder) = self.bookmark_manager.get_folder_mut(editing_id) {
+                if let Some(folder) = self
+                    .bookmark_manager
+                    .write()
+                    .unwrap()
+                    .get_folder_mut(editing_id)
+                {
                     folder.name = self.folder_dialog_name.clone();
                     folder.parent_id = self.folder_dialog_parent_id.clone();
                     folder.modified_at = chrono::Utc::now();
 
                     tracing::info!("Updated folder: {}", folder.name);
+                }
 
-                    // Save to disk
-                    if let Err(e) = self.bookmark_manager.save() {
-                        tracing::error!("Failed to save folder update: {}", e);
-                    }
+                // Save to disk
+                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
+                    tracing::error!("Failed to save folder update: {}", e);
                 }
             } else {
                 // Create new folder
@@ -2535,10 +2740,10 @@ impl ResourceExplorerWindow {
                 );
 
                 tracing::info!("Created folder: {}", folder.name);
-                self.bookmark_manager.add_folder(folder);
+                self.bookmark_manager.write().unwrap().add_folder(folder);
 
                 // Save to disk
-                if let Err(e) = self.bookmark_manager.save() {
+                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
                     tracing::error!("Failed to save folder: {}", e);
                 }
             }

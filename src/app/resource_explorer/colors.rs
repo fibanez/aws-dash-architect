@@ -107,7 +107,7 @@ impl AwsColorGenerator {
         if region_code == "Global" {
             return Color32::from_rgb(255, 215, 0); // Gold color for global services
         }
-        
+
         let mut random_color = RandomColor::new();
 
         // Seed with region code for deterministic results

@@ -61,8 +61,8 @@
 //! See `docs/technical/aws-data-plane-integration-guide.md` for the complete
 //! integration pattern and step-by-step guide.
 
-pub mod cloudwatch_logs;
 pub mod cloudtrail_events;
+pub mod cloudwatch_logs;
 
 // Re-export commonly used types from each service
 pub use cloudwatch_logs::{

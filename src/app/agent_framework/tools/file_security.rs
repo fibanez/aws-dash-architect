@@ -71,7 +71,10 @@ pub fn get_allowed_directories() -> Vec<PathBuf> {
 fn is_within_allowed_dirs(path: &Path, allowed_dirs: &[PathBuf]) -> bool {
     for allowed_dir in allowed_dirs {
         if path.starts_with(allowed_dir) {
-            debug!("Path {:?} is within allowed directory {:?}", path, allowed_dir);
+            debug!(
+                "Path {:?} is within allowed directory {:?}",
+                path, allowed_dir
+            );
             return true;
         }
     }
@@ -169,8 +172,7 @@ pub fn validate_file_path(path: &str) -> Result<PathBuf, SecurityError> {
                 } else {
                     return Err(SecurityError::InvalidPath(format!(
                         "{} (parent directory doesn't exist: {})",
-                        path,
-                        e
+                        path, e
                     )));
                 }
             } else {
@@ -203,7 +205,9 @@ pub fn validate_file_path(path: &str) -> Result<PathBuf, SecurityError> {
 
     // 5. Check sensitive file blocklist
     if is_sensitive_path(&canonical) {
-        return Err(SecurityError::SensitiveFile(canonical.display().to_string()));
+        return Err(SecurityError::SensitiveFile(
+            canonical.display().to_string(),
+        ));
     }
 
     debug!("Path validation successful: {:?}", canonical);
@@ -274,7 +278,9 @@ mod tests {
 
         // Should include both Claude and AWS Dash directories
         let has_claude = dirs.iter().any(|d| d.to_string_lossy().contains(".claude"));
-        let has_awsdash = dirs.iter().any(|d| d.to_string_lossy().contains(".awsdash"));
+        let has_awsdash = dirs
+            .iter()
+            .any(|d| d.to_string_lossy().contains(".awsdash"));
 
         assert!(has_claude, "Should include .claude/skills directory");
         assert!(has_awsdash, "Should include .awsdash/skills directory");

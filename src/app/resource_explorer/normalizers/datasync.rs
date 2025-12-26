@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -35,7 +35,6 @@ impl AsyncResourceNormalizer for DataSyncResourceNormalizer {
         let tags = extract_tags(&raw_response);
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::DataSync::Task".to_string(),
             account_id: account.to_string(),
@@ -62,7 +61,12 @@ impl AsyncResourceNormalizer for DataSyncResourceNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -112,17 +116,16 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::DataSync::Location", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::DataSync::Location {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::DataSync::Location {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -154,13 +157,19 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // DataSync locations relate to the actual storage services they represent
-        if let Some(location_uri) = entry.raw_properties.get("LocationUri").and_then(|v| v.as_str()) {
+        if let Some(location_uri) = entry
+            .raw_properties
+            .get("LocationUri")
+            .and_then(|v| v.as_str())
+        {
             for resource in all_resources {
                 match resource.resource_type.as_str() {
                     "AWS::S3::Bucket" => {
-                        if location_uri.contains("s3://") && location_uri.contains(&resource.resource_id) {
+                        if location_uri.contains("s3://")
+                            && location_uri.contains(&resource.resource_id)
+                        {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
                                 target_resource_id: resource.resource_id.clone(),
@@ -169,7 +178,9 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
                         }
                     }
                     "AWS::EFS::FileSystem" => {
-                        if location_uri.contains("efs") && location_uri.contains(&resource.resource_id) {
+                        if location_uri.contains("efs")
+                            && location_uri.contains(&resource.resource_id)
+                        {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
                                 target_resource_id: resource.resource_id.clone(),
@@ -178,7 +189,9 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
                         }
                     }
                     "AWS::FSx::FileSystem" => {
-                        if location_uri.contains("fsx") && location_uri.contains(&resource.resource_id) {
+                        if location_uri.contains("fsx")
+                            && location_uri.contains(&resource.resource_id)
+                        {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
                                 target_resource_id: resource.resource_id.clone(),
@@ -190,7 +203,7 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
                 }
             }
         }
-        
+
         relationships
     }
 
@@ -198,4 +211,3 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
         "AWS::DataSync::Location"
     }
 }
-

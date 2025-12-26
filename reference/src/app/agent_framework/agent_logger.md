@@ -4,7 +4,8 @@
 
 Per-agent logging system. Each AgentInstance has dedicated log file at
 ~/.local/share/awsdash/logs/agents/agent-{uuid}.log tracking conversation,
-model interactions, tool executions, and lifecycle events.
+model interactions, tool executions, and lifecycle events. Worker agents can
+share parent's log file for unified conversation tracking.
 
 **Pattern**: File-based structured logging per agent
 **Algorithm**: Buffered file writes with session headers
@@ -14,20 +15,21 @@ model interactions, tool executions, and lifecycle events.
 
 ## Major Methods
 
-- `new()` - Create logger with session header, open log file
+- `new(agent_id, name, agent_type)` - Create logger with session header
 - `log_path()` - Get log file path for UI display
 - `update_agent_name()` - Log agent rename event
-- `log_agent_created()` - Log creation with metadata
+- `log_agent_created(agent_type, metadata)` - Log creation with type info
 - `log_agent_terminated()` - Log final status
-- `log_user_message()` - Log user input
-- `log_assistant_response()` - Log agent response
-- `log_system_message()` - Log system events
+- `log_user_message(agent_type, message)` - Log user input with type prefix
+- `log_assistant_response(agent_type, response)` - Log agent response
+- `log_system_message(agent_type, message)` - Log system events
+- `log_model_changed(agent_type, old, new)` - Log model change
 - `log_model_request()` - Log LLM request (prompt, input, model_id)
 - `log_model_response()` - Log LLM response (output, tokens, duration)
 - `log_tool_execution_start()` - Log tool invocation
 - `log_tool_execution_success()` - Log tool completion
 - `log_tool_execution_failed()` - Log tool error
-- `log_error()` - Log error events
+- `log_error(agent_type, error)` - Log error events with type prefix
 
 ---
 
@@ -58,12 +60,28 @@ Pseudocode:
 Pseudocode:
   1. Session header on new():
      "\n==============================\n"
-     "🤖 AGENT SESSION STARTED: {timestamp}\n"
+     "AGENT SESSION STARTED: {timestamp}\n"
      "Agent ID: {id}\n"
      "Agent Name: {name}\n"
+     "Agent Type: {TaskManager|TaskWorker}\n"
      "==============================\n"
   2. All log entries timestamped
   3. Session allows distinguishing multiple runs in single file
+
+### Pattern: Worker Log Sharing
+
+**Algorithm**: Workers use parent's logger for unified tracking
+**External**: Arc<AgentLogger> shared reference
+
+Pseudocode:
+  1. TaskManager creates own AgentLogger via new()
+  2. When spawning TaskWorker:
+     - new_with_parent_logger(metadata, type, parent.logger())
+     - Worker uses parent's Arc<AgentLogger>
+  3. Worker logs appear in parent's log file:
+     "\n====== Worker Agent: {name} ({id}) ======"
+  4. Complete conversation flow in single file
+  5. AgentType prefix in log entries distinguishes messages
 
 ### Pattern: Structured Model Logging
 
@@ -124,5 +142,5 @@ Ensures logs persisted immediately for debugging
 
 ---
 
-**Last Updated**: 2025-01-28
-**Status**: Accurately reflects agent_logger.rs implementation
+**Last Updated**: 2025-11-25
+**Status**: Updated for multi-agent system (AgentType prefix, worker log sharing)

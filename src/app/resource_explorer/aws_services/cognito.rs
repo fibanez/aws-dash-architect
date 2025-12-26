@@ -1,8 +1,11 @@
 use super::super::credentials::CredentialCoordinator;
+use super::super::status::{report_status, report_status_done};
 use anyhow::{Context, Result};
 use aws_sdk_cognitoidentity as cognito_identity;
 use aws_sdk_cognitoidentityprovider as cognito_idp;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct CognitoService {
     credential_coordinator: Arc<CredentialCoordinator>,
@@ -15,12 +18,19 @@ impl CognitoService {
         }
     }
 
-    /// List Cognito User Pools
+    /// List Cognito User Pools with optional detailed security information
+    ///
+    /// # Arguments
+    /// * `include_details` - If false (Phase 1), returns basic pool info quickly.
+    ///   If true (Phase 2), includes MFA config, clients, etc.
     pub async fn list_user_pools(
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
+        report_status("Cognito", "list_user_pools", Some(region));
+
         let aws_config = self
             .credential_coordinator
             .create_aws_config_for_account(account_id, region)
@@ -48,16 +58,69 @@ impl CognitoService {
             if let Some(pools) = response.user_pools {
                 for pool in pools {
                     if let Some(pool_id) = &pool.id {
-                        // Get detailed pool information
-                        if let Ok(pool_details) =
-                            self.get_user_pool_internal(&client, pool_id).await
-                        {
-                            user_pools.push(pool_details);
+                        let pool_name = pool.name.as_deref().unwrap_or(pool_id);
+
+                        // Only fetch details if requested (Phase 2)
+                        let mut pool_details = if include_details {
+                            // Get detailed pool information
+                            report_status("Cognito", "describe_user_pool", Some(pool_name));
+                            match self.get_user_pool_internal(&client, pool_id).await {
+                                Ok(details) => details,
+                                Err(e) => {
+                                    tracing::debug!(
+                                        "Could not get user pool details for {}: {}",
+                                        pool_name,
+                                        e
+                                    );
+                                    // Fallback to basic pool info if describe fails
+                                    self.user_pool_summary_to_json(&pool)
+                                }
+                            }
                         } else {
-                            // Fallback to basic pool info if describe fails
-                            let pool_json = self.user_pool_summary_to_json(&pool);
-                            user_pools.push(pool_json);
+                            // Phase 1: basic pool info only
+                            self.user_pool_summary_to_json(&pool)
+                        };
+
+                        // Additional details only if requested
+                        if include_details {
+                            if let serde_json::Value::Object(ref mut details) = pool_details {
+                                // Get MFA configuration
+                                report_status(
+                                    "Cognito",
+                                    "get_user_pool_mfa_config",
+                                    Some(pool_name),
+                                );
+                                match self.get_mfa_config_internal(&client, pool_id).await {
+                                    Ok(mfa_config) => {
+                                        details.insert("MfaConfiguration".to_string(), mfa_config);
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "Could not get MFA config for {}: {}",
+                                            pool_name,
+                                            e
+                                        );
+                                    }
+                                }
+
+                                // List user pool clients
+                                report_status("Cognito", "list_user_pool_clients", Some(pool_name));
+                                match self.list_user_pool_clients_internal(&client, pool_id).await {
+                                    Ok(clients) => {
+                                        details.insert("UserPoolClients".to_string(), clients);
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "Could not get user pool clients for {}: {}",
+                                            pool_name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
                         }
+
+                        user_pools.push(pool_details);
                     }
                 }
             }
@@ -69,15 +132,23 @@ impl CognitoService {
             }
         }
 
+        report_status_done("Cognito", "list_user_pools", Some(region));
         Ok(user_pools)
     }
 
-    /// List Cognito Identity Pools
+    /// List Cognito Identity Pools with optional detailed security information
+    ///
+    /// # Arguments
+    /// * `include_details` - If false (Phase 1), returns basic pool info quickly.
+    ///   If true (Phase 2), includes identity providers, etc.
     pub async fn list_identity_pools(
         &self,
         account_id: &str,
         region: &str,
+        include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
+        report_status("Cognito", "list_identity_pools", Some(region));
+
         let aws_config = self
             .credential_coordinator
             .create_aws_config_for_account(account_id, region)
@@ -105,30 +176,60 @@ impl CognitoService {
             if let Some(pools) = response.identity_pools {
                 for pool in pools {
                     if let Some(pool_id) = &pool.identity_pool_id {
-                        // Get detailed pool information
-                        if let Ok(pool_details) =
-                            self.get_identity_pool_internal(&client, pool_id).await
-                        {
-                            identity_pools.push(pool_details);
+                        let pool_name = pool.identity_pool_name.as_deref().unwrap_or(pool_id);
+
+                        // Only fetch details if requested (Phase 2)
+                        let pool_details = if include_details {
+                            // Get detailed pool information
+                            report_status("Cognito", "describe_identity_pool", Some(pool_name));
+                            match self.get_identity_pool_internal(&client, pool_id).await {
+                                Ok(details) => details,
+                                Err(e) => {
+                                    tracing::debug!(
+                                        "Could not get identity pool details for {}: {}",
+                                        pool_name,
+                                        e
+                                    );
+                                    // Fallback to basic pool info if describe fails
+                                    let mut pool_json = serde_json::Map::new();
+                                    pool_json.insert(
+                                        "IdentityPoolId".to_string(),
+                                        serde_json::Value::String(pool_id.clone()),
+                                    );
+                                    if let Some(name) = &pool.identity_pool_name {
+                                        pool_json.insert(
+                                            "IdentityPoolName".to_string(),
+                                            serde_json::Value::String(name.clone()),
+                                        );
+                                        pool_json.insert(
+                                            "Name".to_string(),
+                                            serde_json::Value::String(name.clone()),
+                                        );
+                                    }
+                                    serde_json::Value::Object(pool_json)
+                                }
+                            }
                         } else {
-                            // Fallback to basic pool info if describe fails
+                            // Phase 1: basic pool info only
                             let mut pool_json = serde_json::Map::new();
                             pool_json.insert(
                                 "IdentityPoolId".to_string(),
                                 serde_json::Value::String(pool_id.clone()),
                             );
-                            if let Some(pool_name) = &pool.identity_pool_name {
+                            if let Some(name) = &pool.identity_pool_name {
                                 pool_json.insert(
                                     "IdentityPoolName".to_string(),
-                                    serde_json::Value::String(pool_name.clone()),
+                                    serde_json::Value::String(name.clone()),
                                 );
                                 pool_json.insert(
                                     "Name".to_string(),
-                                    serde_json::Value::String(pool_name.clone()),
+                                    serde_json::Value::String(name.clone()),
                                 );
                             }
-                            identity_pools.push(serde_json::Value::Object(pool_json));
-                        }
+                            serde_json::Value::Object(pool_json)
+                        };
+
+                        identity_pools.push(pool_details);
                     }
                 }
             }
@@ -140,6 +241,7 @@ impl CognitoService {
             }
         }
 
+        report_status_done("Cognito", "list_identity_pools", Some(region));
         Ok(identity_pools)
     }
 
@@ -355,18 +457,202 @@ impl CognitoService {
         user_pool_id: &str,
         client_id: &str,
     ) -> Result<serde_json::Value> {
-        let response = client
-            .describe_user_pool_client()
-            .user_pool_id(user_pool_id)
-            .client_id(client_id)
-            .send()
-            .await?;
+        let response = timeout(
+            Duration::from_secs(10),
+            client
+                .describe_user_pool_client()
+                .user_pool_id(user_pool_id)
+                .client_id(client_id)
+                .send(),
+        )
+        .await
+        .with_context(|| "describe_user_pool_client timed out")?
+        .with_context(|| {
+            format!(
+                "Failed to describe user pool client {} in pool {}",
+                client_id, user_pool_id
+            )
+        })?;
 
         if let Some(user_pool_client) = response.user_pool_client {
             Ok(self.user_pool_client_to_json(&user_pool_client, user_pool_id))
         } else {
             Err(anyhow::anyhow!("User Pool Client {} not found", client_id))
         }
+    }
+
+    // Internal function to get MFA configuration
+    async fn get_mfa_config_internal(
+        &self,
+        client: &cognito_idp::Client,
+        user_pool_id: &str,
+    ) -> Result<serde_json::Value> {
+        let response = timeout(
+            Duration::from_secs(10),
+            client
+                .get_user_pool_mfa_config()
+                .user_pool_id(user_pool_id)
+                .send(),
+        )
+        .await
+        .with_context(|| "get_user_pool_mfa_config timed out")?;
+
+        match response {
+            Ok(result) => {
+                let mut json = serde_json::Map::new();
+
+                // MFA configuration mode
+                if let Some(mfa_config) = result.mfa_configuration {
+                    json.insert(
+                        "MfaConfiguration".to_string(),
+                        serde_json::Value::String(format!("{:?}", mfa_config)),
+                    );
+                }
+
+                // SMS MFA configuration
+                if let Some(sms_config) = result.sms_mfa_configuration {
+                    let mut sms_json = serde_json::Map::new();
+                    if let Some(sms_auth_message) = sms_config.sms_authentication_message {
+                        sms_json.insert(
+                            "SmsAuthenticationMessage".to_string(),
+                            serde_json::Value::String(sms_auth_message),
+                        );
+                    }
+                    if let Some(sms_configuration) = sms_config.sms_configuration {
+                        let mut config_json = serde_json::Map::new();
+                        config_json.insert(
+                            "SnsCallerArn".to_string(),
+                            serde_json::Value::String(sms_configuration.sns_caller_arn),
+                        );
+                        if let Some(external_id) = sms_configuration.external_id {
+                            config_json.insert(
+                                "ExternalId".to_string(),
+                                serde_json::Value::String(external_id),
+                            );
+                        }
+                        sms_json.insert(
+                            "SmsConfiguration".to_string(),
+                            serde_json::Value::Object(config_json),
+                        );
+                    }
+                    json.insert(
+                        "SmsMfaConfiguration".to_string(),
+                        serde_json::Value::Object(sms_json),
+                    );
+                }
+
+                // Software token (TOTP) MFA configuration
+                if let Some(totp_config) = result.software_token_mfa_configuration {
+                    let mut totp_json = serde_json::Map::new();
+                    totp_json.insert(
+                        "Enabled".to_string(),
+                        serde_json::Value::Bool(totp_config.enabled),
+                    );
+                    json.insert(
+                        "SoftwareTokenMfaConfiguration".to_string(),
+                        serde_json::Value::Object(totp_json),
+                    );
+                }
+
+                Ok(serde_json::Value::Object(json))
+            }
+            Err(e) => {
+                let error_str = format!("{:?}", e);
+                if error_str.contains("ResourceNotFoundException")
+                    || error_str.contains("AccessDenied")
+                {
+                    Ok(serde_json::json!({
+                        "MfaConfiguration": "Not configured or access denied"
+                    }))
+                } else {
+                    Err(anyhow::anyhow!("Failed to get MFA config: {}", e))
+                }
+            }
+        }
+    }
+
+    // Internal function to list user pool clients
+    async fn list_user_pool_clients_internal(
+        &self,
+        client: &cognito_idp::Client,
+        user_pool_id: &str,
+    ) -> Result<serde_json::Value> {
+        let response = timeout(
+            Duration::from_secs(10),
+            client
+                .list_user_pool_clients()
+                .user_pool_id(user_pool_id)
+                .max_results(60)
+                .send(),
+        )
+        .await
+        .with_context(|| "list_user_pool_clients timed out")?;
+
+        match response {
+            Ok(result) => {
+                let mut clients = Vec::new();
+
+                if let Some(client_list) = result.user_pool_clients {
+                    for client_summary in client_list {
+                        let mut client_json = serde_json::Map::new();
+                        if let Some(client_id) = &client_summary.client_id {
+                            client_json.insert(
+                                "ClientId".to_string(),
+                                serde_json::Value::String(client_id.clone()),
+                            );
+                        }
+                        if let Some(client_name) = &client_summary.client_name {
+                            client_json.insert(
+                                "ClientName".to_string(),
+                                serde_json::Value::String(client_name.clone()),
+                            );
+                        }
+                        client_json.insert(
+                            "UserPoolId".to_string(),
+                            serde_json::Value::String(user_pool_id.to_string()),
+                        );
+                        clients.push(serde_json::Value::Object(client_json));
+                    }
+                }
+
+                Ok(serde_json::json!({
+                    "Items": clients,
+                    "Count": clients.len()
+                }))
+            }
+            Err(e) => {
+                let error_str = format!("{:?}", e);
+                if error_str.contains("AccessDenied") {
+                    Ok(serde_json::json!({
+                        "Items": [],
+                        "Note": "Access denied to list user pool clients"
+                    }))
+                } else {
+                    Err(anyhow::anyhow!("Failed to list user pool clients: {}", e))
+                }
+            }
+        }
+    }
+
+    /// Public function to get MFA configuration
+    pub async fn get_user_pool_mfa_config(
+        &self,
+        account_id: &str,
+        region: &str,
+        user_pool_id: &str,
+    ) -> Result<serde_json::Value> {
+        report_status("Cognito", "get_user_pool_mfa_config", Some(user_pool_id));
+
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = cognito_idp::Client::new(&aws_config);
+        let result = self.get_mfa_config_internal(&client, user_pool_id).await;
+
+        report_status_done("Cognito", "get_user_pool_mfa_config", Some(user_pool_id));
+        result
     }
 
     fn user_pool_summary_to_json(
@@ -679,5 +965,80 @@ impl CognitoService {
         }
 
         serde_json::Value::Object(json)
+    }
+
+    /// Get details for a specific Cognito User Pool (Phase 2 enrichment)
+    /// Returns only the detail fields to be merged into existing resource data
+    pub async fn get_user_pool_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        user_pool_id: &str,
+    ) -> Result<serde_json::Value> {
+        report_status("Cognito", "get_user_pool_details", Some(user_pool_id));
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = cognito_idp::Client::new(&aws_config);
+        let mut details = serde_json::Map::new();
+
+        // Get detailed pool information
+        if let Ok(serde_json::Value::Object(pool_map)) =
+            self.get_user_pool_internal(&client, user_pool_id).await
+        {
+            for (key, value) in pool_map {
+                details.insert(key, value);
+            }
+        }
+
+        // Get MFA configuration
+        if let Ok(mfa_config) = self.get_mfa_config_internal(&client, user_pool_id).await {
+            details.insert("MfaConfiguration".to_string(), mfa_config);
+        }
+
+        // List user pool clients
+        if let Ok(clients) = self
+            .list_user_pool_clients_internal(&client, user_pool_id)
+            .await
+        {
+            details.insert("UserPoolClients".to_string(), clients);
+        }
+
+        report_status_done("Cognito", "get_user_pool_details", Some(user_pool_id));
+        Ok(serde_json::Value::Object(details))
+    }
+
+    /// Get details for a specific Cognito Identity Pool (Phase 2 enrichment)
+    /// Returns only the detail fields to be merged into existing resource data
+    pub async fn get_identity_pool_details(
+        &self,
+        account_id: &str,
+        region: &str,
+        identity_pool_id: &str,
+    ) -> Result<serde_json::Value> {
+        report_status(
+            "Cognito",
+            "get_identity_pool_details",
+            Some(identity_pool_id),
+        );
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = cognito_identity::Client::new(&aws_config);
+
+        // Get detailed pool information
+        let result = self
+            .get_identity_pool_internal(&client, identity_pool_id)
+            .await;
+        report_status_done(
+            "Cognito",
+            "get_identity_pool_details",
+            Some(identity_pool_id),
+        );
+        result
     }
 }

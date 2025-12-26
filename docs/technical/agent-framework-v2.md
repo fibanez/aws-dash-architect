@@ -18,6 +18,7 @@ Simplified agent system using stood library directly for reliable AI-powered AWS
 - Session-based credential management with AWS Identity Center
 - Simplified message types (User/Assistant only)
 - Status tracking and UI integration
+- Markdown rendering for assistant responses with syntax highlighting
 
 **Main Components:**
 - **AgentInstanceV2**: Core agent wrapper managing lifecycle and communication
@@ -153,6 +154,34 @@ Important: Always use the last expression in your JavaScript code as the return 
 - **Comprehensive tracing**: User messages, assistant responses, tool executions
 - **stood library traces**: Captured via `RUST_LOG=stood=trace` environment variable
 - **UI separation**: Verbose logs separate from clean UI display
+
+**Markdown Rendering:**
+
+Assistant responses are automatically rendered as markdown when detected. The system uses heuristic pattern matching to identify markdown content:
+
+```rust
+fn looks_like_markdown(content: &str) -> bool {
+    let patterns = [
+        "```",    // Code blocks
+        "\n# ",   // H1 header
+        "\n## ",  // H2 header
+        "\n### ", // H3 header
+        "\n* ",   // Unordered list
+        "\n- ",   // Unordered list
+        "\n1. ",  // Ordered list
+        "**",     // Bold
+        "](http", // Links
+    ];
+    patterns.iter().any(|p| content.contains(p))
+}
+```
+
+Key aspects:
+- Uses `egui_commonmark` library with `better_syntax_highlighting` feature
+- `CommonMarkCache` shared across agents for efficient rendering
+- Code blocks display with language-aware syntax coloring
+- User messages remain plain text with ">" prefix
+- Fallback to plain label for non-markdown responses
 
 **Thread Safety:**
 - `Arc<Mutex<Option<Agent>>>` for lazy agent initialization

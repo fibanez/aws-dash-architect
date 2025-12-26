@@ -56,7 +56,11 @@ impl TagHierarchyBuilderWidget {
             cancel_clicked = cancel;
         });
 
-        (self.selected_hierarchy.clone(), apply_clicked, cancel_clicked)
+        (
+            self.selected_hierarchy.clone(),
+            apply_clicked,
+            cancel_clicked,
+        )
     }
 
     /// Render the left panel with available tag keys
@@ -84,7 +88,9 @@ impl TagHierarchyBuilderWidget {
                     for (tag_key, resource_count) in tag_keys.iter().take(50) {
                         // Apply search filter
                         if !self.search_filter.is_empty()
-                            && !tag_key.to_lowercase().contains(&self.search_filter.to_lowercase())
+                            && !tag_key
+                                .to_lowercase()
+                                .contains(&self.search_filter.to_lowercase())
                         {
                             continue;
                         }
@@ -95,7 +101,10 @@ impl TagHierarchyBuilderWidget {
                         // Get tag metadata
                         if let Some(metadata) = self.tag_discovery.get_tag_metadata(tag_key) {
                             let value_count = metadata.value_count();
-                            let label = format!("{} ({} resources, {} values)", tag_key, resource_count, value_count);
+                            let label = format!(
+                                "{} ({} resources, {} values)",
+                                tag_key, resource_count, value_count
+                            );
 
                             // Show as drag source
                             let response = ui.dnd_drag_source(
@@ -104,25 +113,33 @@ impl TagHierarchyBuilderWidget {
                                 |ui| {
                                     ui.horizontal(|ui| {
                                         if is_selected {
-                                            ui.add_enabled(false, egui::Label::new(
-                                                egui::RichText::new(&label).weak()
-                                            ));
+                                            ui.add_enabled(
+                                                false,
+                                                egui::Label::new(
+                                                    egui::RichText::new(&label).weak(),
+                                                ),
+                                            );
                                         } else {
                                             ui.label(&label);
                                         }
                                     });
-                                }
+                                },
                             );
 
                             // Double-click to add
-                            if response.response.double_clicked() && !is_selected && self.selected_hierarchy.len() < 5 {
+                            if response.response.double_clicked()
+                                && !is_selected
+                                && self.selected_hierarchy.len() < 5
+                            {
                                 self.selected_hierarchy.push(tag_key.clone());
                                 tracing::info!("Added tag to hierarchy: {}", tag_key);
                             }
 
                             // Show tooltip
                             if response.response.hovered() && !is_selected {
-                                response.response.on_hover_text("Drag to right panel or double-click to add to hierarchy");
+                                response.response.on_hover_text(
+                                    "Drag to right panel or double-click to add to hierarchy",
+                                );
                             } else if response.response.hovered() && is_selected {
                                 response.response.on_hover_text("Already in hierarchy");
                             }
@@ -141,7 +158,7 @@ impl TagHierarchyBuilderWidget {
             if self.selected_hierarchy.len() >= 5 {
                 ui.colored_label(
                     egui::Color32::from_rgb(255, 200, 0),
-                    "WARNING: Maximum 5 levels reached"
+                    "WARNING: Maximum 5 levels reached",
                 );
             } else {
                 ui.label(format!("Levels: {} / 5", self.selected_hierarchy.len()));
@@ -162,13 +179,15 @@ impl TagHierarchyBuilderWidget {
                                 ui.vertical_centered(|ui| {
                                     ui.add_space(50.0);
                                     ui.label(
-                                        egui::RichText::new("Drag tag keys here to build hierarchy")
-                                            .weak()
-                                            .size(14.0)
+                                        egui::RichText::new(
+                                            "Drag tag keys here to build hierarchy",
+                                        )
+                                        .weak()
+                                        .size(14.0),
                                     );
                                     ui.add_space(50.0);
                                 });
-                            }
+                            },
                         );
 
                         // Handle drop for first tag
@@ -184,22 +203,29 @@ impl TagHierarchyBuilderWidget {
 
                         // Visual feedback during hover
                         if drop_response.response.hovered() {
-                            tracing::debug!("Empty state drop zone hovered - ready to accept first tag");
+                            tracing::debug!(
+                                "Empty state drop zone hovered - ready to accept first tag"
+                            );
                             let rect = drop_response.response.rect;
-                            let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100));
-                            ui.painter().line_segment([rect.left_top(), rect.right_top()], stroke);
-                            ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
-                            ui.painter().line_segment([rect.left_top(), rect.left_bottom()], stroke);
-                            ui.painter().line_segment([rect.right_top(), rect.right_bottom()], stroke);
+                            let stroke =
+                                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100));
+                            ui.painter()
+                                .line_segment([rect.left_top(), rect.right_top()], stroke);
+                            ui.painter()
+                                .line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
+                            ui.painter()
+                                .line_segment([rect.left_top(), rect.left_bottom()], stroke);
+                            ui.painter()
+                                .line_segment([rect.right_top(), rect.right_bottom()], stroke);
                         }
                     } else {
                         // Render reorderable list with egui_dnd
                         let mut items_to_remove = Vec::new();
                         let hierarchy_len = self.selected_hierarchy.len();
 
-                        dnd(ui, "hierarchy_list")
-                            .with_animation_time(0.2)
-                            .show_vec(&mut self.selected_hierarchy, |ui, tag, handle, state| {
+                        dnd(ui, "hierarchy_list").with_animation_time(0.2).show_vec(
+                            &mut self.selected_hierarchy,
+                            |ui, tag, handle, state| {
                                 handle.ui(ui, |ui| {
                                     ui.label(":::");
                                 });
@@ -208,28 +234,43 @@ impl TagHierarchyBuilderWidget {
                                     ui.label(format!("{}.", state.index + 1));
                                     ui.label(tag.as_str());
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.small_button("X").clicked() {
-                                            items_to_remove.push(state.index);
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button("X").clicked() {
+                                                items_to_remove.push(state.index);
+                                            }
+                                        },
+                                    );
                                 });
 
                                 // Visual feedback during drag
                                 if state.dragged {
                                     let rect = ui.min_rect();
-                                    let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
-                                    ui.painter().line_segment([rect.left_top(), rect.right_top()], stroke);
-                                    ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
-                                    ui.painter().line_segment([rect.left_top(), rect.left_bottom()], stroke);
-                                    ui.painter().line_segment([rect.right_top(), rect.right_bottom()], stroke);
+                                    let stroke =
+                                        egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+                                    ui.painter()
+                                        .line_segment([rect.left_top(), rect.right_top()], stroke);
+                                    ui.painter().line_segment(
+                                        [rect.left_bottom(), rect.right_bottom()],
+                                        stroke,
+                                    );
+                                    ui.painter().line_segment(
+                                        [rect.left_top(), rect.left_bottom()],
+                                        stroke,
+                                    );
+                                    ui.painter().line_segment(
+                                        [rect.right_top(), rect.right_bottom()],
+                                        stroke,
+                                    );
                                 }
 
                                 // Show arrow indicator between items
                                 if state.index < hierarchy_len - 1 {
                                     ui.label(egui::RichText::new("  |").weak().size(12.0));
                                 }
-                            });
+                            },
+                        );
 
                         // Remove marked items (in reverse to maintain indices)
                         for index in items_to_remove.iter().rev() {
@@ -244,22 +285,23 @@ impl TagHierarchyBuilderWidget {
                                 .stroke(egui::Stroke::new(1.0, ui.visuals().weak_text_color()))
                                 .fill(ui.visuals().faint_bg_color),
                             |ui| {
-                                ui.label(
-                                    egui::RichText::new("Drop here to add")
-                                        .weak()
-                                        .size(12.0)
-                                );
-                            }
+                                ui.label(egui::RichText::new("Drop here to add").weak().size(12.0));
+                            },
                         );
 
                         // Handle drop
                         if let Some(dropped_tag) = payload {
                             let tag_string = dropped_tag.as_ref().clone();
-                            if !self.selected_hierarchy.contains(&tag_string) && self.selected_hierarchy.len() < 5 {
+                            if !self.selected_hierarchy.contains(&tag_string)
+                                && self.selected_hierarchy.len() < 5
+                            {
                                 self.selected_hierarchy.push(tag_string.clone());
                                 tracing::info!("Dropped tag into hierarchy: {}", tag_string);
                             } else if self.selected_hierarchy.contains(&tag_string) {
-                                tracing::debug!("Drop ignored - tag already in hierarchy: {}", tag_string);
+                                tracing::debug!(
+                                    "Drop ignored - tag already in hierarchy: {}",
+                                    tag_string
+                                );
                             } else {
                                 tracing::debug!("Drop ignored - max hierarchy depth reached (5)");
                             }
@@ -269,11 +311,16 @@ impl TagHierarchyBuilderWidget {
                         if drop_response.response.hovered() {
                             tracing::debug!("Drop zone hovered - ready to accept tag");
                             let rect = drop_response.response.rect;
-                            let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100));
-                            ui.painter().line_segment([rect.left_top(), rect.right_top()], stroke);
-                            ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
-                            ui.painter().line_segment([rect.left_top(), rect.left_bottom()], stroke);
-                            ui.painter().line_segment([rect.right_top(), rect.right_bottom()], stroke);
+                            let stroke =
+                                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100));
+                            ui.painter()
+                                .line_segment([rect.left_top(), rect.right_top()], stroke);
+                            ui.painter()
+                                .line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
+                            ui.painter()
+                                .line_segment([rect.left_top(), rect.left_bottom()], stroke);
+                            ui.painter()
+                                .line_segment([rect.right_top(), rect.right_bottom()], stroke);
                         }
                     }
                 });
@@ -334,12 +381,19 @@ impl TagHierarchyBuilderWidget {
             // Apply button (disabled if hierarchy is empty)
             let apply_enabled = !self.selected_hierarchy.is_empty();
 
-            if ui.add_enabled(apply_enabled, egui::Button::new("Apply")).clicked() {
+            if ui
+                .add_enabled(apply_enabled, egui::Button::new("Apply"))
+                .clicked()
+            {
                 apply_clicked = true;
             }
 
             if !apply_enabled {
-                ui.label(egui::RichText::new("Select at least one tag to apply").weak().size(12.0));
+                ui.label(
+                    egui::RichText::new("Select at least one tag to apply")
+                        .weak()
+                        .size(12.0),
+                );
             }
 
             ui.add_space(10.0);

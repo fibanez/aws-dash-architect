@@ -686,7 +686,10 @@ impl TreeBuilder {
                     format!("{} ({} resources)", not_set_label, resources.len())
                 } else {
                     // Extract last segment of property path for display
-                    let property_name = property_path.split('.').last().unwrap_or(property_path);
+                    let property_name = property_path
+                        .split('.')
+                        .next_back()
+                        .unwrap_or(property_path);
                     format!("{}: {} ({})", property_name, key, resources.len())
                 };
                 // Use a consistent color for property groups
@@ -928,6 +931,11 @@ pub struct TreeRenderer {
     tag_popularity: Option<super::tag_badges::TagPopularityTracker>,
     // Flag to track if we're currently rebuilding (for logging debouncing)
     is_rebuilding: bool,
+    // JSON tree viewer state per resource
+    json_expand_levels: std::collections::HashMap<String, u8>,
+    json_search_terms: std::collections::HashMap<String, String>,
+    // Track which resource names are expanded (not truncated)
+    expanded_names: std::collections::HashSet<String>,
 }
 
 impl Default for TreeRenderer {
@@ -948,7 +956,23 @@ impl TreeRenderer {
             badge_selector: None,
             tag_popularity: None,
             is_rebuilding: false,
+            json_expand_levels: std::collections::HashMap::new(),
+            json_search_terms: std::collections::HashMap::new(),
+            expanded_names: std::collections::HashSet::new(),
         }
+    }
+
+    /// Get the expand level for a resource (default: 3)
+    fn get_expand_level(&self, resource_id: &str) -> u8 {
+        *self.json_expand_levels.get(resource_id).unwrap_or(&3)
+    }
+
+    /// Get the search term for a resource
+    fn get_search_term(&self, resource_id: &str) -> String {
+        self.json_search_terms
+            .get(resource_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Check if text has a fuzzy match with the search filter
@@ -1293,12 +1317,55 @@ impl TreeRenderer {
                 self.render_account_tag(ui, &resource.account_id, resource.account_color);
                 ui.add_space(4.0);
                 self.render_region_tag(ui, &resource.region, resource.region_color);
+                ui.add_space(4.0);
+
+                // Resource type short tag (e.g., "LAMBDA", "SEC-GROUP")
+                self.render_resource_type_short_tag(ui, &resource.resource_type);
                 ui.add_space(8.0);
+
+                // Check if this resource's name is expanded (not truncated)
+                let is_name_expanded = self.expanded_names.contains(&resource_node_id);
 
                 // Render the resource type tag with colored background based on resource type
                 // The color is determined by resource_type (e.g., "AWS::EC2::Instance")
                 // but the interior displays only the resource name and ID
-                self.render_resource_type_tag(ui, &resource_name_id, &resource.resource_type);
+                let tag_response = self.render_resource_type_tag(
+                    ui,
+                    &resource_name_id,
+                    &resource.resource_type,
+                    is_name_expanded,
+                );
+
+                // Handle left-click to toggle expanded/collapsed name
+                if tag_response.clicked() {
+                    if is_name_expanded {
+                        self.expanded_names.remove(&resource_node_id);
+                    } else {
+                        self.expanded_names.insert(resource_node_id.clone());
+                    }
+                }
+
+                // Handle right-click context menu for copy options
+                tag_response.context_menu(|ui| {
+                    if ui.button("Copy Name").clicked() {
+                        ui.ctx().copy_text(resource.display_name.clone());
+                        ui.close();
+                    }
+                    if ui.button("Copy ID").clicked() {
+                        ui.ctx().copy_text(resource.resource_id.clone());
+                        ui.close();
+                    }
+                    if ui.button("Copy Name (ID)").clicked() {
+                        ui.ctx().copy_text(resource_name_id.clone());
+                        ui.close();
+                    }
+                    if let Some(arn) = resource.properties.get("Arn").and_then(|v| v.as_str()) {
+                        if ui.button("Copy ARN").clicked() {
+                            ui.ctx().copy_text(arn.to_string());
+                            ui.close();
+                        }
+                    }
+                });
 
                 // Render status and age information after the tag
                 if !additional_info.is_empty() {
@@ -1353,8 +1420,8 @@ impl TreeRenderer {
                             }
 
                             // Add "View Events" button for CloudTrail (all resources supported)
-                            if has_cloudtrail_support(&resource.resource_type) {
-                                if ui.small_button("View Events").clicked() {
+                            if has_cloudtrail_support(&resource.resource_type)
+                                && ui.small_button("View Events").clicked() {
                                     // Extract ARN from properties if available (Lambda, EC2, etc.)
                                     // Otherwise build it from resource metadata
                                     let resource_arn = extract_or_build_arn(
@@ -1388,7 +1455,6 @@ impl TreeRenderer {
                                         },
                                     );
                                 }
-                            }
                         });
                         self.render_json_tree(ui, resource);
                     });
@@ -1399,16 +1465,97 @@ impl TreeRenderer {
 
     /// Render JSON tree viewer for detailed resource properties
     fn render_json_tree(&mut self, ui: &mut Ui, resource: &ResourceEntry) {
-        // Add egui_json_tree import at the top if needed
-        use egui_json_tree::JsonTree;
+        use egui_json_tree::{DefaultExpand, JsonTree};
 
-        // Create unique IDs for all components to prevent widget ID warnings
         let resource_id = &resource.resource_id;
+        let resource_id_owned = resource_id.clone();
         let resize_id = format!("json_resize_{}", resource_id);
+
+        // Get current expand level and search term for this resource
+        let current_level = self.get_expand_level(resource_id);
+        let search_term = self.get_search_term(resource_id);
+
+        // Track if we need to reset expansion state
+        let mut should_reset = false;
+
+        // JSON Tree Toolbar
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            // Expand All button
+            if ui.small_button("Expand All").clicked() {
+                self.json_expand_levels
+                    .insert(resource_id_owned.clone(), 99);
+                self.json_search_terms.remove(&resource_id_owned);
+                should_reset = true;
+            }
+
+            // Collapse All button
+            if ui.small_button("Collapse").clicked() {
+                self.json_expand_levels.insert(resource_id_owned.clone(), 0);
+                self.json_search_terms.remove(&resource_id_owned);
+                should_reset = true;
+            }
+
+            ui.separator();
+
+            // Level controls: - [level] +
+            if ui
+                .add_enabled(current_level > 0, egui::Button::new("-").small())
+                .clicked()
+            {
+                self.json_expand_levels
+                    .insert(resource_id_owned.clone(), current_level.saturating_sub(1));
+                self.json_search_terms.remove(&resource_id_owned);
+                should_reset = true;
+            }
+
+            ui.label(format!("L{}", current_level));
+
+            if ui
+                .add_enabled(current_level < 20, egui::Button::new("+").small())
+                .clicked()
+            {
+                self.json_expand_levels
+                    .insert(resource_id_owned.clone(), current_level.saturating_add(1));
+                self.json_search_terms.remove(&resource_id_owned);
+                should_reset = true;
+            }
+
+            ui.separator();
+
+            // Search input
+            let search_id = format!("json_search_{}", resource_id);
+            let mut search_input = search_term.clone();
+            let search_response = ui.add(
+                egui::TextEdit::singleline(&mut search_input)
+                    .id_salt(&search_id)
+                    .hint_text("Search...")
+                    .desired_width(120.0),
+            );
+
+            if search_response.changed() {
+                if search_input.is_empty() {
+                    self.json_search_terms.remove(&resource_id_owned);
+                } else {
+                    self.json_search_terms
+                        .insert(resource_id_owned.clone(), search_input.clone());
+                }
+                should_reset = true;
+            }
+
+            // Clear search button
+            if !search_term.is_empty() && ui.small_button("x").clicked() {
+                self.json_search_terms.remove(&resource_id_owned);
+                should_reset = true;
+            }
+        });
+
+        ui.add_space(4.0);
 
         // Use egui's built-in Resize widget with auto-sizing and max constraints
         egui::Resize::default()
-            .id_salt(&resize_id) // Unique ID for resize widget
+            .id_salt(&resize_id)
             .auto_sized()
             .max_height(100.0)
             .min_height(100.0)
@@ -1417,11 +1564,20 @@ impl TreeRenderer {
             .resizable(true)
             .with_stroke(false)
             .show(ui, |ui| {
+                // Determine the expand mode based on state
+                let expand_mode = if !search_term.is_empty() {
+                    DefaultExpand::SearchResults(&search_term)
+                } else if current_level >= 99 {
+                    DefaultExpand::All
+                } else if current_level == 0 {
+                    DefaultExpand::None
+                } else {
+                    DefaultExpand::ToLevel(current_level)
+                };
+
                 // JSON Tree viewer - direct rendering without wrappers
                 if resource.detailed_properties.is_some() {
-                    // Show detailed properties if available
                     let json_data = resource.get_display_properties();
-                    // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
                     ui.scope(|ui| {
                         ui.style_mut()
                             .text_styles
@@ -1429,24 +1585,28 @@ impl TreeRenderer {
                             .unwrap()
                             .size = 10.3;
 
-                        JsonTree::new(format!("resource_json_detailed_{}", resource_id), json_data)
-                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(3))
-                            .show(ui);
+                        let response = JsonTree::new(
+                            format!("resource_json_detailed_{}", resource_id),
+                            json_data,
+                        )
+                        .default_expand(expand_mode)
+                        .show(ui);
+
+                        if should_reset {
+                            response.reset_expanded(ui);
+                        }
                     });
                 } else {
-                    // Show loading state, failed state
                     let resource_key = format!(
                         "{}:{}:{}",
                         resource.account_id, resource.region, resource.resource_id
                     );
                     if self.failed_detail_requests.contains(&resource_key) {
                         ui.horizontal(|ui| {
-                            ui.colored_label(Color32::from_rgb(255, 165, 0), "⚠");
+                            ui.colored_label(Color32::from_rgb(255, 165, 0), "!");
                             ui.label("Detailed properties not available for this resource type");
                         });
-                        // Show basic list data
                         let json_data = resource.get_display_properties();
-                        // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
                         ui.scope(|ui| {
                             ui.style_mut()
                                 .text_styles
@@ -1454,12 +1614,16 @@ impl TreeRenderer {
                                 .unwrap()
                                 .size = 10.3;
 
-                            JsonTree::new(
+                            let response = JsonTree::new(
                                 format!("resource_json_basic_{}", resource_id),
                                 json_data,
                             )
-                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                            .default_expand(expand_mode)
                             .show(ui);
+
+                            if should_reset {
+                                response.reset_expanded(ui);
+                            }
                         });
                     } else if self.pending_detail_requests.contains(&resource_key) {
                         ui.horizontal(|ui| {
@@ -1467,9 +1631,7 @@ impl TreeRenderer {
                             ui.label("Loading detailed properties...");
                         });
                     } else {
-                        // Show basic list data in the meantime
                         let json_data = resource.get_display_properties();
-                        // Reduce font size for JSON display (14.0 -> 10.3, ~26% reduction)
                         ui.scope(|ui| {
                             ui.style_mut()
                                 .text_styles
@@ -1477,12 +1639,16 @@ impl TreeRenderer {
                                 .unwrap()
                                 .size = 10.3;
 
-                            JsonTree::new(
+                            let response = JsonTree::new(
                                 format!("resource_json_fallback_{}", resource_id),
                                 json_data,
                             )
-                            .default_expand(egui_json_tree::DefaultExpand::ToLevel(2))
+                            .default_expand(expand_mode)
                             .show(ui);
+
+                            if should_reset {
+                                response.reset_expanded(ui);
+                            }
                         });
                     }
                 }
@@ -1583,21 +1749,43 @@ impl TreeRenderer {
         response.on_hover_text(format!("Region: {} ({})", region_code, region_description));
     }
 
+    /// Maximum characters to display before truncating resource names
+    const MAX_RESOURCE_NAME_CHARS: usize = 35;
+
     /// Render a resource type tag with colored background based on CF resource type
     ///
     /// The background color is determined by the resource_type (e.g., "AWS::EC2::Instance")
     /// so all resources of the same type have the same color, but the interior displays
     /// the resource name or ID.
-    fn render_resource_type_tag(&self, ui: &mut Ui, resource_display: &str, resource_type: &str) {
+    ///
+    /// Returns the Response for click/context menu handling by caller.
+    fn render_resource_type_tag(
+        &self,
+        ui: &mut Ui,
+        resource_display: &str,
+        resource_type: &str,
+        is_expanded: bool,
+    ) -> egui::Response {
         // Generate color based on resource type
         let bg_color = super::colors::assign_resource_type_color(resource_type);
         let text_color = get_contrasting_text_color(bg_color);
+
+        // Truncate display text if not expanded and exceeds max length
+        let (display_text, is_truncated) =
+            if !is_expanded && resource_display.len() > Self::MAX_RESOURCE_NAME_CHARS {
+                (
+                    format!("{}...", &resource_display[..Self::MAX_RESOURCE_NAME_CHARS]),
+                    true,
+                )
+            } else {
+                (resource_display.to_string(), false)
+            };
 
         // Calculate text size
         let font_size = 11.0; // Slightly larger than account/region tags
         let text_galley = ui.fonts(|fonts| {
             fonts.layout_no_wrap(
-                resource_display.to_string(),
+                display_text,
                 egui::FontId::proportional(font_size),
                 text_color,
             )
@@ -1607,8 +1795,8 @@ impl TreeRenderer {
         let padding = egui::vec2(8.0, 3.0);
         let desired_size = text_galley.size() + 2.0 * padding;
 
-        // Allocate space for the tag
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+        // Allocate space for the tag - use click sense for interaction
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
         if ui.is_rect_visible(rect) {
             // Draw rounded rectangle background
@@ -1622,7 +1810,251 @@ impl TreeRenderer {
             ui.painter().galley(text_pos, text_galley, text_color);
         }
 
-        // Show tooltip with resource type on hover
+        // Show tooltip with full name and instructions
+        let tooltip = if is_truncated {
+            format!(
+                "{}\n\nResource Type: {}\nClick to expand | Right-click to copy",
+                resource_display, resource_type
+            )
+        } else {
+            format!(
+                "Resource Type: {}\nClick to collapse | Right-click to copy",
+                resource_type
+            )
+        };
+        response.clone().on_hover_text(tooltip);
+
+        response
+    }
+
+    /// Convert AWS resource type to a short, readable tag (max 12 chars, LISP-style with hyphens)
+    fn resource_type_to_short_tag(resource_type: &str) -> &'static str {
+        match resource_type {
+            // EC2 / Compute
+            "AWS::EC2::Instance" => "INSTANCE",
+            "AWS::EC2::SecurityGroup" => "SEC-GROUP",
+            "AWS::EC2::VPC" => "VPC",
+            "AWS::EC2::Subnet" => "SUBNET",
+            "AWS::EC2::Volume" => "VOLUME",
+            "AWS::EC2::Snapshot" => "SNAPSHOT",
+            "AWS::EC2::Image" => "AMI",
+            "AWS::EC2::InternetGateway" => "INET-GATEWAY",
+            "AWS::EC2::NatGateway" => "NAT-GATEWAY",
+            "AWS::EC2::RouteTable" => "ROUTE-TABLE",
+            "AWS::EC2::NetworkAcl" => "NETWORK-ACL",
+            "AWS::EC2::KeyPair" => "KEY-PAIR",
+            "AWS::EC2::TransitGateway" => "TRANSIT-GW",
+            "AWS::EC2::VPCPeeringConnection" => "VPC-PEERING",
+            "AWS::EC2::FlowLog" => "FLOW-LOG",
+            "AWS::EC2::VolumeAttachment" => "VOL-ATTACH",
+            "AWS::EC2::NetworkInterface" => "ENI",
+
+            // Containers
+            "AWS::ECS::Cluster" => "ECS-CLUSTER",
+            "AWS::ECS::Service" => "ECS-SERVICE",
+            "AWS::ECS::Task" => "ECS-TASK",
+            "AWS::ECS::TaskDefinition" => "TASK-DEF",
+            "AWS::ECS::FargateService" => "FARGATE-SVC",
+            "AWS::ECS::FargateTask" => "FARGATE-TASK",
+            "AWS::EKS::Cluster" => "EKS-CLUSTER",
+            "AWS::EKS::FargateProfile" => "FARGATE-PROF",
+            "AWS::ECR::Repository" => "ECR-REPO",
+
+            // Serverless
+            "AWS::Lambda::Function" => "LAMBDA",
+            "AWS::StepFunctions::StateMachine" => "STEP-FUNC",
+
+            // Databases
+            "AWS::RDS::DBInstance" => "RDS",
+            "AWS::RDS::DBCluster" => "RDS-CLUSTER",
+            "AWS::DynamoDB::Table" => "DYNAMODB",
+            "AWS::Redshift::Cluster" => "REDSHIFT",
+            "AWS::Neptune::DBCluster" => "NEPTUNE",
+            "AWS::Neptune::DBInstance" => "NEPTUNE-INST",
+            "AWS::DocumentDB::Cluster" => "DOCUMENTDB",
+            "AWS::ElastiCache::CacheCluster" => "ELASTICACHE",
+            "AWS::ElastiCache::ReplicationGroup" => "CACHE-REPLGR",
+
+            // Storage
+            "AWS::S3::Bucket" => "S3",
+            "AWS::EFS::FileSystem" => "EFS",
+            "AWS::FSx::FileSystem" => "FSX",
+            "AWS::FSx::Backup" => "FSX-BACKUP",
+            "AWS::Backup::BackupPlan" => "BACKUP-PLAN",
+            "AWS::Backup::BackupVault" => "BACKUP-VAULT",
+
+            // Networking
+            "AWS::Route53::HostedZone" => "ROUTE53",
+            "AWS::ElasticLoadBalancing::LoadBalancer" => "ELB-CLASSIC",
+            "AWS::ElasticLoadBalancingV2::LoadBalancer" => "ALB",
+            "AWS::ElasticLoadBalancingV2::TargetGroup" => "TARGET-GROUP",
+            "AWS::ApiGateway::RestApi" => "API-GATEWAY",
+            "AWS::ApiGatewayV2::Api" => "APIGW-HTTP",
+            "AWS::CloudFront::Distribution" => "CLOUDFRONT",
+            "AWS::GlobalAccelerator::Accelerator" => "GLOBAL-ACCEL",
+
+            // Messaging
+            "AWS::SQS::Queue" => "SQS",
+            "AWS::SNS::Topic" => "SNS",
+            "AWS::Events::EventBus" => "EVENT-BUS",
+            "AWS::Events::Rule" => "EVENT-RULE",
+            "AWS::Kinesis::Stream" => "KINESIS",
+            "AWS::KinesisFirehose::DeliveryStream" => "FIREHOSE",
+            "AWS::MSK::Cluster" => "MSK",
+            "AWS::AmazonMQ::Broker" => "AMAZON-MQ",
+
+            // Security & Identity
+            "AWS::IAM::Role" => "IAM-ROLE",
+            "AWS::IAM::User" => "IAM-USER",
+            "AWS::IAM::Group" => "IAM-GROUP",
+            "AWS::IAM::Policy" => "IAM-POLICY",
+            "AWS::KMS::Key" => "KMS",
+            "AWS::SecretsManager::Secret" => "SECRET",
+            "AWS::AccessAnalyzer::Analyzer" => "ACCESS-ANLZR",
+            "AWS::GuardDuty::Detector" => "GUARDDUTY",
+            "AWS::SecurityHub::Hub" => "SECURITYHUB",
+            "AWS::Shield::Protection" => "SHIELD",
+            "AWS::Shield::Subscription" => "SHIELD-SUB",
+            "AWS::Detective::Graph" => "DETECTIVE",
+            "AWS::Inspector::Configuration" => "INSPECTOR",
+            "AWS::ACM::Certificate" => "ACM",
+            "AWS::ACMPCA::CertificateAuthority" => "ACM-PCA",
+            "AWS::WAFv2::WebACL" => "WAF",
+
+            // Management & Monitoring
+            "AWS::CloudWatch::Alarm" => "CW-ALARM",
+            "AWS::CloudWatch::Dashboard" => "CW-DASH",
+            "AWS::Logs::LogGroup" => "LOG-GROUP",
+            "AWS::Config::ConfigRule" => "CONFIG-RULE",
+            "AWS::Config::ConfigurationRecorder" => "CONFIG-REC",
+            "AWS::CloudTrail::Trail" => "CLOUDTRAIL",
+            "AWS::XRay::SamplingRule" => "XRAY",
+            "AWS::CloudFormation::Stack" => "CFN-STACK",
+
+            // AI/ML
+            "AWS::Bedrock::Model" => "BEDROCK",
+            "AWS::SageMaker::Endpoint" => "SAGEMAKER",
+            "AWS::SageMaker::Model" => "SAGE-MODEL",
+            "AWS::SageMaker::TrainingJob" => "SAGE-TRAIN",
+            "AWS::Rekognition::Collection" => "REKOGNITION",
+            "AWS::Rekognition::StreamProcessor" => "REKOG-STRM",
+            "AWS::Lex::Bot" => "LEX",
+            "AWS::Polly::Voice" => "POLLY",
+
+            // Application Integration
+            "AWS::AppSync::GraphQLApi" => "APPSYNC",
+            "AWS::Cognito::UserPool" => "USER-POOL",
+            "AWS::Cognito::IdentityPool" => "ID-POOL",
+
+            // Developer Tools
+            "AWS::CodeCommit::Repository" => "CODECOMMIT",
+            "AWS::CodePipeline::Pipeline" => "CODEPIPELINE",
+            "AWS::CodeBuild::Project" => "CODEBUILD",
+
+            // Analytics
+            "AWS::Glue::Database" => "GLUE-DB",
+            "AWS::Glue::Table" => "GLUE-TABLE",
+            "AWS::Glue::Crawler" => "GLUE-CRAWLR",
+            "AWS::Athena::WorkGroup" => "ATHENA",
+            "AWS::QuickSight::DataSource" => "QUICKSIGHT",
+            "AWS::Timestream::Database" => "TIMESTREAM",
+            "AWS::OpenSearchService::Domain" => "OPENSEARCH",
+
+            // Organizations
+            "AWS::Organizations::Organization" => "ORG",
+            "AWS::Organizations::Account" => "ORG-ACCOUNT",
+            "AWS::Organizations::OrganizationalUnit" => "ORG-UNIT",
+            "AWS::Organizations::Policy" => "ORG-POLICY",
+            "AWS::Organizations::Root" => "ORG-ROOT",
+            "AWS::Organizations::AwsServiceAccess" => "ORG-SVC-ACC",
+            "AWS::Organizations::Handshake" => "ORG-HANDSHK",
+            "AWS::Organizations::DelegatedAdmin" => "ORG-DELEG",
+            "AWS::Organizations::CreateAccountStatus" => "ORG-ACCT-ST",
+
+            // IoT
+            "AWS::IoT::Thing" => "IOT-THING",
+            "AWS::GreengrassV2::ComponentVersion" => "GREENGRASS",
+
+            // Other Services
+            "AWS::DataBrew::Job" => "DATABREW",
+            "AWS::DataBrew::Dataset" => "DATABREW-DS",
+            "AWS::DataSync::Task" => "DATASYNC",
+            "AWS::DataSync::Location" => "DSYNC-LOC",
+            "AWS::WorkSpaces::Workspace" => "WORKSPACE",
+            "AWS::WorkSpaces::Directory" => "WKSP-DIR",
+            "AWS::Transfer::Server" => "TRANSFER",
+            "AWS::Transfer::User" => "XFER-USER",
+            "AWS::Connect::Instance" => "CONNECT",
+            "AWS::Amplify::App" => "AMPLIFY",
+            "AWS::Macie::Session" => "MACIE",
+            "AWS::Batch::JobQueue" => "BATCH",
+            "AWS::EMR::Cluster" => "EMR",
+            "AWS::LakeFormation::Resource" => "LAKEFORM",
+
+            // Fallback: extract service name from resource type
+            _ => {
+                // Try to extract a reasonable short name from unknown types
+                // AWS::Service::ResourceType -> SERVICE
+                if let Some(service) = resource_type.split("::").nth(1) {
+                    // Return a static str for common services, otherwise use leaked string
+                    match service {
+                        "EC2" => "EC2",
+                        "S3" => "S3",
+                        "Lambda" => "LAMBDA",
+                        "IAM" => "IAM",
+                        "RDS" => "RDS",
+                        "DynamoDB" => "DYNAMODB",
+                        "SQS" => "SQS",
+                        "SNS" => "SNS",
+                        "ECS" => "ECS",
+                        "EKS" => "EKS",
+                        _ => "RESOURCE",
+                    }
+                } else {
+                    "RESOURCE"
+                }
+            }
+        }
+    }
+
+    /// Render a short resource type tag (e.g., "LAMBDA", "EC2-INSTANCE")
+    fn render_resource_type_short_tag(&self, ui: &mut Ui, resource_type: &str) {
+        let short_tag = Self::resource_type_to_short_tag(resource_type);
+
+        // Use the same color as the resource type for consistency
+        let bg_color = super::colors::assign_resource_type_color(resource_type);
+        let text_color = get_contrasting_text_color(bg_color);
+
+        // Calculate text size - use monospace for consistent width
+        let font_size = 9.0;
+        let text_galley = ui.fonts(|fonts| {
+            fonts.layout_no_wrap(
+                short_tag.to_string(),
+                egui::FontId::monospace(font_size),
+                text_color,
+            )
+        });
+
+        // Add padding to the text size
+        let padding = egui::vec2(4.0, 2.0);
+        let desired_size = text_galley.size() + 2.0 * padding;
+
+        // Allocate space for the tag
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+        if ui.is_rect_visible(rect) {
+            // Draw rounded rectangle background
+            ui.painter().rect_filled(
+                rect, 2.0, // corner radius
+                bg_color,
+            );
+
+            // Draw text centered in the rect
+            let text_pos = rect.center() - text_galley.size() / 2.0;
+            ui.painter().galley(text_pos, text_galley, text_color);
+        }
+
+        // Show tooltip with full resource type on hover
         response.on_hover_text(format!("Resource Type: {}", resource_type));
     }
 

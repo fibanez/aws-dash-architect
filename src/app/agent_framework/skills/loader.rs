@@ -112,9 +112,7 @@ impl SkillLoader {
         let metadata = self
             .discovery_service
             .get_skill_by_name(skill_name)
-            .ok_or_else(|| {
-                SkillError::IoError(format!("Skill '{}' not found", skill_name))
-            })?;
+            .ok_or_else(|| SkillError::IoError(format!("Skill '{}' not found", skill_name)))?;
 
         // Check if file exists in additional files
         if !metadata.additional_files.contains(&filename.to_string()) {
@@ -210,7 +208,9 @@ This is the full skill content with detailed procedures.
         fs::write(skill_dir.join("SKILL.md"), skill_md_content).ok();
 
         // Discover and load
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         discovery.discover_skills().ok();
 
         let loader = SkillLoader::new(discovery);
@@ -257,7 +257,9 @@ description: A test skill
         fs::write(skill_dir.join("forms.md"), "# Forms\nForm content here.").ok();
 
         // Discover and load
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         discovery.discover_skills().ok();
 
         let loader = SkillLoader::new(discovery);
@@ -291,7 +293,9 @@ description: A test skill
 "#;
         fs::write(skill_dir.join("SKILL.md"), skill_md_content).ok();
 
-        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![temp_dir.clone()]));
+        let discovery = Arc::new(SkillDiscoveryService::with_directories(vec![
+            temp_dir.clone()
+        ]));
         discovery.discover_skills().ok();
 
         let loader = SkillLoader::new(discovery);

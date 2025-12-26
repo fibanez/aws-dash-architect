@@ -28,17 +28,16 @@ impl AsyncResourceNormalizer for KinesisResourceNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Kinesis::Stream", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Kinesis::Stream {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Kinesis::Stream {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -77,4 +76,3 @@ impl AsyncResourceNormalizer for KinesisResourceNormalizer {
         "AWS::Kinesis::Stream"
     }
 }
-

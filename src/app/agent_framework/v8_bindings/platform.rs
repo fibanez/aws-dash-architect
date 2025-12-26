@@ -20,8 +20,8 @@
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use once_cell::sync::OnceCell;
 use log::{info, warn};
+use once_cell::sync::OnceCell;
 
 /// Global V8 platform instance
 ///
@@ -48,10 +48,8 @@ static GLOBAL_V8_PLATFORM: OnceCell<v8::SharedRef<v8::Platform>> = OnceCell::new
 /// ```no_run
 /// use awsdash::app::agent_framework::v8_bindings::initialize_v8_platform;
 ///
-/// fn main() {
-///     initialize_v8_platform().expect("Failed to initialize V8");
-///     // ... rest of application
-/// }
+/// initialize_v8_platform().expect("Failed to initialize V8");
+/// // ... rest of application
 /// ```
 pub fn initialize_v8_platform() -> Result<(), String> {
     GLOBAL_V8_PLATFORM
@@ -137,10 +135,7 @@ mod tests {
         assert!(result.is_ok(), "V8 platform initialization failed");
 
         // Verify platform is initialized
-        assert!(
-            is_v8_initialized(),
-            "V8 platform not marked as initialized"
-        );
+        assert!(is_v8_initialized(), "V8 platform not marked as initialized");
     }
 
     #[test]

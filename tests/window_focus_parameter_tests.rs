@@ -4,9 +4,8 @@
 //! the FocusableWindow trait to window implementations.
 
 use awsdash::app::dashui::window_focus::{
-    FocusableWindow, PositionShowParams, ProjectShowParams, SimpleShowParams, ThemeShowParams,
+    FocusableWindow, PositionShowParams, SimpleShowParams, ThemeShowParams,
 };
-use awsdash::app::projects::Project;
 
 /// Mock window for testing simple parameters
 struct MockSimpleWindow {
@@ -47,52 +46,6 @@ impl FocusableWindow for MockSimpleWindow {
         bring_to_front: bool,
     ) {
         self.last_params = Some(params);
-        self.last_bring_to_front = bring_to_front;
-    }
-}
-
-/// Mock window for testing project parameters
-struct MockProjectWindow {
-    pub show: bool,
-    pub last_project: Option<Project>,
-    pub last_window_pos: Option<egui::Pos2>,
-    pub last_bring_to_front: bool,
-}
-
-impl MockProjectWindow {
-    fn new() -> Self {
-        Self {
-            show: false,
-            last_project: None,
-            last_window_pos: None,
-            last_bring_to_front: false,
-        }
-    }
-}
-
-impl FocusableWindow for MockProjectWindow {
-    type ShowParams = ProjectShowParams;
-
-    fn window_id(&self) -> &'static str {
-        "mock_project"
-    }
-
-    fn window_title(&self) -> String {
-        "Mock Project Window".to_string()
-    }
-
-    fn is_open(&self) -> bool {
-        self.show
-    }
-
-    fn show_with_focus(
-        &mut self,
-        _ctx: &egui::Context,
-        params: Self::ShowParams,
-        bring_to_front: bool,
-    ) {
-        self.last_project = params.project;
-        self.last_window_pos = params.window_pos;
         self.last_bring_to_front = bring_to_front;
     }
 }
@@ -205,59 +158,6 @@ mod tests {
 
         // Test with bring_to_front = true
         FocusableWindow::show_with_focus(&mut window, &harness.ctx, (), true);
-        assert!(window.last_bring_to_front);
-    }
-
-    #[test]
-    fn test_project_params_passing() {
-        let harness = Harness::new_ui(|ui| {
-            ui.label("Test UI");
-        });
-
-        let mut window = MockProjectWindow::new();
-        window.show = true;
-
-        // Create test project
-        let project = Project::new(
-            "test_project".to_string(),
-            "Test project description".to_string(),
-            "test".to_string(),
-        );
-        let position = egui::Pos2::new(100.0, 200.0);
-
-        let params = ProjectShowParams {
-            project: Some(project.clone()),
-            window_pos: Some(position),
-        };
-
-        // Test parameter passing
-        FocusableWindow::show_with_focus(&mut window, &harness.ctx, params, false);
-
-        assert!(window.last_project.is_some());
-        assert_eq!(window.last_project.as_ref().unwrap().name, "test_project");
-        assert!(window.last_window_pos.is_some());
-        assert_eq!(window.last_window_pos.unwrap(), position);
-        assert!(!window.last_bring_to_front);
-    }
-
-    #[test]
-    fn test_project_params_with_none_values() {
-        let harness = Harness::new_ui(|ui| {
-            ui.label("Test UI");
-        });
-
-        let mut window = MockProjectWindow::new();
-        window.show = true;
-
-        let params = ProjectShowParams {
-            project: None,
-            window_pos: None,
-        };
-
-        FocusableWindow::show_with_focus(&mut window, &harness.ctx, params, true);
-
-        assert!(window.last_project.is_none());
-        assert!(window.last_window_pos.is_none());
         assert!(window.last_bring_to_front);
     }
 
@@ -379,39 +279,5 @@ mod tests {
         assert!(simple_window.last_bring_to_front);
         assert!(position_window.last_bring_to_front);
         assert!(theme_window.last_bring_to_front);
-    }
-
-    #[test]
-    fn test_parameter_cloning_and_ownership() {
-        let harness = Harness::new_ui(|ui| {
-            ui.label("Test UI");
-        });
-
-        let mut window = MockProjectWindow::new();
-        window.show = true;
-
-        // Create project that will be moved
-        let project = Project::new(
-            "ownership_test".to_string(),
-            "Test project description".to_string(),
-            "test".to_string(),
-        );
-        let position = egui::Pos2::new(10.0, 20.0);
-
-        let params = ProjectShowParams {
-            project: Some(project.clone()),
-            window_pos: Some(position),
-        };
-
-        // Use the parameters (they should be cloned, not moved)
-        FocusableWindow::show_with_focus(&mut window, &harness.ctx, params.clone(), false);
-
-        // Should still be able to use original parameters
-        assert!(params.project.is_some());
-        assert_eq!(params.project.as_ref().unwrap().name, "ownership_test");
-
-        // Window should have received the parameters
-        assert!(window.last_project.is_some());
-        assert_eq!(window.last_project.as_ref().unwrap().name, "ownership_test");
     }
 }

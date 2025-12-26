@@ -71,37 +71,61 @@
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
+use std::sync::{Arc, Mutex};
+
+/// Type alias for the tracing reload handle to reduce complexity
+type TracingReloadHandle =
+    tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>;
 
 /// Global handle for reloading tracing filter (enables/disables stood traces dynamically)
-static TRACING_RELOAD_HANDLE: Lazy<Arc<Mutex<Option<tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>>>>> =
+static TRACING_RELOAD_HANDLE: Lazy<Arc<Mutex<Option<TracingReloadHandle>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
 /// Set the tracing reload handle after initialization
 /// Called from main.rs after setting up the tracing subscriber
-pub fn set_tracing_reload_handle(handle: tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>) {
+pub fn set_tracing_reload_handle(handle: TracingReloadHandle) {
     *TRACING_RELOAD_HANDLE.lock().unwrap() = Some(handle);
 }
 
-/// Toggle stood traces on or off dynamically
-pub fn toggle_stood_traces(enable: bool) {
+/// Set stood tracing level dynamically
+///
+/// This updates the global tracing filter to capture stood library events
+/// at the specified level. Note that per-agent log capture is handled by
+/// the AgentTracingLayer which respects thread-local log level settings.
+///
+/// # Arguments
+/// * `level` - The StoodLogLevel to set (Off, Info, Debug, Trace)
+pub fn set_stood_log_level(level: app::agent_framework::StoodLogLevel) {
     if let Some(handle) = TRACING_RELOAD_HANDLE.lock().unwrap().as_ref() {
-        let new_filter = if enable {
-            "awsdash=trace,stood=trace,aws_sdk_cloudformation=trace,aws_sdk_bedrockruntime=trace,aws_config=trace,aws_sigv4=trace,aws_smithy_runtime=trace,aws_smithy_runtime_api=trace,hyper=trace,aws_smithy_http=trace,aws_endpoint=trace"
-        } else {
-            "awsdash=trace,stood=off,aws_sdk_cloudformation=trace,aws_sdk_bedrockruntime=trace,aws_config=trace,aws_sigv4=trace,aws_smithy_runtime=trace,aws_smithy_runtime_api=trace,hyper=trace,aws_smithy_http=trace,aws_endpoint=trace"
-        };
+        let stood_level = level.to_filter_str();
 
-        if let Ok(filter) = tracing_subscriber::EnvFilter::builder().parse(new_filter) {
+        let new_filter = format!(
+            "awsdash=trace,stood={},aws_sdk_cloudformation=trace,aws_sdk_bedrockruntime=trace,aws_config=trace,aws_sigv4=trace,aws_smithy_runtime=trace,aws_smithy_runtime_api=trace,hyper=trace,aws_smithy_http=trace,aws_endpoint=trace",
+            stood_level
+        );
+
+        if let Ok(filter) = tracing_subscriber::EnvFilter::builder().parse(&new_filter) {
             if let Err(e) = handle.reload(filter) {
                 eprintln!("Failed to reload tracing filter: {}", e);
             } else {
-                let status = if enable { "enabled" } else { "disabled" };
-                tracing::info!("Stood traces {}", status);
+                tracing::info!("Stood log level set to: {}", level.display_name());
             }
         }
     }
+}
+
+/// Legacy function for backward compatibility
+/// Toggles stood traces on (Debug level) or off
+#[deprecated(since = "0.1.0", note = "Use set_stood_log_level instead")]
+pub fn toggle_stood_traces(enable: bool) {
+    use app::agent_framework::StoodLogLevel;
+    let level = if enable {
+        StoodLogLevel::Debug
+    } else {
+        StoodLogLevel::Off
+    };
+    set_stood_log_level(level);
 }
 
 // Include logging macros first

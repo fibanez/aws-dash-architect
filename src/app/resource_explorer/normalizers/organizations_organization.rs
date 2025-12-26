@@ -59,16 +59,21 @@ impl AsyncResourceNormalizer for OrganizationsOrganizationNormalizer {
         }
 
         if let Some(master_account_email) = raw_response.get("MasterAccountEmail") {
-            properties.insert("master_account_email".to_string(), master_account_email.clone());
+            properties.insert(
+                "master_account_email".to_string(),
+                master_account_email.clone(),
+            );
         }
 
         if let Some(available_policy_types) = raw_response.get("AvailablePolicyTypes") {
-            properties.insert("available_policy_types".to_string(), available_policy_types.clone());
+            properties.insert(
+                "available_policy_types".to_string(),
+                available_policy_types.clone(),
+            );
         }
 
         let account_color = assign_account_color(account);
         let region_color = assign_region_color(region);
-
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Organizations::Organization".to_string(),
@@ -96,7 +101,12 @@ impl AsyncResourceNormalizer for OrganizationsOrganizationNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

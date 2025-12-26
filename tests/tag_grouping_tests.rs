@@ -147,10 +147,8 @@ fn test_by_tag_hierarchy_short_label_multiple_keys() {
 
 #[test]
 fn test_by_tag_hierarchy_short_label_long_first_key() {
-    let mode = GroupingMode::ByTagHierarchy(vec![
-        "VeryLongTagKeyName".to_string(),
-        "Team".to_string(),
-    ]);
+    let mode =
+        GroupingMode::ByTagHierarchy(vec!["VeryLongTagKeyName".to_string(), "Team".to_string()]);
     // Should truncate first key
     assert_eq!(mode.short_label(), "VeryLongT...+1");
 }
@@ -177,10 +175,7 @@ fn test_by_tag_hierarchy_tag_keys() {
 
 #[test]
 fn test_by_tag_hierarchy_validation_valid() {
-    let mode = GroupingMode::ByTagHierarchy(vec![
-        "Environment".to_string(),
-        "Team".to_string(),
-    ]);
+    let mode = GroupingMode::ByTagHierarchy(vec!["Environment".to_string(), "Team".to_string()]);
     assert!(mode.is_valid());
 }
 
@@ -323,11 +318,12 @@ fn test_switching_between_grouping_modes() {
     current_mode = GroupingMode::ByTag("Environment".to_string());
     assert_eq!(current_mode.display_name(), "Tag: Environment");
 
-    current_mode = GroupingMode::ByTagHierarchy(vec![
-        "Environment".to_string(),
-        "Team".to_string(),
-    ]);
-    assert_eq!(current_mode.display_name(), "Tag Hierarchy: Environment > ...");
+    current_mode =
+        GroupingMode::ByTagHierarchy(vec!["Environment".to_string(), "Team".to_string()]);
+    assert_eq!(
+        current_mode.display_name(),
+        "Tag Hierarchy: Environment > ..."
+    );
 
     current_mode = GroupingMode::ByRegion;
     assert_eq!(current_mode.display_name(), "Region");
@@ -339,7 +335,8 @@ fn test_switching_between_grouping_modes() {
 
 #[test]
 fn test_tag_hierarchy_with_single_character_keys() {
-    let mode = GroupingMode::ByTagHierarchy(vec!["A".to_string(), "B".to_string(), "C".to_string()]);
+    let mode =
+        GroupingMode::ByTagHierarchy(vec!["A".to_string(), "B".to_string(), "C".to_string()]);
 
     assert!(mode.is_valid());
     assert_eq!(mode.short_label(), "A+2");
@@ -376,14 +373,8 @@ fn test_tag_hierarchy_preserves_order() {
 
 #[test]
 fn test_multiple_hierarchy_modes_with_same_keys_different_order() {
-    let mode1 = GroupingMode::ByTagHierarchy(vec![
-        "Environment".to_string(),
-        "Team".to_string(),
-    ]);
-    let mode2 = GroupingMode::ByTagHierarchy(vec![
-        "Team".to_string(),
-        "Environment".to_string(),
-    ]);
+    let mode1 = GroupingMode::ByTagHierarchy(vec!["Environment".to_string(), "Team".to_string()]);
+    let mode2 = GroupingMode::ByTagHierarchy(vec!["Team".to_string(), "Environment".to_string()]);
 
     // Both are valid but represent different grouping hierarchies
     assert!(mode1.is_valid());

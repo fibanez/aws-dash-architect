@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Stood Library Source Code
+
+The `stood` library source code is available locally for reference:
+
+- **Location**: `./stood-source/` (cloned from https://github.com/fibanez/stood.git)
+- **Purpose**: AI agent framework used by the agent_framework module
+- **Key files**:
+  - `stood-source/src/agent/` - Agent implementation and execution loop
+  - `stood-source/src/conversation/` - Conversation and message types (Role, Message, etc.)
+  - `stood-source/src/tools/` - Tool trait and implementations
+  - `stood-source/src/llm/` - LLM providers (Bedrock, etc.)
+
+When debugging agent framework issues, reference the stood source to understand:
+- How `agent.execute()` works
+- The conversation message structure and `Role` enum
+- How tools are registered and called
+
+**Note**: This folder is git-ignored and not part of the aws-dash repository.
+
 ## CRITICAL: EMOJI/UNICODE RESTRICTIONS IN EGUI
 
 **MOST EMOJIS DO NOT WORK IN EGUI v0.32.3 - USE ASCII TEXT INSTEAD**

@@ -3,8 +3,8 @@ use egui::{self, Align2, Context, FontId, Id, Pos2, Rect, RichText, Vec2};
 // Define an enum for main command palette actions
 pub enum CommandAction {
     Login,
-    AWSExplorer,    // AWS resource explorer
-    AgentManager,  // Agent Manager for managing multiple agents
+    AWSExplorer,  // AWS resource explorer
+    AgentManager, // Agent Manager for managing multiple agents
     Quit,
 }
 

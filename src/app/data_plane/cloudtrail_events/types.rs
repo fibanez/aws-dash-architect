@@ -44,13 +44,23 @@ impl LookupAttributeKey {
     pub fn to_sdk(&self) -> aws_sdk_cloudtrail::types::LookupAttributeKey {
         match self {
             LookupAttributeKey::EventId => aws_sdk_cloudtrail::types::LookupAttributeKey::EventId,
-            LookupAttributeKey::EventName => aws_sdk_cloudtrail::types::LookupAttributeKey::EventName,
+            LookupAttributeKey::EventName => {
+                aws_sdk_cloudtrail::types::LookupAttributeKey::EventName
+            }
             LookupAttributeKey::ReadOnly => aws_sdk_cloudtrail::types::LookupAttributeKey::ReadOnly,
             LookupAttributeKey::Username => aws_sdk_cloudtrail::types::LookupAttributeKey::Username,
-            LookupAttributeKey::ResourceType => aws_sdk_cloudtrail::types::LookupAttributeKey::ResourceType,
-            LookupAttributeKey::ResourceName => aws_sdk_cloudtrail::types::LookupAttributeKey::ResourceName,
-            LookupAttributeKey::EventSource => aws_sdk_cloudtrail::types::LookupAttributeKey::EventSource,
-            LookupAttributeKey::AccessKeyId => aws_sdk_cloudtrail::types::LookupAttributeKey::AccessKeyId,
+            LookupAttributeKey::ResourceType => {
+                aws_sdk_cloudtrail::types::LookupAttributeKey::ResourceType
+            }
+            LookupAttributeKey::ResourceName => {
+                aws_sdk_cloudtrail::types::LookupAttributeKey::ResourceName
+            }
+            LookupAttributeKey::EventSource => {
+                aws_sdk_cloudtrail::types::LookupAttributeKey::EventSource
+            }
+            LookupAttributeKey::AccessKeyId => {
+                aws_sdk_cloudtrail::types::LookupAttributeKey::AccessKeyId
+            }
         }
     }
 }

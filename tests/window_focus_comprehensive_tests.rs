@@ -222,10 +222,7 @@ mod tests {
 
         let _position: PositionShowParams = egui::Pos2::new(10.0, 20.0);
 
-        let _project = ProjectShowParams {
-            project: None,
-            window_pos: None,
-        };
+        let _project = ProjectShowParams { window_pos: None };
 
         let _theme = ThemeShowParams {
             theme: "Mocha".to_string(),

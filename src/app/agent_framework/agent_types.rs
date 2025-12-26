@@ -10,6 +10,8 @@ use chrono::{DateTime, Utc};
 use std::fmt;
 use uuid::Uuid;
 
+use super::model_selection::AgentModel;
+
 /// Unique identifier for an agent instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AgentId(Uuid);
@@ -103,6 +105,71 @@ impl fmt::Display for AgentType {
     }
 }
 
+/// Logging level for Stood library traces
+///
+/// Controls the verbosity of stood library debug output captured in agent logs.
+/// Higher levels include all lower level messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StoodLogLevel {
+    /// No stood traces captured
+    Off,
+    /// Info level - high-level agent events only
+    Info,
+    /// Debug level - detailed agent operations (default)
+    #[default]
+    Debug,
+    /// Trace level - all internal operations (verbose)
+    Trace,
+}
+
+impl StoodLogLevel {
+    /// Get display name for UI dropdown
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            StoodLogLevel::Off => "Off",
+            StoodLogLevel::Info => "Info",
+            StoodLogLevel::Debug => "Debug",
+            StoodLogLevel::Trace => "Trace",
+        }
+    }
+
+    /// Get all levels for dropdown iteration
+    pub fn all() -> &'static [StoodLogLevel] {
+        &[
+            StoodLogLevel::Off,
+            StoodLogLevel::Info,
+            StoodLogLevel::Debug,
+            StoodLogLevel::Trace,
+        ]
+    }
+
+    /// Convert to tracing filter string for stood library
+    pub fn to_filter_str(&self) -> &'static str {
+        match self {
+            StoodLogLevel::Off => "off",
+            StoodLogLevel::Info => "info",
+            StoodLogLevel::Debug => "debug",
+            StoodLogLevel::Trace => "trace",
+        }
+    }
+
+    /// Check if a given tracing level should be logged at this setting
+    pub fn should_log(&self, level: tracing::Level) -> bool {
+        match self {
+            StoodLogLevel::Off => false,
+            StoodLogLevel::Info => level <= tracing::Level::INFO,
+            StoodLogLevel::Debug => level <= tracing::Level::DEBUG,
+            StoodLogLevel::Trace => true,
+        }
+    }
+}
+
+impl fmt::Display for StoodLogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
 /// Agent metadata and configuration
 #[derive(Debug, Clone)]
 pub struct AgentMetadata {
@@ -110,8 +177,8 @@ pub struct AgentMetadata {
     pub name: String,
     /// Agent description or purpose
     pub description: String,
-    /// Model ID being used (e.g., "claude-sonnet-4")
-    pub model_id: String,
+    /// Selected model for this agent
+    pub model: AgentModel,
     /// When the agent was created
     pub created_at: DateTime<Utc>,
     /// Last time the agent was updated
@@ -194,5 +261,70 @@ mod tests {
         let agent_type = AgentType::TaskManager;
         let copied = agent_type; // Should compile (Copy trait)
         assert_eq!(agent_type, copied);
+    }
+
+    #[test]
+    fn test_stood_log_level_default() {
+        let level = StoodLogLevel::default();
+        assert_eq!(level, StoodLogLevel::Debug);
+    }
+
+    #[test]
+    fn test_stood_log_level_display_names() {
+        assert_eq!(StoodLogLevel::Off.display_name(), "Off");
+        assert_eq!(StoodLogLevel::Info.display_name(), "Info");
+        assert_eq!(StoodLogLevel::Debug.display_name(), "Debug");
+        assert_eq!(StoodLogLevel::Trace.display_name(), "Trace");
+    }
+
+    #[test]
+    fn test_stood_log_level_all() {
+        let all = StoodLogLevel::all();
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0], StoodLogLevel::Off);
+        assert_eq!(all[1], StoodLogLevel::Info);
+        assert_eq!(all[2], StoodLogLevel::Debug);
+        assert_eq!(all[3], StoodLogLevel::Trace);
+    }
+
+    #[test]
+    fn test_stood_log_level_filter_str() {
+        assert_eq!(StoodLogLevel::Off.to_filter_str(), "off");
+        assert_eq!(StoodLogLevel::Info.to_filter_str(), "info");
+        assert_eq!(StoodLogLevel::Debug.to_filter_str(), "debug");
+        assert_eq!(StoodLogLevel::Trace.to_filter_str(), "trace");
+    }
+
+    #[test]
+    fn test_stood_log_level_should_log() {
+        // Off should log nothing
+        assert!(!StoodLogLevel::Off.should_log(tracing::Level::ERROR));
+        assert!(!StoodLogLevel::Off.should_log(tracing::Level::INFO));
+
+        // Info should log INFO and above (ERROR, WARN, INFO)
+        assert!(StoodLogLevel::Info.should_log(tracing::Level::ERROR));
+        assert!(StoodLogLevel::Info.should_log(tracing::Level::INFO));
+        assert!(!StoodLogLevel::Info.should_log(tracing::Level::DEBUG));
+
+        // Debug should log DEBUG and above
+        assert!(StoodLogLevel::Debug.should_log(tracing::Level::INFO));
+        assert!(StoodLogLevel::Debug.should_log(tracing::Level::DEBUG));
+        assert!(!StoodLogLevel::Debug.should_log(tracing::Level::TRACE));
+
+        // Trace should log everything
+        assert!(StoodLogLevel::Trace.should_log(tracing::Level::TRACE));
+    }
+
+    #[test]
+    fn test_stood_log_level_display() {
+        assert_eq!(format!("{}", StoodLogLevel::Debug), "Debug");
+        assert_eq!(format!("{}", StoodLogLevel::Trace), "Trace");
+    }
+
+    #[test]
+    fn test_stood_log_level_copy() {
+        let level = StoodLogLevel::Debug;
+        let copied = level; // Should compile (Copy trait)
+        assert_eq!(level, copied);
     }
 }

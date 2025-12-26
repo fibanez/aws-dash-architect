@@ -42,13 +42,11 @@ fn init_logging() {
 
         let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(filter);
 
-        let subscriber = tracing_subscriber::registry()
-            .with(filter)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(move || file.try_clone().expect("Failed to clone file handle"))
-                    .with_ansi(false) // No ANSI colors in file
-            );
+        let subscriber = tracing_subscriber::registry().with(filter).with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(move || file.try_clone().expect("Failed to clone file handle"))
+                .with_ansi(false), // No ANSI colors in file
+        );
 
         // Set the global default subscriber
         tracing::subscriber::set_global_default(subscriber)

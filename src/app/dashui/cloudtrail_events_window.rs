@@ -5,15 +5,17 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
 use super::window_focus::FocusableWindow;
-use crate::app::data_plane::cloudtrail_events::{CloudTrailEvent, CloudTrailEventsClient, LookupResult};
+use crate::app::data_plane::cloudtrail_events::{
+    CloudTrailEvent, CloudTrailEventsClient, LookupResult,
+};
 use crate::app::resource_explorer::credentials::CredentialCoordinator;
 use chrono::{DateTime, Utc};
 use eframe::egui;
 use egui::{Color32, Context, RichText, Ui};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 
 /// Maximum number of events to display in the UI
 const MAX_DISPLAY_EVENTS: usize = 1000;
@@ -130,19 +132,19 @@ impl CloudTrailEventsWindow {
             runtime.block_on(async move {
                 // CloudTrail ResourceName filter expects resource ID (function name), NOT ARN
                 // resource_name now contains the resource_id from tree.rs
-                let resource_identifier = Some(resource_name.as_str());
+                let resource_identifier = resource_name.as_str();
 
                 log::info!(
                     "CloudTrail: Querying events with resource_type='{}', resource_identifier='{}' (ARN='{}'), account='{}', region='{}'",
                     resource_type,
-                    resource_identifier.unwrap_or("<none>"),
+                    resource_identifier,
                     resource_arn.as_deref().unwrap_or("<no-arn>"),
                     account_id,
                     region
                 );
 
                 let result = match client
-                    .get_resource_events(&account_id, &region, &resource_type, resource_identifier, 100)
+                    .get_resource_events(&account_id, &region, &resource_type, Some(resource_identifier), 100)
                     .await
                 {
                     Ok(result) => {
@@ -191,17 +193,20 @@ impl CloudTrailEventsWindow {
 
                     // Client-side filtering: Match events that reference our specific resource
                     // CloudTrail may return events for multiple resources of the same type
-                    let filtered_events: Vec<_> = lookup_result.events
+                    let filtered_events: Vec<_> = lookup_result
+                        .events
                         .into_iter()
                         .filter(|event| {
                             // Check if any resource in this event matches our target resource
                             event.resources.iter().any(|res| {
                                 // Match by resource name (contains our resource_name)
                                 // or by ARN (contains our ARN if available)
-                                res.resource_name.as_ref().map_or(false, |name| {
-                                    name.contains(&self.resource_name) ||
-                                    self.resource_arn.as_ref()
-                                        .map_or(false, |arn| name.contains(arn))
+                                res.resource_name.as_ref().is_some_and(|name| {
+                                    name.contains(&self.resource_name)
+                                        || self
+                                            .resource_arn
+                                            .as_ref()
+                                            .is_some_and(|arn| name.contains(arn))
                                 })
                             })
                         })
@@ -335,66 +340,66 @@ impl CloudTrailEventsWindow {
 
                     // Event header
                     ui.horizontal(|ui| {
-                            // Timestamp
-                            let timestamp = DateTime::from_timestamp(
-                                event.event_time / 1000,
-                                ((event.event_time % 1000) * 1_000_000) as u32,
-                            )
-                            .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+                        // Timestamp
+                        let timestamp = DateTime::from_timestamp(
+                            event.event_time / 1000,
+                            ((event.event_time % 1000) * 1_000_000) as u32,
+                        )
+                        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
 
-                            ui.label(
-                                RichText::new(timestamp.format("%Y-%m-%d %H:%M:%S").to_string())
-                                    .color(Color32::GRAY)
-                                    .monospace(),
-                            );
+                        ui.label(
+                            RichText::new(timestamp.format("%Y-%m-%d %H:%M:%S").to_string())
+                                .color(Color32::GRAY)
+                                .monospace(),
+                        );
 
+                        ui.separator();
+
+                        // Event name (highlight errors in red)
+                        let event_name_text = if has_error {
+                            RichText::new(&event.event_name)
+                                .color(Color32::from_rgb(255, 100, 100))
+                                .strong()
+                        } else {
+                            RichText::new(&event.event_name).strong()
+                        };
+                        ui.label(event_name_text);
+
+                        ui.separator();
+
+                        // Username
+                        ui.label(RichText::new("by").color(Color32::GRAY));
+                        ui.label(&event.username);
+
+                        // Error indicator
+                        if has_error {
                             ui.separator();
+                            if let Some(error_code) = &event.error_code {
+                                ui.label(
+                                    RichText::new(format!("Error: {}", error_code))
+                                        .color(Color32::from_rgb(255, 100, 100)),
+                                );
+                            }
+                        }
+                    });
 
-                            // Event name (highlight errors in red)
-                            let event_name_text = if has_error {
-                                RichText::new(&event.event_name)
-                                    .color(Color32::from_rgb(255, 100, 100))
-                                    .strong()
-                            } else {
-                                RichText::new(&event.event_name).strong()
-                            };
-                            ui.label(event_name_text);
-
-                            ui.separator();
-
-                            // Username
-                            ui.label(RichText::new("by").color(Color32::GRAY));
-                            ui.label(&event.username);
-
-                            // Error indicator
-                            if has_error {
-                                ui.separator();
-                                if let Some(error_code) = &event.error_code {
+                    // Resources (if any)
+                    if !event.resources.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Resources:").color(Color32::GRAY));
+                            for resource in &event.resources {
+                                if let Some(resource_name) = &resource.resource_name {
+                                    ui.label(resource_name);
+                                }
+                                if let Some(resource_type) = &resource.resource_type {
                                     ui.label(
-                                        RichText::new(format!("Error: {}", error_code))
-                                            .color(Color32::from_rgb(255, 100, 100)),
+                                        RichText::new(format!("({})", resource_type))
+                                            .color(Color32::GRAY),
                                     );
                                 }
                             }
                         });
-
-                        // Resources (if any)
-                        if !event.resources.is_empty() {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Resources:").color(Color32::GRAY));
-                                for resource in &event.resources {
-                                    if let Some(resource_name) = &resource.resource_name {
-                                        ui.label(resource_name);
-                                    }
-                                    if let Some(resource_type) = &resource.resource_type {
-                                        ui.label(
-                                            RichText::new(format!("({})", resource_type))
-                                                .color(Color32::GRAY),
-                                        );
-                                    }
-                                }
-                            });
-                        }
+                    }
 
                     // Event details (always shown)
                     egui::Grid::new(format!("event_details_{}", event.event_id))
@@ -436,13 +441,12 @@ impl CloudTrailEventsWindow {
                         ui.label(RichText::new("Full CloudTrail Event:").strong());
 
                         // Parse and pretty-print JSON
-                        let formatted_json = match serde_json::from_str::<serde_json::Value>(ct_event) {
-                            Ok(json_value) => {
-                                serde_json::to_string_pretty(&json_value)
-                                    .unwrap_or_else(|_| ct_event.clone())
-                            }
-                            Err(_) => ct_event.clone(), // If parsing fails, show original
-                        };
+                        let formatted_json =
+                            match serde_json::from_str::<serde_json::Value>(ct_event) {
+                                Ok(json_value) => serde_json::to_string_pretty(&json_value)
+                                    .unwrap_or_else(|_| ct_event.clone()),
+                                Err(_) => ct_event.clone(), // If parsing fails, show original
+                            };
 
                         // Use smaller, consistent height for JSON display (200px = ~5 lines)
                         // This prevents first event from being huge and keeps all events uniform
@@ -493,7 +497,11 @@ impl CloudTrailEventsWindow {
             }
 
             // Event type summary
-            let failed_count = self.events.iter().filter(|e| e.error_code.is_some()).count();
+            let failed_count = self
+                .events
+                .iter()
+                .filter(|e| e.error_code.is_some())
+                .count();
             if failed_count > 0 {
                 ui.separator();
                 ui.label(
@@ -534,12 +542,7 @@ impl FocusableWindow for CloudTrailEventsWindow {
         self.open
     }
 
-    fn show_with_focus(
-        &mut self,
-        ctx: &Context,
-        params: Self::ShowParams,
-        bring_to_front: bool,
-    ) {
+    fn show_with_focus(&mut self, ctx: &Context, params: Self::ShowParams, bring_to_front: bool) {
         // First open for resource
         self.open_for_resource(params);
 

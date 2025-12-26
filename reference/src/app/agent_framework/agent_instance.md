@@ -8,7 +8,7 @@ threads, and response channel management. This is where the real agent execution
 
 **Pattern**: Active object pattern with async execution and message passing
 **External**: tokio runtime, stood Agent library, mpsc channels
-**State**: AgentMetadata, AgentStatus, Messages, Agent, mpsc channel, AgentLogger
+**State**: AgentMetadata, AgentStatus, AgentType, Messages, Agent, mpsc channel, AgentLogger
 
 ---
 
@@ -17,35 +17,37 @@ threads, and response channel management. This is where the real agent execution
 - `id: AgentId` - Unique identifier (UUID wrapper)
 - `metadata: AgentMetadata` - Name, description, model_id, timestamps
 - `status: AgentStatus` - Running/Paused/Completed/Failed/Cancelled
+- `agent_type: AgentType` - TaskManager or TaskWorker (determines tools/prompts)
 - `agent: Arc<Mutex<Option<Agent>>>` - Stood Agent instance (lazy initialized)
 - `response_channel: (Sender, Receiver)` - mpsc channel for background thread communication
 - `messages: VecDeque<Message>` - Conversation history (max 100 messages)
 - `processing: bool` - True when agent is actively executing
-- `viewing_windows: HashSet<String>` - UI windows displaying this agent
+- `todo_list_shared: Arc<Mutex<Vec<TodoItem>>>` - Shared todo list for task-managers
 - `logger: Arc<AgentLogger>` - Per-agent log file
+- `runtime: Arc<Runtime>` - Dedicated tokio runtime per agent
 
 ---
 
 ## Major Methods
 
 **Lifecycle**:
-- `new()` - Create instance with metadata, mpsc channel, logger
+- `new(metadata, agent_type)` - Create instance with type-specific tools/prompts
+- `new_with_parent_logger(metadata, agent_type, parent_logger)` - Worker shares parent log
 - `send_message()` - Spawn background thread to execute agent with input
 - `check_responses()` - Non-blocking receive from response channel
-- `handle_response()` - Process AgentResponse variants (Success/Error/ToolCall/etc)
+- `initialize()` - Create and configure stood Agent with credentials
 
 **State Management**:
 - `status()` - Get current status
-- `set_status()` - Update status, log terminal states
+- `agent_type()` - Get agent type (TaskManager/TaskWorker)
 - `is_processing()` - Check if actively executing
-- `add_message()` - Append to history, log by role, limit to 100 messages
-- `get_messages()` - Access message history for UI rendering
+- `todo_list()` - Get current todo list (for display)
+- `set_todo_list()` - Update todo list
+- `clear_todo_list()` - Clear all todos
 
-**Window Management**:
-- `register_window()` - Track UI window viewing this agent
-- `unregister_window()` - Remove window from viewing set
-- `has_viewing_windows()` - Check if any windows are open
-- `close_all_windows()` - Clear all windows, return IDs for cleanup
+**Type-Specific Configuration**:
+- `get_tools_for_type()` - Return tools based on AgentType
+- `get_system_prompt_for_type()` - Return prompt based on AgentType
 
 **Logger Access**:
 - `logger()` - Get AgentLogger reference for UI display
@@ -60,22 +62,46 @@ threads, and response channel management. This is where the real agent execution
 **External**: std::thread::spawn, tokio::runtime::Runtime, stood::Agent
 
 Pseudocode:
-  1. User calls send_message(input, aws_identity)
+  1. User calls send_message(input)
   2. Add user message to conversation history
   3. Set processing = true
-  4. Clone agent Arc, sender, aws_identity, model_id, logger
+  4. Clone agent Arc, sender, logger, runtime
   5. Spawn std::thread:
-     a. Get AWS credentials from AwsIdentityCenter (outside tokio)
-     b. Create tokio::runtime::Runtime
-     c. runtime.block_on(async):
+     a. Set thread-local agent context (set_current_agent_id, set_current_agent_type)
+     b. runtime.block_on(async):
         - Lock agent Arc
-        - If None: create OrchestrationAgent, store in Arc
+        - If None: create agent with type-specific tools/prompt
         - Call agent.execute(&input)
         - Log model request/response with logger
         - Return AgentResult
-     d. Convert result to AgentResponse (Success/Error)
-     e. Send via mpsc channel
+     c. Convert result to AgentResponse (Success/Error)
+     d. Send via mpsc channel
   6. UI polls check_responses() to receive results
+
+### Pattern: Type-Based Tool Configuration
+
+**Algorithm**: Match on AgentType, return appropriate tool set
+**External**: ThinkTool, StartTaskTool, ExecuteJavaScriptTool
+
+Pseudocode:
+  1. get_tools_for_type() matches self.agent_type:
+  2. TaskManager returns:
+     - ThinkTool (no-op reasoning space)
+     - StartTaskTool (spawn workers)
+  3. TaskWorker returns:
+     - ExecuteJavaScriptTool (V8 sandbox with AWS APIs)
+
+### Pattern: Type-Based System Prompt
+
+**Algorithm**: Match on AgentType, substitute datetime placeholder
+**External**: TASK_MANAGER_PROMPT, TASK_WORKER_PROMPT
+
+Pseudocode:
+  1. get_system_prompt_for_type() matches self.agent_type:
+  2. TaskManager -> TASK_MANAGER_PROMPT
+  3. TaskWorker -> TASK_WORKER_PROMPT
+  4. Replace {{CURRENT_DATETIME}} with Utc::now()
+  5. Return configured prompt string
 
 ### Pattern: Response Processing Loop
 
@@ -166,5 +192,5 @@ If agent.execute() returns empty response:
 
 ---
 
-**Last Updated**: 2025-01-28
-**Status**: Accurately reflects agent_instance.rs implementation
+**Last Updated**: 2025-11-25
+**Status**: Updated for multi-agent task orchestration system (AgentType, type-based tools/prompts)

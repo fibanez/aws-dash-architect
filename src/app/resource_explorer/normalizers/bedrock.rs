@@ -1,4 +1,4 @@
-use super::{utils::*, AsyncResourceNormalizer, AWSResourceClient};
+use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -44,25 +44,17 @@ impl AsyncResourceNormalizer for BedrockModelNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::Bedrock::Model", &model_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::Bedrock::Model {}: {}", model_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Bedrock::Model {}: {}",
+                    model_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -102,7 +94,6 @@ impl AsyncResourceNormalizer for BedrockModelNormalizer {
         "AWS::Bedrock::Model"
     }
 }
-
 
 /// Normalizer for Bedrock Inference Profiles
 pub struct BedrockInferenceProfileNormalizer;
@@ -147,7 +138,6 @@ impl AsyncResourceNormalizer for BedrockInferenceProfileNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -174,7 +164,12 @@ impl AsyncResourceNormalizer for BedrockInferenceProfileNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -237,7 +232,6 @@ impl AsyncResourceNormalizer for BedrockGuardrailNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -264,7 +258,12 @@ impl AsyncResourceNormalizer for BedrockGuardrailNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -327,7 +326,6 @@ impl AsyncResourceNormalizer for BedrockProvisionedModelThroughputNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -354,7 +352,12 @@ impl AsyncResourceNormalizer for BedrockProvisionedModelThroughputNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -417,7 +420,6 @@ impl AsyncResourceNormalizer for BedrockAgentNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -444,7 +446,12 @@ impl AsyncResourceNormalizer for BedrockAgentNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -507,7 +514,6 @@ impl AsyncResourceNormalizer for BedrockKnowledgeBaseNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -534,7 +540,12 @@ impl AsyncResourceNormalizer for BedrockKnowledgeBaseNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -597,7 +608,6 @@ impl AsyncResourceNormalizer for BedrockCustomModelNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -624,7 +634,12 @@ impl AsyncResourceNormalizer for BedrockCustomModelNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -687,7 +702,6 @@ impl AsyncResourceNormalizer for BedrockImportedModelNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -714,7 +728,12 @@ impl AsyncResourceNormalizer for BedrockImportedModelNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -777,7 +796,6 @@ impl AsyncResourceNormalizer for BedrockEvaluationJobNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -804,7 +822,12 @@ impl AsyncResourceNormalizer for BedrockEvaluationJobNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -867,7 +890,6 @@ impl AsyncResourceNormalizer for BedrockModelInvocationJobNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -894,7 +916,12 @@ impl AsyncResourceNormalizer for BedrockModelInvocationJobNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -957,7 +984,6 @@ impl AsyncResourceNormalizer for BedrockPromptNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -984,7 +1010,12 @@ impl AsyncResourceNormalizer for BedrockPromptNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1047,7 +1078,6 @@ impl AsyncResourceNormalizer for BedrockFlowNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1074,7 +1104,12 @@ impl AsyncResourceNormalizer for BedrockFlowNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1137,7 +1172,6 @@ impl AsyncResourceNormalizer for BedrockAgentAliasNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1164,7 +1198,12 @@ impl AsyncResourceNormalizer for BedrockAgentAliasNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1227,7 +1266,6 @@ impl AsyncResourceNormalizer for BedrockAgentActionGroupNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1254,7 +1292,12 @@ impl AsyncResourceNormalizer for BedrockAgentActionGroupNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1317,7 +1360,6 @@ impl AsyncResourceNormalizer for BedrockDataSourceNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1344,7 +1386,12 @@ impl AsyncResourceNormalizer for BedrockDataSourceNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1407,7 +1454,6 @@ impl AsyncResourceNormalizer for BedrockModelCustomizationJobNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1434,7 +1480,12 @@ impl AsyncResourceNormalizer for BedrockModelCustomizationJobNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1497,7 +1548,6 @@ impl AsyncResourceNormalizer for BedrockIngestionJobNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1524,7 +1574,12 @@ impl AsyncResourceNormalizer for BedrockIngestionJobNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 
@@ -1587,7 +1642,6 @@ impl AsyncResourceNormalizer for BedrockFlowAliasNormalizer {
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
         let properties = create_normalized_properties(&raw_response);
 
-
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
             account_id: account.to_string(),
@@ -1614,7 +1668,12 @@ impl AsyncResourceNormalizer for BedrockFlowAliasNormalizer {
             .fetch_tags_for_resource(&entry.resource_type, &entry.resource_id, account, region)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to fetch tags for {} {}: {:?}", entry.resource_type, entry.resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for {} {}: {:?}",
+                    entry.resource_type,
+                    entry.resource_id,
+                    e
+                );
                 Vec::new()
             });
 

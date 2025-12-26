@@ -1371,10 +1371,7 @@ impl EC2Service {
             })?;
 
         let client = ec2::Client::new(&aws_config);
-        let mut paginator = client
-            .describe_transit_gateways()
-            .into_paginator()
-            .send();
+        let mut paginator = client.describe_transit_gateways().into_paginator().send();
 
         let mut transit_gateways = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -1445,10 +1442,7 @@ impl EC2Service {
             })?;
 
         let client = ec2::Client::new(&aws_config);
-        let mut paginator = client
-            .describe_flow_logs()
-            .into_paginator()
-            .send();
+        let mut paginator = client.describe_flow_logs().into_paginator().send();
 
         let mut flow_logs = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -1482,10 +1476,10 @@ impl EC2Service {
             })?;
 
         let client = ec2::Client::new(&aws_config);
-        
+
         // Get all volumes to extract attachment information
         let response = client.describe_volumes().send().await?;
-        
+
         let mut attachments = Vec::new();
         if let Some(volumes) = response.volumes {
             for volume in volumes {
@@ -3114,25 +3108,46 @@ impl EC2Service {
         let mut json = serde_json::Map::new();
 
         if let Some(tgw_id) = &tgw.transit_gateway_id {
-            json.insert("TransitGatewayId".to_string(), serde_json::Value::String(tgw_id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(tgw_id.clone()));
+            json.insert(
+                "TransitGatewayId".to_string(),
+                serde_json::Value::String(tgw_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(tgw_id.clone()),
+            );
         }
 
         if let Some(state) = &tgw.state {
-            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
-            json.insert("Status".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
         }
 
         if let Some(owner_id) = &tgw.owner_id {
-            json.insert("OwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+            json.insert(
+                "OwnerId".to_string(),
+                serde_json::Value::String(owner_id.clone()),
+            );
         }
 
         if let Some(creation_time) = tgw.creation_time {
-            json.insert("CreationTime".to_string(), serde_json::Value::String(creation_time.to_string()));
+            json.insert(
+                "CreationTime".to_string(),
+                serde_json::Value::String(creation_time.to_string()),
+            );
         }
 
         if let Some(description) = &tgw.description {
-            json.insert("Description".to_string(), serde_json::Value::String(description.clone()));
+            json.insert(
+                "Description".to_string(),
+                serde_json::Value::String(description.clone()),
+            );
         }
 
         // Handle tags and extract Name if available
@@ -3143,10 +3158,14 @@ impl EC2Service {
                     .map(|tag| {
                         let mut tag_json = serde_json::Map::new();
                         if let Some(key) = &tag.key {
-                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
                         }
                         if let Some(value) = &tag.value {
-                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                         }
                         serde_json::Value::Object(tag_json)
                     })
@@ -3157,7 +3176,10 @@ impl EC2Service {
                 for tag in tags {
                     if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
                         if key == "Name" {
-                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                             break;
                         }
                     }
@@ -3169,40 +3191,67 @@ impl EC2Service {
     }
 
     /// Convert VPC Peering Connection to JSON format
-    fn vpc_peering_connection_to_json(&self, pc: &ec2::types::VpcPeeringConnection) -> serde_json::Value {
+    fn vpc_peering_connection_to_json(
+        &self,
+        pc: &ec2::types::VpcPeeringConnection,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(pc_id) = &pc.vpc_peering_connection_id {
-            json.insert("VpcPeeringConnectionId".to_string(), serde_json::Value::String(pc_id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(pc_id.clone()));
+            json.insert(
+                "VpcPeeringConnectionId".to_string(),
+                serde_json::Value::String(pc_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(pc_id.clone()),
+            );
         }
 
         if let Some(status) = &pc.status {
             if let Some(code) = &status.code {
-                json.insert("Status".to_string(), serde_json::Value::String(code.as_str().to_string()));
+                json.insert(
+                    "Status".to_string(),
+                    serde_json::Value::String(code.as_str().to_string()),
+                );
             }
             if let Some(message) = &status.message {
-                json.insert("StatusMessage".to_string(), serde_json::Value::String(message.clone()));
+                json.insert(
+                    "StatusMessage".to_string(),
+                    serde_json::Value::String(message.clone()),
+                );
             }
         }
 
         // Accepter VPC Info
         if let Some(accepter_vpc_info) = &pc.accepter_vpc_info {
             if let Some(vpc_id) = &accepter_vpc_info.vpc_id {
-                json.insert("AccepterVpcId".to_string(), serde_json::Value::String(vpc_id.clone()));
+                json.insert(
+                    "AccepterVpcId".to_string(),
+                    serde_json::Value::String(vpc_id.clone()),
+                );
             }
             if let Some(owner_id) = &accepter_vpc_info.owner_id {
-                json.insert("AccepterOwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+                json.insert(
+                    "AccepterOwnerId".to_string(),
+                    serde_json::Value::String(owner_id.clone()),
+                );
             }
         }
 
         // Requester VPC Info
         if let Some(requester_vpc_info) = &pc.requester_vpc_info {
             if let Some(vpc_id) = &requester_vpc_info.vpc_id {
-                json.insert("RequesterVpcId".to_string(), serde_json::Value::String(vpc_id.clone()));
+                json.insert(
+                    "RequesterVpcId".to_string(),
+                    serde_json::Value::String(vpc_id.clone()),
+                );
             }
             if let Some(owner_id) = &requester_vpc_info.owner_id {
-                json.insert("RequesterOwnerId".to_string(), serde_json::Value::String(owner_id.clone()));
+                json.insert(
+                    "RequesterOwnerId".to_string(),
+                    serde_json::Value::String(owner_id.clone()),
+                );
             }
         }
 
@@ -3214,10 +3263,14 @@ impl EC2Service {
                     .map(|tag| {
                         let mut tag_json = serde_json::Map::new();
                         if let Some(key) = &tag.key {
-                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
                         }
                         if let Some(value) = &tag.value {
-                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                         }
                         serde_json::Value::Object(tag_json)
                     })
@@ -3228,7 +3281,10 @@ impl EC2Service {
                 for tag in tags {
                     if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
                         if key == "Name" {
-                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                             break;
                         }
                     }
@@ -3244,46 +3300,82 @@ impl EC2Service {
         let mut json = serde_json::Map::new();
 
         if let Some(flow_log_id) = &fl.flow_log_id {
-            json.insert("FlowLogId".to_string(), serde_json::Value::String(flow_log_id.clone()));
-            json.insert("ResourceId".to_string(), serde_json::Value::String(flow_log_id.clone()));
+            json.insert(
+                "FlowLogId".to_string(),
+                serde_json::Value::String(flow_log_id.clone()),
+            );
+            json.insert(
+                "ResourceId".to_string(),
+                serde_json::Value::String(flow_log_id.clone()),
+            );
         }
 
         if let Some(resource_id) = &fl.resource_id {
-            json.insert("AttachedResourceId".to_string(), serde_json::Value::String(resource_id.clone()));
+            json.insert(
+                "AttachedResourceId".to_string(),
+                serde_json::Value::String(resource_id.clone()),
+            );
         }
 
         // Note: FlowLog resource_type is inferred from resource_id format
         // VPC flow logs have vpc-xxx format, subnet have subnet-xxx, etc.
         if let Some(resource_id) = &fl.resource_id {
             if resource_id.starts_with("vpc-") {
-                json.insert("ResourceType".to_string(), serde_json::Value::String("VPC".to_string()));
+                json.insert(
+                    "ResourceType".to_string(),
+                    serde_json::Value::String("VPC".to_string()),
+                );
             } else if resource_id.starts_with("subnet-") {
-                json.insert("ResourceType".to_string(), serde_json::Value::String("Subnet".to_string()));
+                json.insert(
+                    "ResourceType".to_string(),
+                    serde_json::Value::String("Subnet".to_string()),
+                );
             } else if resource_id.starts_with("eni-") {
-                json.insert("ResourceType".to_string(), serde_json::Value::String("NetworkInterface".to_string()));
+                json.insert(
+                    "ResourceType".to_string(),
+                    serde_json::Value::String("NetworkInterface".to_string()),
+                );
             } else {
-                json.insert("ResourceType".to_string(), serde_json::Value::String("Unknown".to_string()));
+                json.insert(
+                    "ResourceType".to_string(),
+                    serde_json::Value::String("Unknown".to_string()),
+                );
             }
         }
 
         if let Some(flow_log_status) = &fl.flow_log_status {
-            json.insert("Status".to_string(), serde_json::Value::String(flow_log_status.as_str().to_string()));
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(flow_log_status.as_str().to_string()),
+            );
         }
 
         if let Some(traffic_type) = &fl.traffic_type {
-            json.insert("TrafficType".to_string(), serde_json::Value::String(traffic_type.as_str().to_string()));
+            json.insert(
+                "TrafficType".to_string(),
+                serde_json::Value::String(traffic_type.as_str().to_string()),
+            );
         }
 
         if let Some(log_destination_type) = &fl.log_destination_type {
-            json.insert("LogDestinationType".to_string(), serde_json::Value::String(log_destination_type.as_str().to_string()));
+            json.insert(
+                "LogDestinationType".to_string(),
+                serde_json::Value::String(log_destination_type.as_str().to_string()),
+            );
         }
 
         if let Some(log_destination) = &fl.log_destination {
-            json.insert("LogDestination".to_string(), serde_json::Value::String(log_destination.clone()));
+            json.insert(
+                "LogDestination".to_string(),
+                serde_json::Value::String(log_destination.clone()),
+            );
         }
 
         if let Some(creation_time) = fl.creation_time {
-            json.insert("CreationTime".to_string(), serde_json::Value::String(creation_time.to_string()));
+            json.insert(
+                "CreationTime".to_string(),
+                serde_json::Value::String(creation_time.to_string()),
+            );
         }
 
         // Handle tags
@@ -3294,10 +3386,14 @@ impl EC2Service {
                     .map(|tag| {
                         let mut tag_json = serde_json::Map::new();
                         if let Some(key) = &tag.key {
-                            tag_json.insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
                         }
                         if let Some(value) = &tag.value {
-                            tag_json.insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                         }
                         serde_json::Value::Object(tag_json)
                     })
@@ -3308,7 +3404,10 @@ impl EC2Service {
                 for tag in tags {
                     if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
                         if key == "Name" {
-                            json.insert("Name".to_string(), serde_json::Value::String(value.clone()));
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
                             break;
                         }
                     }
@@ -3320,51 +3419,94 @@ impl EC2Service {
     }
 
     /// Convert EBS Volume Attachment to JSON format
-    fn volume_attachment_to_json(&self, volume: &ec2::types::Volume, attachment: &ec2::types::VolumeAttachment) -> serde_json::Value {
+    fn volume_attachment_to_json(
+        &self,
+        volume: &ec2::types::Volume,
+        attachment: &ec2::types::VolumeAttachment,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         // Create a unique ID for the attachment combining volume and instance IDs
         let volume_id = volume.volume_id.as_deref().unwrap_or("unknown-volume");
-        let instance_id = attachment.instance_id.as_deref().unwrap_or("unknown-instance");
+        let instance_id = attachment
+            .instance_id
+            .as_deref()
+            .unwrap_or("unknown-instance");
         let attachment_id = format!("{}:{}", volume_id, instance_id);
-        
-        json.insert("AttachmentId".to_string(), serde_json::Value::String(attachment_id.clone()));
-        json.insert("ResourceId".to_string(), serde_json::Value::String(attachment_id));
+
+        json.insert(
+            "AttachmentId".to_string(),
+            serde_json::Value::String(attachment_id.clone()),
+        );
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(attachment_id),
+        );
 
         if let Some(volume_id) = &volume.volume_id {
-            json.insert("VolumeId".to_string(), serde_json::Value::String(volume_id.clone()));
+            json.insert(
+                "VolumeId".to_string(),
+                serde_json::Value::String(volume_id.clone()),
+            );
         }
 
         if let Some(instance_id) = &attachment.instance_id {
-            json.insert("InstanceId".to_string(), serde_json::Value::String(instance_id.clone()));
+            json.insert(
+                "InstanceId".to_string(),
+                serde_json::Value::String(instance_id.clone()),
+            );
         }
 
         if let Some(device) = &attachment.device {
-            json.insert("Device".to_string(), serde_json::Value::String(device.clone()));
+            json.insert(
+                "Device".to_string(),
+                serde_json::Value::String(device.clone()),
+            );
         }
 
         if let Some(state) = &attachment.state {
-            json.insert("State".to_string(), serde_json::Value::String(state.as_str().to_string()));
-            json.insert("Status".to_string(), serde_json::Value::String(state.as_str().to_string()));
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
         }
 
         if let Some(attach_time) = attachment.attach_time {
-            json.insert("AttachTime".to_string(), serde_json::Value::String(attach_time.to_string()));
+            json.insert(
+                "AttachTime".to_string(),
+                serde_json::Value::String(attach_time.to_string()),
+            );
         }
 
-        json.insert("DeleteOnTermination".to_string(), serde_json::Value::Bool(attachment.delete_on_termination.unwrap_or(false)));
+        json.insert(
+            "DeleteOnTermination".to_string(),
+            serde_json::Value::Bool(attachment.delete_on_termination.unwrap_or(false)),
+        );
 
         // Include volume information for context
         if let Some(size) = volume.size {
-            json.insert("VolumeSize".to_string(), serde_json::Value::Number(size.into()));
+            json.insert(
+                "VolumeSize".to_string(),
+                serde_json::Value::Number(size.into()),
+            );
         }
 
         if let Some(volume_type) = &volume.volume_type {
-            json.insert("VolumeType".to_string(), serde_json::Value::String(volume_type.as_str().to_string()));
+            json.insert(
+                "VolumeType".to_string(),
+                serde_json::Value::String(volume_type.as_str().to_string()),
+            );
         }
 
         if let Some(availability_zone) = &volume.availability_zone {
-            json.insert("AvailabilityZone".to_string(), serde_json::Value::String(availability_zone.clone()));
+            json.insert(
+                "AvailabilityZone".to_string(),
+                serde_json::Value::String(availability_zone.clone()),
+            );
         }
 
         // Generate a display name

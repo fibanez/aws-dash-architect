@@ -109,7 +109,9 @@ impl HelpWindow {
 
             ui.label("1. Login to AWS (Space > Login)");
             ui.label("2. Explore AWS resources across your accounts (Space > AWS Explorer)");
-            ui.label("3. Use the AI assistant for infrastructure operations (Space > Agent Manager)");
+            ui.label(
+                "3. Use the AI assistant for infrastructure operations (Space > Agent Manager)",
+            );
 
             ui.add_space(20.0);
         });

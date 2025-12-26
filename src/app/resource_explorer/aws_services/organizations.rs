@@ -34,10 +34,7 @@ impl OrganizationsService {
         let client = organizations::Client::new(&aws_config);
 
         let mut accounts = Vec::new();
-        let mut paginator = client
-            .list_accounts()
-            .into_paginator()
-            .send();
+        let mut paginator = client.list_accounts().into_paginator().send();
 
         while let Some(page) = paginator.next().await {
             let page = page?;
@@ -104,10 +101,7 @@ impl OrganizationsService {
         let client = organizations::Client::new(&aws_config);
 
         let mut roots = Vec::new();
-        let mut paginator = client
-            .list_roots()
-            .into_paginator()
-            .send();
+        let mut paginator = client.list_roots().into_paginator().send();
 
         while let Some(page) = paginator.next().await {
             let page = page?;
@@ -267,19 +261,27 @@ impl OrganizationsService {
                     let mut target_json = serde_json::Map::new();
 
                     if let Some(target_id) = &target.target_id {
-                        target_json.insert("TargetId".to_string(), serde_json::Value::String(target_id.clone()));
+                        target_json.insert(
+                            "TargetId".to_string(),
+                            serde_json::Value::String(target_id.clone()),
+                        );
                     }
 
                     if let Some(arn) = &target.arn {
-                        target_json.insert("Arn".to_string(), serde_json::Value::String(arn.clone()));
+                        target_json
+                            .insert("Arn".to_string(), serde_json::Value::String(arn.clone()));
                     }
 
                     if let Some(name) = &target.name {
-                        target_json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
+                        target_json
+                            .insert("Name".to_string(), serde_json::Value::String(name.clone()));
                     }
 
                     if let Some(target_type) = &target.r#type {
-                        target_json.insert("Type".to_string(), serde_json::Value::String(target_type.as_str().to_string()));
+                        target_json.insert(
+                            "Type".to_string(),
+                            serde_json::Value::String(target_type.as_str().to_string()),
+                        );
                     }
 
                     targets.push(serde_json::Value::Object(target_json));
@@ -324,11 +326,17 @@ impl OrganizationsService {
                     let mut parent_json = serde_json::Map::new();
 
                     if let Some(parent_id) = &parent.id {
-                        parent_json.insert("Id".to_string(), serde_json::Value::String(parent_id.clone()));
+                        parent_json.insert(
+                            "Id".to_string(),
+                            serde_json::Value::String(parent_id.clone()),
+                        );
                     }
 
                     if let Some(parent_type) = &parent.r#type {
-                        parent_json.insert("Type".to_string(), serde_json::Value::String(parent_type.as_str().to_string()));
+                        parent_json.insert(
+                            "Type".to_string(),
+                            serde_json::Value::String(parent_type.as_str().to_string()),
+                        );
                     }
 
                     parents.push(serde_json::Value::Object(parent_json));
@@ -709,10 +717,7 @@ impl OrganizationsService {
 
     // JSON conversion methods
 
-    fn account_to_json(
-        &self,
-        account: &organizations::types::Account,
-    ) -> serde_json::Value {
+    fn account_to_json(&self, account: &organizations::types::Account) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &account.id {
@@ -731,7 +736,10 @@ impl OrganizationsService {
         }
 
         if let Some(email) = &account.email {
-            json.insert("Email".to_string(), serde_json::Value::String(email.clone()));
+            json.insert(
+                "Email".to_string(),
+                serde_json::Value::String(email.clone()),
+            );
         }
 
         if let Some(arn) = &account.arn {
@@ -774,10 +782,7 @@ impl OrganizationsService {
         self.account_to_json(account)
     }
 
-    fn root_to_json(
-        &self,
-        root: &organizations::types::Root,
-    ) -> serde_json::Value {
+    fn root_to_json(&self, root: &organizations::types::Root) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &root.id {
@@ -821,18 +826,12 @@ impl OrganizationsService {
         serde_json::Value::Object(json)
     }
 
-    fn organization_to_json(
-        &self,
-        org: &organizations::types::Organization,
-    ) -> serde_json::Value {
+    fn organization_to_json(&self, org: &organizations::types::Organization) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &org.id {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(id.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(id.clone()));
         }
 
         if let Some(arn) = &org.arn {
@@ -911,7 +910,10 @@ impl OrganizationsService {
         }
 
         if let Some(email) = &admin.email {
-            json.insert("Email".to_string(), serde_json::Value::String(email.clone()));
+            json.insert(
+                "Email".to_string(),
+                serde_json::Value::String(email.clone()),
+            );
         }
 
         if let Some(arn) = &admin.arn {
@@ -957,18 +959,12 @@ impl OrganizationsService {
         serde_json::Value::Object(json)
     }
 
-    fn handshake_to_json(
-        &self,
-        handshake: &organizations::types::Handshake,
-    ) -> serde_json::Value {
+    fn handshake_to_json(&self, handshake: &organizations::types::Handshake) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &handshake.id {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(id.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(id.clone()));
         }
 
         if let Some(arn) = &handshake.arn {
@@ -1229,10 +1225,7 @@ impl OrganizationsService {
         let client = organizations::Client::new(&aws_config);
 
         let mut results = Vec::new();
-        let mut paginator = client
-            .list_create_account_status()
-            .into_paginator()
-            .send();
+        let mut paginator = client.list_create_account_status().into_paginator().send();
 
         while let Some(page) = paginator.next().await {
             let page = page.context("Failed to list create account status")?;
@@ -1276,7 +1269,10 @@ impl OrganizationsService {
         if let Some(status) = response.create_account_status {
             Ok(self.create_account_status_details_to_json(&status))
         } else {
-            anyhow::bail!("No create account status found for request ID: {}", request_id)
+            anyhow::bail!(
+                "No create account status found for request ID: {}",
+                request_id
+            )
         }
     }
 
@@ -1328,13 +1324,7 @@ impl OrganizationsService {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
             json.insert(
                 "Name".to_string(),
-                serde_json::Value::String(
-                    status
-                        .account_name
-                        .as_deref()
-                        .unwrap_or(id)
-                        .to_string(),
-                ),
+                serde_json::Value::String(status.account_name.as_deref().unwrap_or(id).to_string()),
             );
         }
 
@@ -1398,13 +1388,7 @@ impl OrganizationsService {
             json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
             json.insert(
                 "Name".to_string(),
-                serde_json::Value::String(
-                    status
-                        .account_name
-                        .as_deref()
-                        .unwrap_or(id)
-                        .to_string(),
-                ),
+                serde_json::Value::String(status.account_name.as_deref().unwrap_or(id).to_string()),
             );
         }
 

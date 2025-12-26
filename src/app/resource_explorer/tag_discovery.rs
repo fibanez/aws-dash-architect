@@ -155,7 +155,8 @@ impl TagDiscovery {
 
     /// Get the number of resources without any tags
     pub fn untagged_resource_count(&self) -> usize {
-        self.total_resources.saturating_sub(self.tagged_resource_count)
+        self.total_resources
+            .saturating_sub(self.tagged_resource_count)
     }
 
     /// Get percentage of resources that have tags

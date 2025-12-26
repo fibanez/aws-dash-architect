@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -33,17 +33,16 @@ impl AsyncResourceNormalizer for ShieldProtectionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Shield::Protection", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Shield::Protection {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Shield::Protection {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -77,14 +76,19 @@ impl AsyncResourceNormalizer for ShieldProtectionNormalizer {
         let mut relationships = Vec::new();
 
         // Shield protections protect specific AWS resources
-        if let Some(resource_arn) = entry.raw_properties.get("ResourceArn").and_then(|v| v.as_str()) {
+        if let Some(resource_arn) = entry
+            .raw_properties
+            .get("ResourceArn")
+            .and_then(|v| v.as_str())
+        {
             // Find the protected resource
             for resource in all_resources {
                 // Check if this resource matches the ARN protected by Shield
                 if let Some(arn) = resource.raw_properties.get("Arn").and_then(|v| v.as_str()) {
                     if arn == resource_arn {
                         relationships.push(ResourceRelationship {
-                            relationship_type: crate::app::resource_explorer::state::RelationshipType::ProtectedBy,
+                            relationship_type:
+                                crate::app::resource_explorer::state::RelationshipType::ProtectedBy,
                             target_resource_type: resource.resource_type.clone(),
                             target_resource_id: resource.resource_id.clone(),
                         });
@@ -126,17 +130,16 @@ impl AsyncResourceNormalizer for ShieldSubscriptionNormalizer {
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
-
             .fetch_tags_for_resource("AWS::Shield::Subscription", &resource_id, account, region)
-
             .await
-
             .unwrap_or_else(|e| {
-
-                tracing::warn!("Failed to fetch tags for AWS::Shield::Subscription {}: {}", resource_id, e);
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::Shield::Subscription {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -176,4 +179,3 @@ impl AsyncResourceNormalizer for ShieldSubscriptionNormalizer {
         "AWS::Shield::Subscription"
     }
 }
-

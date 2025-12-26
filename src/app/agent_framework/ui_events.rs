@@ -14,6 +14,9 @@ use crate::app::agent_framework::agent_types::AgentId;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Type alias for the UI event channel
+type UIEventChannelType = (Sender<AgentUIEvent>, Arc<Mutex<Receiver<AgentUIEvent>>>);
+
 /// Global UI event channel
 ///
 /// This is initialized once on first access and provides a sender/receiver pair
@@ -21,8 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 ///
 /// Note: We use Arc<Mutex<Receiver>> because std::sync::mpsc::Receiver is not Clone.
 /// The sender is Clone, so we can hand out clones to tools.
-static UI_EVENT_CHANNEL: OnceLock<(Sender<AgentUIEvent>, Arc<Mutex<Receiver<AgentUIEvent>>>)> =
-    OnceLock::new();
+static UI_EVENT_CHANNEL: OnceLock<UIEventChannelType> = OnceLock::new();
 
 /// Initialize the global UI event channel
 ///
@@ -182,13 +184,7 @@ mod tests {
         // Should be received in order
         let rx = receiver.lock().unwrap();
         assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::SwitchToAgent(agent1));
-        assert_eq!(
-            rx.try_recv().unwrap(),
-            AgentUIEvent::SwitchToParent(agent2)
-        );
-        assert_eq!(
-            rx.try_recv().unwrap(),
-            AgentUIEvent::AgentCompleted(agent1)
-        );
+        assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::SwitchToParent(agent2));
+        assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::AgentCompleted(agent1));
     }
 }

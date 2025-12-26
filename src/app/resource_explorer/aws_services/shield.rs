@@ -32,12 +32,9 @@ impl ShieldService {
             })?;
 
         let client = shield::Client::new(&aws_config);
-        
+
         // Shield operates globally but resources may be region-specific
-        let mut paginator = client
-            .list_protections()
-            .into_paginator()
-            .send();
+        let mut paginator = client.list_protections().into_paginator().send();
 
         let mut protections = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -71,7 +68,7 @@ impl ShieldService {
             })?;
 
         let client = shield::Client::new(&aws_config);
-        
+
         // Get subscription information
         match client.describe_subscription().send().await {
             Ok(response) => {
@@ -140,16 +137,18 @@ impl ShieldService {
             })?;
 
         let client = shield::Client::new(&aws_config);
-        
+
         // Get recent attacks (last 1 year by default)
         let end_time = chrono::Utc::now();
         let start_time = end_time - chrono::Duration::days(365);
 
         // Create TimeRange structs for Shield's API requirements
         let start_time_range = shield::types::TimeRange::builder()
-            .from_inclusive(aws_smithy_types::DateTime::from_secs(start_time.timestamp()))
+            .from_inclusive(aws_smithy_types::DateTime::from_secs(
+                start_time.timestamp(),
+            ))
             .build();
-            
+
         let end_time_range = shield::types::TimeRange::builder()
             .to_exclusive(aws_smithy_types::DateTime::from_secs(end_time.timestamp()))
             .build();
@@ -179,18 +178,12 @@ impl ShieldService {
         let mut json = serde_json::Map::new();
 
         if let Some(id) = &protection.id {
-            json.insert(
-                "Id".to_string(),
-                serde_json::Value::String(id.clone()),
-            );
+            json.insert("Id".to_string(), serde_json::Value::String(id.clone()));
             json.insert(
                 "ProtectionId".to_string(),
                 serde_json::Value::String(id.clone()),
             );
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(id.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(id.clone()));
         }
 
         if let Some(name) = &protection.name {
@@ -199,10 +192,7 @@ impl ShieldService {
                 serde_json::Value::String(name.clone()),
             );
             // Override the Id-based name with actual protection name if available
-            json.insert(
-                "Name".to_string(),
-                serde_json::Value::String(name.clone()),
-            );
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
         }
 
         if let Some(resource_arn) = &protection.resource_arn {
@@ -210,7 +200,7 @@ impl ShieldService {
                 "ResourceArn".to_string(),
                 serde_json::Value::String(resource_arn.clone()),
             );
-            
+
             // Extract resource type from ARN for better categorization
             if let Some(resource_type) = Self::extract_resource_type_from_arn(resource_arn) {
                 json.insert(
@@ -249,7 +239,10 @@ impl ShieldService {
         serde_json::Value::Object(json)
     }
 
-    fn subscription_to_json(&self, subscription: &shield::types::Subscription) -> serde_json::Value {
+    fn subscription_to_json(
+        &self,
+        subscription: &shield::types::Subscription,
+    ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(start_time) = subscription.start_time {
@@ -268,7 +261,9 @@ impl ShieldService {
 
         json.insert(
             "TimeCommitmentInSeconds".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(subscription.time_commitment_in_seconds)),
+            serde_json::Value::Number(serde_json::Number::from(
+                subscription.time_commitment_in_seconds,
+            )),
         );
 
         if let Some(auto_renew) = &subscription.auto_renew {
@@ -285,16 +280,19 @@ impl ShieldService {
                     .map(|limit| {
                         let mut limit_obj = serde_json::Map::new();
                         if let Some(limit_type) = &limit.r#type {
-                            limit_obj.insert("Type".to_string(), serde_json::Value::String(limit_type.clone()));
+                            limit_obj.insert(
+                                "Type".to_string(),
+                                serde_json::Value::String(limit_type.clone()),
+                            );
                         }
-                        limit_obj.insert("Max".to_string(), serde_json::Value::Number(serde_json::Number::from(limit.max)));
+                        limit_obj.insert(
+                            "Max".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(limit.max)),
+                        );
                         serde_json::Value::Object(limit_obj)
                     })
                     .collect();
-                json.insert(
-                    "Limits".to_string(),
-                    serde_json::Value::Array(limits_json),
-                );
+                json.insert("Limits".to_string(), serde_json::Value::Array(limits_json));
             }
         }
 
@@ -356,7 +354,10 @@ impl ShieldService {
                     .iter()
                     .map(|vector| {
                         let mut vector_obj = serde_json::Map::new();
-                        vector_obj.insert("VectorType".to_string(), serde_json::Value::String(vector.vector_type.clone()));
+                        vector_obj.insert(
+                            "VectorType".to_string(),
+                            serde_json::Value::String(vector.vector_type.clone()),
+                        );
                         serde_json::Value::Object(vector_obj)
                     })
                     .collect();
@@ -382,7 +383,7 @@ impl ShieldService {
         if parts.len() >= 6 {
             let service = parts[2];
             let resource_part = parts[5];
-            
+
             // Extract resource type from the resource part
             if let Some(slash_pos) = resource_part.find('/') {
                 let resource_type = &resource_part[..slash_pos];

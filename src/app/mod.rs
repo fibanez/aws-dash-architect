@@ -25,11 +25,11 @@
 //! - [`agent_framework`] provides AI agent capabilities for resource analysis and operations
 //! - [`dashui`] coordinates the user interface and window management
 
+pub mod agent_framework;
 pub mod aws_identity;
 pub mod aws_regions;
-pub mod agent_framework;
-pub mod data_plane;
 pub mod dashui;
+pub mod data_plane;
 pub mod fonts;
 pub mod notifications;
 pub mod resource_explorer;

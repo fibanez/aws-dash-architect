@@ -66,17 +66,15 @@ fn region_code_to_name(code: &str) -> String {
 }
 
 /// Register region-related functions into V8 context
-pub fn register(
-    scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>,
-) -> Result<()> {
+pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
 
     // Register listRegions() function
     let list_regions_fn = v8::Function::new(scope, list_regions_callback)
         .expect("Failed to create listRegions function");
 
-    let fn_name = v8::String::new(scope, "listRegions")
-        .expect("Failed to create function name string");
+    let fn_name =
+        v8::String::new(scope, "listRegions").expect("Failed to create function name string");
     global.set(scope, fn_name.into(), list_regions_fn.into());
 
     Ok(())
@@ -95,7 +93,8 @@ fn list_regions_callback(
     let json_str = match serde_json::to_string(&regions) {
         Ok(json) => json,
         Err(e) => {
-            let msg = v8::String::new(scope, &format!("Failed to serialize regions: {}", e)).unwrap();
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize regions: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
             return;
@@ -204,7 +203,8 @@ const regions = listRegions();
 const codes = regions.map(r => r.code);
 console.log(`Available region codes: ${codes.join(', ')}`);
 ```
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[cfg(test)]
@@ -230,7 +230,10 @@ mod tests {
     fn test_region_code_to_name() {
         assert_eq!(region_code_to_name("us-east-1"), "US East (N. Virginia)");
         assert_eq!(region_code_to_name("eu-west-1"), "Europe (Ireland)");
-        assert_eq!(region_code_to_name("ap-southeast-1"), "Asia Pacific (Singapore)");
+        assert_eq!(
+            region_code_to_name("ap-southeast-1"),
+            "Asia Pacific (Singapore)"
+        );
     }
 
     #[test]

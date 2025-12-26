@@ -372,11 +372,9 @@ Return Values:
                 if result.success {
                     let result_preview = if let Some(content) = result.content.as_object() {
                         if let Some(result_value) = content.get("result") {
-                            format!(
-                                "{}",
-                                serde_json::to_string(result_value)
-                                    .unwrap_or_else(|_| "null".to_string())
-                            )
+                            serde_json::to_string(result_value)
+                                .unwrap_or_else(|_| "null".to_string())
+                                .to_string()
                         } else {
                             "undefined".to_string()
                         }
@@ -426,13 +424,21 @@ Return Values:
         {
             if let Some(agent_type) = crate::app::agent_framework::get_current_agent_type() {
                 if tool_result.success {
-                    logger.log_tool_complete(&agent_type, "execute_javascript", Some(&tool_result.content), elapsed);
+                    logger.log_tool_complete(
+                        &agent_type,
+                        "execute_javascript",
+                        Some(&tool_result.content),
+                        elapsed,
+                    );
+                } else if let Some(error_msg) = tool_result.error.as_ref() {
+                    logger.log_tool_failed(&agent_type, "execute_javascript", error_msg, elapsed);
                 } else {
-                    if let Some(error_msg) = tool_result.error.as_ref() {
-                        logger.log_tool_failed(&agent_type, "execute_javascript", error_msg, elapsed);
-                    } else {
-                        logger.log_tool_failed(&agent_type, "execute_javascript", "Unknown error", elapsed);
-                    }
+                    logger.log_tool_failed(
+                        &agent_type,
+                        "execute_javascript",
+                        "Unknown error",
+                        elapsed,
+                    );
                 }
             }
         }

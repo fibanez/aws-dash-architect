@@ -42,5 +42,5 @@ pub mod types;
 
 // Re-export commonly used types
 pub use client::CloudWatchLogsClient;
-pub use resource_mapping::{get_log_group_name, has_cloudwatch_logs, get_all_log_group_patterns};
+pub use resource_mapping::{get_all_log_group_patterns, get_log_group_name, has_cloudwatch_logs};
 pub use types::{LogEvent, LogQueryResult, QueryOptions, QueryStatistics};

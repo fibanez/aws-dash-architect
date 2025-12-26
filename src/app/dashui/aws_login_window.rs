@@ -80,7 +80,10 @@ impl AwsLoginWindow {
 
     /// Build full Identity Center URL from short name
     fn build_full_url(&self) -> String {
-        format!("https://{}.awsapps.com/start/", self.identity_center_short_name)
+        format!(
+            "https://{}.awsapps.com/start/",
+            self.identity_center_short_name
+        )
     }
 
     /// Show the AWS Login window
@@ -484,7 +487,10 @@ impl AwsLoginWindow {
                     let mut identity_center = match aws_identity_clone.lock() {
                         Ok(guard) => guard,
                         Err(e) => {
-                            tracing::error!("Failed to lock AWS identity center for authorization: {}", e);
+                            tracing::error!(
+                                "Failed to lock AWS identity center for authorization: {}",
+                                e
+                            );
                             return;
                         }
                     };
@@ -503,7 +509,9 @@ impl AwsLoginWindow {
                             // Try to get default role credentials
                             match identity_center.get_default_role_credentials() {
                                 Ok(creds) => {
-                                    tracing::info!("Successfully obtained default role credentials");
+                                    tracing::info!(
+                                        "Successfully obtained default role credentials"
+                                    );
                                     if let Some(exp) = creds.expiration {
                                         tracing::info!(
                                             "Default role credentials expire at: {}",
@@ -517,10 +525,15 @@ impl AwsLoginWindow {
                                     // Set LoggedIn state AFTER credentials are stored
                                     // This ensures credentials are available when state says "logged in"
                                     identity_center.login_state = LoginState::LoggedIn;
-                                    tracing::info!("Credentials stored and login state set to LoggedIn");
+                                    tracing::info!(
+                                        "Credentials stored and login state set to LoggedIn"
+                                    );
                                 }
                                 Err(err) => {
-                                    tracing::error!("Failed to get default role credentials: {}", err);
+                                    tracing::error!(
+                                        "Failed to get default role credentials: {}",
+                                        err
+                                    );
                                     // Set logged in anyway - credentials are optional for some operations
                                     identity_center.login_state = LoginState::LoggedIn;
                                     tracing::warn!("Login completed but credentials unavailable");
@@ -612,32 +625,30 @@ impl AwsLoginWindow {
         }
 
         window.show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    if accounts.is_empty() {
-                        ui.label("No accounts found");
-                    } else {
-                        ScrollArea::vertical()
-                            .max_height(600.0)
-                            .show(ui, |ui| {
-                                for account in &accounts {
-                                    ui.collapsing(
-                                        format!("{} ({})", account.account_name, account.account_id),
-                                        |ui| {
-                                            // Show email if available
-                                            if let Some(email) = &account.account_email {
-                                                ui.horizontal(|ui| {
-                                                    ui.label("Email:");
-                                                    ui.label(email);
-                                                });
-                                            }
-                                        }
-                                    );
-                                    ui.add_space(5.0);
-                                }
-                            });
-                    }
-                });
+            ui.vertical(|ui| {
+                if accounts.is_empty() {
+                    ui.label("No accounts found");
+                } else {
+                    ScrollArea::vertical().max_height(600.0).show(ui, |ui| {
+                        for account in &accounts {
+                            ui.collapsing(
+                                format!("{} ({})", account.account_name, account.account_id),
+                                |ui| {
+                                    // Show email if available
+                                    if let Some(email) = &account.account_email {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Email:");
+                                            ui.label(email);
+                                        });
+                                    }
+                                },
+                            );
+                            ui.add_space(5.0);
+                        }
+                    });
+                }
             });
+        });
 
         self.accounts_window_open = window_open;
     }

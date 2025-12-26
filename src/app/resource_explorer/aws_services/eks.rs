@@ -104,7 +104,7 @@ impl EKSService {
 
         // First get all clusters
         let mut clusters_paginator = client.list_clusters().into_paginator().send();
-        
+
         while let Some(page) = clusters_paginator.next().await {
             let page = page?;
             if let Some(cluster_names) = page.clusters {
@@ -122,7 +122,11 @@ impl EKSService {
                             for profile_name in profile_names {
                                 // Get detailed profile information
                                 if let Ok(profile_details) = self
-                                    .describe_fargate_profile_internal(&client, &cluster_name, &profile_name)
+                                    .describe_fargate_profile_internal(
+                                        &client,
+                                        &cluster_name,
+                                        &profile_name,
+                                    )
                                     .await
                                 {
                                     fargate_profiles.push(profile_details);
@@ -139,7 +143,10 @@ impl EKSService {
                                     );
                                     basic_profile.insert(
                                         "ResourceId".to_string(),
-                                        serde_json::Value::String(format!("{}:{}", cluster_name, profile_name)),
+                                        serde_json::Value::String(format!(
+                                            "{}:{}",
+                                            cluster_name, profile_name
+                                        )),
                                     );
                                     fargate_profiles.push(serde_json::Value::Object(basic_profile));
                                 }
@@ -169,7 +176,10 @@ impl EKSService {
         if let Some(profile) = response.fargate_profile {
             Ok(self.fargate_profile_to_json(&profile))
         } else {
-            Err(anyhow::anyhow!("Fargate profile {} not found", profile_name))
+            Err(anyhow::anyhow!(
+                "Fargate profile {} not found",
+                profile_name
+            ))
         }
     }
 
@@ -339,34 +349,61 @@ impl EKSService {
 
         // Create unique ID combining cluster and profile name
         let cluster_name = profile.cluster_name.as_deref().unwrap_or("unknown-cluster");
-        let profile_name = profile.fargate_profile_name.as_deref().unwrap_or("unknown-profile");
+        let profile_name = profile
+            .fargate_profile_name
+            .as_deref()
+            .unwrap_or("unknown-profile");
         let resource_id = format!("{}:{}", cluster_name, profile_name);
-        
-        json.insert("ResourceId".to_string(), serde_json::Value::String(resource_id));
+
+        json.insert(
+            "ResourceId".to_string(),
+            serde_json::Value::String(resource_id),
+        );
 
         if let Some(profile_name) = &profile.fargate_profile_name {
-            json.insert("FargateProfileName".to_string(), serde_json::Value::String(profile_name.clone()));
-            json.insert("Name".to_string(), serde_json::Value::String(profile_name.clone()));
+            json.insert(
+                "FargateProfileName".to_string(),
+                serde_json::Value::String(profile_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(profile_name.clone()),
+            );
         }
 
         if let Some(cluster_name) = &profile.cluster_name {
-            json.insert("ClusterName".to_string(), serde_json::Value::String(cluster_name.clone()));
+            json.insert(
+                "ClusterName".to_string(),
+                serde_json::Value::String(cluster_name.clone()),
+            );
         }
 
         if let Some(profile_arn) = &profile.fargate_profile_arn {
-            json.insert("FargateProfileArn".to_string(), serde_json::Value::String(profile_arn.clone()));
+            json.insert(
+                "FargateProfileArn".to_string(),
+                serde_json::Value::String(profile_arn.clone()),
+            );
         }
 
         if let Some(created_at) = profile.created_at {
-            json.insert("CreatedAt".to_string(), serde_json::Value::String(created_at.to_string()));
+            json.insert(
+                "CreatedAt".to_string(),
+                serde_json::Value::String(created_at.to_string()),
+            );
         }
 
         if let Some(status) = &profile.status {
-            json.insert("Status".to_string(), serde_json::Value::String(status.as_str().to_string()));
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(status.as_str().to_string()),
+            );
         }
 
         if let Some(pod_execution_role_arn) = &profile.pod_execution_role_arn {
-            json.insert("PodExecutionRoleArn".to_string(), serde_json::Value::String(pod_execution_role_arn.clone()));
+            json.insert(
+                "PodExecutionRoleArn".to_string(),
+                serde_json::Value::String(pod_execution_role_arn.clone()),
+            );
         }
 
         // Handle selectors
@@ -377,7 +414,10 @@ impl EKSService {
                     .map(|selector| {
                         let mut selector_json = serde_json::Map::new();
                         if let Some(namespace) = &selector.namespace {
-                            selector_json.insert("Namespace".to_string(), serde_json::Value::String(namespace.clone()));
+                            selector_json.insert(
+                                "Namespace".to_string(),
+                                serde_json::Value::String(namespace.clone()),
+                            );
                         }
                         if let Some(labels) = &selector.labels {
                             if !labels.is_empty() {
@@ -385,18 +425,30 @@ impl EKSService {
                                     .iter()
                                     .map(|(k, v)| {
                                         let mut label_json = serde_json::Map::new();
-                                        label_json.insert("Key".to_string(), serde_json::Value::String(k.clone()));
-                                        label_json.insert("Value".to_string(), serde_json::Value::String(v.clone()));
+                                        label_json.insert(
+                                            "Key".to_string(),
+                                            serde_json::Value::String(k.clone()),
+                                        );
+                                        label_json.insert(
+                                            "Value".to_string(),
+                                            serde_json::Value::String(v.clone()),
+                                        );
                                         serde_json::Value::Object(label_json)
                                     })
                                     .collect();
-                                selector_json.insert("Labels".to_string(), serde_json::Value::Array(labels_json));
+                                selector_json.insert(
+                                    "Labels".to_string(),
+                                    serde_json::Value::Array(labels_json),
+                                );
                             }
                         }
                         serde_json::Value::Object(selector_json)
                     })
                     .collect();
-                json.insert("Selectors".to_string(), serde_json::Value::Array(selectors_json));
+                json.insert(
+                    "Selectors".to_string(),
+                    serde_json::Value::Array(selectors_json),
+                );
             }
         }
 
@@ -407,11 +459,14 @@ impl EKSService {
                     .iter()
                     .map(|subnet| serde_json::Value::String(subnet.clone()))
                     .collect();
-                json.insert("Subnets".to_string(), serde_json::Value::Array(subnets_json));
+                json.insert(
+                    "Subnets".to_string(),
+                    serde_json::Value::Array(subnets_json),
+                );
             }
         }
 
-        // Handle tags  
+        // Handle tags
         if let Some(tags) = &profile.tags {
             if !tags.is_empty() {
                 let tags_json: Vec<serde_json::Value> = tags

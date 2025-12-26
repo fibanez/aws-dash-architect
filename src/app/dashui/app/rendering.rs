@@ -40,8 +40,10 @@ impl DashApp {
                         tracing::info!("Theme changed");
                     }
                     menu::MenuAction::NavigationStatusBarChanged => {
-                        tracing::info!("Navigation status bar setting changed to: {}",
-                                     self.navigation_status_bar_settings.show_status_bar);
+                        tracing::info!(
+                            "Navigation status bar setting changed to: {}",
+                            self.navigation_status_bar_settings.show_status_bar
+                        );
                     }
                     menu::MenuAction::ShowComplianceDetails => {
                         // Open the Guard Violations window
@@ -208,7 +210,10 @@ impl DashApp {
         let screen_rect = ctx.screen_rect();
 
         // Show tip about command palette
-        let (title, content) = ("Tip", "Press the Space Bar\nto open the Command Window".to_string());
+        let (title, content) = (
+            "Tip",
+            "Press the Space Bar\nto open the Command Window".to_string(),
+        );
 
         egui::Window::new(title)
             .fixed_pos(egui::pos2(
@@ -325,11 +330,10 @@ impl DashApp {
                         ui.label(
                             egui::RichText::new(format!(
                                 "Debug Build - {}@{}",
-                                git_branch,
-                                git_commit
+                                git_branch, git_commit
                             ))
                             .small()
-                            .color(egui::Color32::from_rgb(255, 165, 0)) // Orange color
+                            .color(egui::Color32::from_rgb(255, 165, 0)), // Orange color
                         );
                     }
                 });
@@ -343,7 +347,10 @@ impl DashApp {
             || self.show_startup_popup
             || self.help_window.open
             || self.log_window.open
-            || self.agent_manager_window.as_ref().map_or(false, |w| w.is_open())
+            || self
+                .agent_manager_window
+                .as_ref()
+                .is_some_and(|w| w.is_open())
             || self.verification_window.visible
             || self.resource_explorer.is_open()
         {
@@ -367,12 +374,18 @@ impl DashApp {
     /// Show a notification that the user must login to AWS first
     pub(super) fn show_login_required_notification(&mut self, feature_name: &str) {
         let notification = crate::app::notifications::Notification::new_warning(
-            format!("login_required_{}", feature_name.replace(' ', "_").to_lowercase()),
+            format!(
+                "login_required_{}",
+                feature_name.replace(' ', "_").to_lowercase()
+            ),
             format!("Login Required for {}", feature_name),
             vec![crate::app::notifications::NotificationError {
                 message: "You must login to AWS first before accessing this feature.".to_string(),
                 code: None,
-                details: Some("Use the Dash menu or Command Palette to open the AWS Login window.".to_string()),
+                details: Some(
+                    "Use the Dash menu or Command Palette to open the AWS Login window."
+                        .to_string(),
+                ),
             }],
             feature_name.to_string(),
         );

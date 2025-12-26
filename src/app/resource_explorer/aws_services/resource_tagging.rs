@@ -259,7 +259,12 @@ impl ResourceTaggingService {
             if let Some(cached) = cache.get(&cache_key) {
                 let age = Utc::now() - cached.timestamp;
                 if age < Duration::minutes(Self::CACHE_TTL_MINUTES) {
-                    tracing::debug!("Tag values cache hit for {}/{}/{}", account_id, region, tag_key);
+                    tracing::debug!(
+                        "Tag values cache hit for {}/{}/{}",
+                        account_id,
+                        region,
+                        tag_key
+                    );
                     return Ok(cached.values.clone());
                 }
             }
@@ -426,7 +431,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} EC2 tags for resource {}", tags.len(), resource_id);
+        tracing::debug!(
+            "Fetched {} EC2 tags for resource {}",
+            tags.len(),
+            resource_id
+        );
         Ok(tags)
     }
 
@@ -507,7 +516,11 @@ impl ResourceTaggingService {
             .map(|(key, value)| ResourceTag { key, value })
             .collect();
 
-        tracing::debug!("Fetched {} Lambda tags for function {}", tags.len(), function_arn);
+        tracing::debug!(
+            "Fetched {} Lambda tags for function {}",
+            tags.len(),
+            function_arn
+        );
         Ok(tags)
     }
 
@@ -670,7 +683,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} IAM server certificate tags for {}", tags.len(), certificate_name);
+        tracing::debug!(
+            "Fetched {} IAM server certificate tags for {}",
+            tags.len(),
+            certificate_name
+        );
         Ok(tags)
     }
 
@@ -711,7 +728,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} Organizations tags for {}", tags.len(), resource_id);
+        tracing::debug!(
+            "Fetched {} Organizations tags for {}",
+            tags.len(),
+            resource_id
+        );
         Ok(tags)
     }
 
@@ -754,7 +775,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} RDS tags for resource {}", tags.len(), resource_arn);
+        tracing::debug!(
+            "Fetched {} RDS tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
         Ok(tags)
     }
 
@@ -796,7 +821,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} DynamoDB tags for table {}", tags.len(), resource_arn);
+        tracing::debug!(
+            "Fetched {} DynamoDB tags for table {}",
+            tags.len(),
+            resource_arn
+        );
         Ok(tags)
     }
 
@@ -825,7 +854,10 @@ impl ResourceTaggingService {
 
         // Construct queue URL from queue name
         // Format: https://sqs.{region}.amazonaws.com/{account}/{queue-name}
-        let queue_url = format!("https://sqs.{}.amazonaws.com/{}/{}", region, account_id, queue_name);
+        let queue_url = format!(
+            "https://sqs.{}.amazonaws.com/{}/{}",
+            region, account_id, queue_name
+        );
 
         let response = client
             .list_queue_tags()
@@ -841,7 +873,12 @@ impl ResourceTaggingService {
             .map(|(key, value)| ResourceTag { key, value })
             .collect();
 
-        tracing::debug!("Fetched {} SQS tags for queue {} (url: {})", tags.len(), queue_name, queue_url);
+        tracing::debug!(
+            "Fetched {} SQS tags for queue {} (url: {})",
+            tags.len(),
+            queue_name,
+            queue_url
+        );
         Ok(tags)
     }
 
@@ -974,7 +1011,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} CloudFront tags for distribution {}", tags.len(), resource_arn);
+        tracing::debug!(
+            "Fetched {} CloudFront tags for distribution {}",
+            tags.len(),
+            resource_arn
+        );
         Ok(tags)
     }
 
@@ -1015,7 +1056,11 @@ impl ResourceTaggingService {
             .map(|(key, value)| ResourceTag { key, value })
             .collect();
 
-        tracing::debug!("Fetched {} EKS tags for resource {}", tags.len(), resource_arn);
+        tracing::debug!(
+            "Fetched {} EKS tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
         Ok(tags)
     }
 
@@ -1059,7 +1104,11 @@ impl ResourceTaggingService {
             })
             .collect();
 
-        tracing::debug!("Fetched {} ECS tags for resource {}", tags.len(), resource_arn);
+        tracing::debug!(
+            "Fetched {} ECS tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
         Ok(tags)
     }
 }

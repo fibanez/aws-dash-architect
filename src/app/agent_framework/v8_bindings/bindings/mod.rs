@@ -7,8 +7,8 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
 pub mod accounts;
-pub mod cloudwatch_logs;
 pub mod cloudtrail_events;
+pub mod cloudwatch_logs;
 pub mod regions;
 pub mod resources;
 
@@ -31,9 +31,7 @@ pub use accounts::set_global_aws_identity;
 /// // Now JavaScript can call: listAccounts(), etc.
 /// # }
 /// ```
-pub fn register_bindings(
-    scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>,
-) -> Result<()> {
+pub fn register_bindings(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     // Register account-related functions
     accounts::register(scope)?;
 
@@ -74,7 +72,9 @@ pub fn get_api_documentation() -> String {
     let mut docs = String::new();
 
     docs.push_str("# Available JavaScript APIs\n\n");
-    docs.push_str("The following functions are available in your JavaScript execution environment.\n");
+    docs.push_str(
+        "The following functions are available in your JavaScript execution environment.\n",
+    );
     docs.push_str("All functions are synchronous and return data immediately.\n\n");
 
     docs.push_str("## Account Management\n\n");

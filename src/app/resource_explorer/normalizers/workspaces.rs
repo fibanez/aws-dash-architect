@@ -1,5 +1,5 @@
-use super::*;
 use super::utils::*;
+use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -38,25 +38,17 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::WorkSpaces::Workspace", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::WorkSpaces::Workspace {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::WorkSpaces::Workspace {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -88,13 +80,17 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // WorkSpaces relate to directories, subnets, and security groups
         for resource in all_resources {
             match resource.resource_type.as_str() {
                 "AWS::WorkSpaces::Directory" => {
                     // WorkSpaces belong to directories
-                    if let Some(directory_id) = entry.raw_properties.get("DirectoryId").and_then(|v| v.as_str()) {
+                    if let Some(directory_id) = entry
+                        .raw_properties
+                        .get("DirectoryId")
+                        .and_then(|v| v.as_str())
+                    {
                         if directory_id == resource.resource_id {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
@@ -106,7 +102,11 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 }
                 "AWS::EC2::Subnet" => {
                     // WorkSpaces use subnets
-                    if let Some(subnet_id) = entry.raw_properties.get("SubnetId").and_then(|v| v.as_str()) {
+                    if let Some(subnet_id) = entry
+                        .raw_properties
+                        .get("SubnetId")
+                        .and_then(|v| v.as_str())
+                    {
                         if subnet_id == resource.resource_id {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
@@ -118,7 +118,11 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 }
                 "AWS::KMS::Key" => {
                     // WorkSpaces can use KMS keys for volume encryption
-                    if let Some(volume_encryption_key) = entry.raw_properties.get("VolumeEncryptionKey").and_then(|v| v.as_str()) {
+                    if let Some(volume_encryption_key) = entry
+                        .raw_properties
+                        .get("VolumeEncryptionKey")
+                        .and_then(|v| v.as_str())
+                    {
                         if volume_encryption_key.contains(&resource.resource_id) {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
@@ -139,7 +143,7 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 _ => {}
             }
         }
-        
+
         relationships
     }
 
@@ -183,25 +187,17 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
 
         // Fetch tags asynchronously from AWS API with caching
 
-
         let tags = aws_client
-
-
             .fetch_tags_for_resource("AWS::WorkSpaces::Directory", &resource_id, account, region)
-
-
             .await
-
-
             .unwrap_or_else(|e| {
-
-
-                tracing::warn!("Failed to fetch tags for AWS::WorkSpaces::Directory {}: {}", resource_id, e);
-
+                tracing::warn!(
+                    "Failed to fetch tags for AWS::WorkSpaces::Directory {}: {}",
+                    resource_id,
+                    e
+                );
 
                 Vec::new()
-
-
             });
         let properties = create_normalized_properties(&raw_response);
 
@@ -233,7 +229,7 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
         all_resources: &[ResourceEntry],
     ) -> Vec<ResourceRelationship> {
         let mut relationships = Vec::new();
-        
+
         // WorkSpaces directories relate to subnets and Directory Service
         for resource in all_resources {
             match resource.resource_type.as_str() {
@@ -257,7 +253,11 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
                 }
                 "AWS::DirectoryService::Directory" => {
                     // WorkSpaces directories are often backed by Directory Service
-                    if let Some(directory_type) = entry.raw_properties.get("DirectoryType").and_then(|v| v.as_str()) {
+                    if let Some(directory_type) = entry
+                        .raw_properties
+                        .get("DirectoryType")
+                        .and_then(|v| v.as_str())
+                    {
                         if directory_type == "AD_CONNECTOR" || directory_type == "SIMPLE_AD" {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,
@@ -270,7 +270,7 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
                 _ => {}
             }
         }
-        
+
         relationships
     }
 
@@ -278,4 +278,3 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
         "AWS::WorkSpaces::Directory"
     }
 }
-

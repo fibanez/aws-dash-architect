@@ -1,9 +1,4 @@
-use awsdash::app::{
-    aws_identity::{AwsAccount, AwsCredentials},
-    cfn_dag::ResourceDag,
-    cfn_template::CloudFormationTemplate,
-    projects::{CloudFormationResource, Environment, Project, ResourceNode},
-};
+use awsdash::app::aws_identity::{AwsAccount, AwsCredentials};
 use serde::{Deserialize, Serialize};
 
 /// Contract tests ensure that the public API remains stable
@@ -43,82 +38,6 @@ fn test_aws_account_contract() {
     let _creds = &account.credentials;
 }
 
-#[test]
-fn test_project_contract() {
-    // Test project structure fields
-    let project = Project {
-        name: String::new(),
-        description: String::new(),
-        short_name: String::new(),
-        created: chrono::Utc::now(),
-        updated: chrono::Utc::now(),
-        local_folder: None,
-        git_url: None,
-        environments: vec![],
-        default_region: Some("us-east-1".to_string()),
-        cfn_template: Some(CloudFormationTemplate::default()),
-        compliance_programs: Vec::new(),
-        guard_rules_enabled: true,
-        custom_guard_rules: Vec::new(),
-        environment_compliance: std::collections::HashMap::new(),
-    };
-
-    let _name = &project.name;
-    let _desc = &project.description;
-    let _short = &project.short_name;
-    let _created = &project.created;
-    let _updated = &project.updated;
-    let _folder = &project.local_folder;
-    let _git = &project.git_url;
-    let _envs = &project.environments;
-    let _region = &project.default_region;
-    let _template = &project.cfn_template;
-}
-
-#[test]
-fn test_environment_contract() {
-    // Test environment structure
-    let env = Environment {
-        name: String::new(),
-        aws_regions: vec![],
-        aws_accounts: vec![],
-        deployment_status: None,
-    };
-
-    let _env_name = &env.name;
-    let _regions = &env.aws_regions;
-    let _accounts = &env.aws_accounts;
-}
-
-#[test]
-fn test_resource_node_contract() {
-    let node = ResourceNode {
-        resource_id: String::new(),
-        depends_on: vec![],
-    };
-
-    let _id = &node.resource_id;
-    let _deps = &node.depends_on;
-}
-
-#[test]
-fn test_cloudformation_resource_contract() {
-    let resource = CloudFormationResource::new(String::new(), String::new());
-
-    let _id = &resource.resource_id;
-    let _type = &resource.resource_type;
-    let _props = &resource.properties;
-}
-
-#[test]
-fn test_resource_dag_contract() {
-    // Test DAG creation and basic operations
-    let dag = ResourceDag::new();
-
-    // Test that the type exists and can be created
-    let _dag_size = std::mem::size_of_val(&dag);
-}
-
 /// This test ensures key trait implementations remain stable
 #[test]
 fn test_trait_implementations() {
@@ -127,9 +46,4 @@ fn test_trait_implementations() {
 
     assert_serde_traits::<AwsCredentials>();
     assert_serde_traits::<AwsAccount>();
-    assert_serde_traits::<Project>();
-    assert_serde_traits::<Environment>();
-    assert_serde_traits::<CloudFormationResource>();
-    assert_serde_traits::<ResourceNode>();
-    assert_serde_traits::<ResourceDag>();
 }

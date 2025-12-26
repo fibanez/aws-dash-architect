@@ -395,7 +395,11 @@ impl BedrockAgentService {
             })?;
 
         let client = bedrockagent::Client::new(&aws_config);
-        let response = client.get_prompt().prompt_identifier(prompt_id).send().await?;
+        let response = client
+            .get_prompt()
+            .prompt_identifier(prompt_id)
+            .send()
+            .await?;
 
         Ok(self.prompt_details_to_json(
             &response.name,
@@ -1371,10 +1375,7 @@ impl BedrockAgentService {
     ) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
-        json.insert(
-            "Id".to_string(),
-            serde_json::Value::String(id.to_string()),
-        );
+        json.insert("Id".to_string(), serde_json::Value::String(id.to_string()));
         json.insert(
             "Arn".to_string(),
             serde_json::Value::String(arn.to_string()),
