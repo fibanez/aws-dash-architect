@@ -2,7 +2,6 @@
 worktrees
 # Mac stuff:
 .DS_Store
-.github
 src/bin
 
 # trunk output folder

@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp target/release/awsdash release/
+          cp README.md release/
+          cp LICENSE-APACHE release/
+          cd release
+          tar -czvf ../awsdash-linux-x86_64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-linux-x86_64
+          path: awsdash-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item target/release/awsdash.exe release/
+          Copy-Item README.md release/
+          Copy-Item LICENSE-APACHE release/
+          Compress-Archive -Path release/* -DestinationPath awsdash-windows-x86_64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-windows-x86_64
+          path: awsdash-windows-x86_64.zip
+
+  build-macos-intel:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp target/release/awsdash release/
+          cp README.md release/
+          cp LICENSE-APACHE release/
+          cd release
+          tar -czvf ../awsdash-macos-x86_64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-macos-x86_64
+          path: awsdash-macos-x86_64.tar.gz
+
+  build-macos-arm:
+    runs-on: macos-14  # ARM runner (M1/M2)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp target/release/awsdash release/
+          cp README.md release/
+          cp LICENSE-APACHE release/
+          cd release
+          tar -czvf ../awsdash-macos-arm64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-macos-arm64
+          path: awsdash-macos-arm64.tar.gz
+
+  release:
+    needs: [build-linux, build-windows, build-macos-intel, build-macos-arm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifacts
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz
+            artifacts/awsdash-windows-x86_64/awsdash-windows-x86_64.zip
+            artifacts/awsdash-macos-x86_64/awsdash-macos-x86_64.tar.gz
+            artifacts/awsdash-macos-arm64/awsdash-macos-arm64.tar.gz
