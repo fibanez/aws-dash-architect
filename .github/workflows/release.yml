@@ -74,32 +74,6 @@ jobs:
           name: awsdash-windows-x86_64
           path: awsdash-windows-x86_64.zip
 
-  build-macos-intel:
-    runs-on: macos-13  # Intel runner
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build
-        run: cargo build --release
-
-      - name: Package
-        run: |
-          mkdir -p release
-          cp target/release/awsdash release/
-          cp README.md release/
-          cp LICENSE-APACHE release/
-          cd release
-          tar -czvf ../awsdash-macos-x86_64.tar.gz *
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: awsdash-macos-x86_64
-          path: awsdash-macos-x86_64.tar.gz
-
   build-macos-arm:
     runs-on: macos-14  # ARM runner (M1/M2)
     steps:
@@ -127,7 +101,7 @@ jobs:
           path: awsdash-macos-arm64.tar.gz
 
   release:
-    needs: [build-linux, build-windows, build-macos-intel, build-macos-arm]
+    needs: [build-linux, build-windows, build-macos-arm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,5 +123,4 @@ jobs:
           files: |
             artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz
             artifacts/awsdash-windows-x86_64/awsdash-windows-x86_64.zip
-            artifacts/awsdash-macos-x86_64/awsdash-macos-x86_64.tar.gz
             artifacts/awsdash-macos-arm64/awsdash-macos-arm64.tar.gz
