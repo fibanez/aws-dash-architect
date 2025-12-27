@@ -29,7 +29,7 @@ The AWS Resource Explorer provides a unified view of your AWS resources across m
 
 ### Supported Resource Types
 
-The Explorer supports 175+ AWS resource types across all major services:
+The Explorer supports 174 AWS resource types across all major services:
 - **Compute**: EC2, Lambda, ECS, EKS, Fargate, App Runner
 - **Storage**: S3, EBS, EFS, FSx
 - **Database**: RDS, DynamoDB, ElastiCache, Neptune, DocumentDB, Redshift

@@ -1,6 +1,6 @@
 # Resource Normalizers
 
-Service-specific data normalization system transforming AWS API responses into consistent ResourceEntry format for unified display and processing across 80+ resource types.
+Service-specific data normalization system transforming AWS API responses into consistent ResourceEntry format for unified display and processing across 174 resource types.
 
 ## Core Functionality
 
@@ -13,7 +13,7 @@ Service-specific data normalization system transforming AWS API responses into c
 
 **Key Features:**
 - Factory pattern for creating appropriate normalizers by resource type
-- 80+ supported AWS resource types with specific normalization logic
+- 174 supported AWS resource types with specific normalization logic
 - Utility functions for common normalization tasks (name/status/tag extraction)
 - Property normalization for consistent field naming across services
 - Account color assignment for visual resource organization

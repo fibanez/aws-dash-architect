@@ -9,7 +9,7 @@ This document contains REAL function signatures from aws-sdk-* crates for fetchi
 ## Summary
 
 **Total Services**: 80
-**Total Resource Types**: 175
+**Total Resource Types**: 174
 
 **Services with service-specific tag methods**: 13
 **Services using Resource Groups Tagging API**: 67

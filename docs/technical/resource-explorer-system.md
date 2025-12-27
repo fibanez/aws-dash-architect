@@ -1,11 +1,11 @@
 # Resource Explorer System
 
-Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 156 resource types from 72 AWS services, with hierarchical organization, parent-child resource nesting, and real-time credential management.
+Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 174 resource types from 92 AWS services, with hierarchical organization, parent-child resource nesting, and real-time credential management.
 
 ## Core Functionality
 
 **Key Features:**
-- Multi-account, multi-region AWS resource querying across 156 resource types from 72 services
+- Multi-account, multi-region AWS resource querying across 174 resource types from 92 services
 - Hierarchical tree organization with customizable grouping (by Account, Region, or Resource Type)
 - Parent-child resource nesting with automatic recursive querying (6 nested resource types)
 - Real-time credential management with session caching and automatic renewal
@@ -102,7 +102,7 @@ The UI automatically refreshes when `phase2_enrichment_completed` flag is set in
 - `src/app/resource_explorer/credentials.rs` - Multi-account credential management
 - `src/app/resource_explorer/tree.rs` - Hierarchical resource organization
 - `src/app/resource_explorer/status.rs` - Thread-safe status messaging for async operation progress
-- `src/app/resource_explorer/aws_services/` - 72 AWS service modules (EC2, IAM, S3, Lambda, Bedrock, etc.)
+- `src/app/resource_explorer/aws_services/` - 89 AWS service modules (EC2, IAM, S3, Lambda, Bedrock, etc.)
 - `src/app/resource_explorer/child_resources.rs` - Parent-child resource hierarchy configuration
 - `src/app/resource_explorer/normalizers/` - Resource data transformation modules
 - `src/app/resource_explorer/normalizers/json_expansion.rs` - Embedded JSON detection and expansion
