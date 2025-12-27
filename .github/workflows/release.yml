@@ -85,20 +85,53 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Package
+      - name: Create macOS App Bundle
         run: |
-          mkdir -p release
-          cp target/release/awsdash release/
-          cp README.md release/
-          cp LICENSE-APACHE release/
-          cd release
-          tar -czvf ../awsdash-macos-arm64.tar.gz *
+          # Create app bundle structure
+          mkdir -p "AWSDash.app/Contents/MacOS"
+          mkdir -p "AWSDash.app/Contents/Resources"
+
+          # Copy binary
+          cp target/release/awsdash "AWSDash.app/Contents/MacOS/AWSDash"
+
+          # Create Info.plist
+          cat > "AWSDash.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>AWS Dash</string>
+              <key>CFBundleDisplayName</key>
+              <string>AWS Dash</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.awsdash.app</string>
+              <key>CFBundleVersion</key>
+              <string>0.1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.1.0</string>
+              <key>CFBundleExecutable</key>
+              <string>AWSDash</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSApplicationCategoryType</key>
+              <string>public.app-category.developer-tools</string>
+          </dict>
+          </plist>
+          EOF
+
+          # Package as zip (preserves app bundle structure)
+          zip -r awsdash-macos-arm64.zip AWSDash.app README.md LICENSE-APACHE
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: awsdash-macos-arm64
-          path: awsdash-macos-arm64.tar.gz
+          path: awsdash-macos-arm64.zip
 
   release:
     needs: [build-linux, build-windows, build-macos-arm]
@@ -123,4 +156,4 @@ jobs:
           files: |
             artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz
             artifacts/awsdash-windows-x86_64/awsdash-windows-x86_64.zip
-            artifacts/awsdash-macos-arm64/awsdash-macos-arm64.tar.gz
+            artifacts/awsdash-macos-arm64/awsdash-macos-arm64.zip

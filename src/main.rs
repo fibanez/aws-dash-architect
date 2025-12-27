@@ -58,7 +58,6 @@ fn init_logging() {
         tracing::info!("Tracing initialized to log file: {:?}", log_path);
         tracing::info!("Log levels: awsdash=info, stood=info, AWS SDKs=info/warn");
         tracing::info!("To increase verbosity: RUST_LOG=stood=debug cargo run");
-        eprintln!("Both logging and tracing going to: {:?}", log_path);
 
         // Note: stood library logs at INFO level by default
         // Set RUST_LOG=stood=debug or stood=trace for more detailed agent execution logs
