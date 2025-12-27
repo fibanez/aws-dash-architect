@@ -166,9 +166,10 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
-| `AWS::Bedrock::FoundationModel` | `list_foundation_models` | Query | Lists models |
+| `AWS::Bedrock::Model` | `list_foundation_models` | Query | Lists foundation models |
 | `AWS::Bedrock::InferenceProfile` | `list_inference_profiles` | Query | Via paginator |
 | `AWS::Bedrock::Guardrail` | `list_guardrails` | Query | Via paginator |
+| `AWS::Bedrock::ProvisionedModelThroughput` | `list_provisioned_model_throughputs` | Query | Via paginator |
 | `AWS::Bedrock::CustomModel` | `list_custom_models` | Query | Via paginator |
 | | `get_custom_model` | Query | Detailed model info |
 | `AWS::Bedrock::ImportedModel` | `list_imported_models` | Query | Via paginator |
@@ -185,13 +186,18 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
-| `AWS::BedrockAgent::Agent` | `list_agents` | Query | Via paginator |
+| `AWS::Bedrock::Agent` | `list_agents` | Query | Via paginator |
 | | `get_agent` | Query | Detailed agent info |
-| `AWS::BedrockAgent::KnowledgeBase` | `list_knowledge_bases` | Query | Via paginator |
-| `AWS::BedrockAgent::Prompt` | `list_prompts` | Query | Via paginator |
+| `AWS::Bedrock::AgentAlias` | `list_agent_aliases` | Query | Per agent |
+| `AWS::Bedrock::AgentActionGroup` | `list_agent_action_groups` | Query | Per agent |
+| `AWS::Bedrock::KnowledgeBase` | `list_knowledge_bases` | Query | Via paginator |
+| `AWS::Bedrock::DataSource` | `list_data_sources` | Query | Per knowledge base |
+| `AWS::Bedrock::IngestionJob` | `list_ingestion_jobs` | Query | Per knowledge base/data source |
+| `AWS::Bedrock::Prompt` | `list_prompts` | Query | Via paginator |
 | | `get_prompt` | Query | Detailed prompt info |
-| `AWS::BedrockAgent::Flow` | `list_flows` | Query | Via paginator |
+| `AWS::Bedrock::Flow` | `list_flows` | Query | Via paginator |
 | | `get_flow` | Query | Detailed flow info |
+| `AWS::Bedrock::FlowAlias` | `list_flow_aliases` | Query | Per flow |
 
 ---
 
@@ -200,12 +206,21 @@ This document lists all AWS SDK API calls made by the application for each resou
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
 | `AWS::BedrockAgentCore::AgentRuntime` | `list_agent_runtimes` | Query | Via paginator |
+| `AWS::BedrockAgentCore::AgentRuntimeEndpoint` | `list_agent_runtime_endpoints` | Query | Per agent runtime |
+| `AWS::BedrockAgentCore::AgentRuntimeVersion` | `list_agent_runtime_versions` | Query | Per agent runtime |
 | `AWS::BedrockAgentCore::Memory` | `list_memories` | Query | Via paginator |
 | | `get_memory` | Query | Detailed memory info |
+| `AWS::BedrockAgentCore::MemoryRecord` | `list_memory_records` | Query | Per memory |
 | `AWS::BedrockAgentCore::Gateway` | `list_gateways` | Query | Via paginator |
+| `AWS::BedrockAgentCore::GatewayTarget` | `list_gateway_targets` | Query | Per gateway |
 | `AWS::BedrockAgentCore::Browser` | `list_browsers` | Query | Via paginator |
+| `AWS::BedrockAgentCore::BrowserSession` | `list_browser_sessions` | Query | Per browser |
 | `AWS::BedrockAgentCore::CodeInterpreter` | `list_code_interpreters` | Query | Via paginator |
+| `AWS::BedrockAgentCore::CodeInterpreterSession` | `list_code_interpreter_sessions` | Query | Per code interpreter |
+| `AWS::BedrockAgentCore::Event` | `list_events` | Query | Via paginator |
 | `AWS::BedrockAgentCore::WorkloadIdentity` | `list_workload_identities` | Query | Via paginator |
+| `AWS::BedrockAgentCore::ApiKeyCredentialProvider` | `list_api_key_credential_providers` | Query | Via paginator |
+| `AWS::BedrockAgentCore::OAuth2CredentialProvider` | `list_oauth2_credential_providers` | Query | Via paginator |
 | | `get_resources` | Normalizer | Tag enrichment |
 
 ---
@@ -331,6 +346,8 @@ This document lists all AWS SDK API calls made by the application for each resou
 | | `describe_user_pool_client` | Query | Client details |
 | `AWS::Cognito::IdentityPool` | `list_identity_pools` | Query | Paginated |
 | | `describe_identity_pool` | Query | Auth providers, roles |
+| `AWS::Cognito::UserPoolClient` | `list_user_pool_clients` | Query | Per user pool |
+| | `describe_user_pool_client` | Query | Client details |
 
 **Security Details Retrieved**:
 - User Pool Policies (password policy, account recovery)
@@ -338,6 +355,17 @@ This document lists all AWS SDK API calls made by the application for each resou
 - Email/SMS Configuration
 - User Pool Clients (app client IDs, token validity)
 - Identity Pool auth providers and unauthenticated access settings
+
+---
+
+### Config (AWS Config)
+
+| Resource Type | API Call | Side | Notes |
+|---------------|----------|------|-------|
+| `AWS::Config::ConfigurationRecorder` | `describe_configuration_recorders` | Query | Lists recorders |
+| | `describe_configuration_recorder_status` | Query | Recorder status |
+| `AWS::Config::ConfigRule` | `describe_config_rules` | Query | Via paginator |
+| | `describe_compliance_by_config_rule` | Query | Rule compliance |
 
 ---
 
@@ -382,7 +410,7 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
-| `AWS::DocDB::DBCluster` | `describe_db_clusters` | Query | Lists clusters |
+| `AWS::DocumentDB::Cluster` | `describe_db_clusters` | Query | Lists clusters |
 | | `get_resources` | Normalizer | Tag enrichment |
 
 ---
@@ -441,6 +469,7 @@ This document lists all AWS SDK API calls made by the application for each resou
 | | `get_resources` | Normalizer | Tag enrichment |
 | `AWS::EC2::FlowLog` | (from describe calls) | Query | |
 | | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::VolumeAttachment` | `describe_volumes` | Query | Attachment info in volume response |
 
 **Gaps**: No `describe_instance_attribute` for detailed instance settings.
 
@@ -473,6 +502,10 @@ This document lists all AWS SDK API calls made by the application for each resou
 | | `get_resources` | Normalizer | Tag enrichment |
 | `AWS::ECS::TaskDefinition` | (from tasks) | Query | |
 | | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::ECS::FargateService` | `list_services` | Query | Fargate launch type services |
+| | `describe_services` | Query | Service details |
+| `AWS::ECS::FargateTask` | `list_tasks` | Query | Fargate launch type tasks |
+| | `describe_tasks` | Query | Task details |
 
 **Security Details Retrieved**:
 - Cluster capacity providers and default strategy
@@ -500,6 +533,8 @@ This document lists all AWS SDK API calls made by the application for each resou
 |---------------|----------|------|-------|
 | `AWS::EKS::Cluster` | `list_clusters` | Query | Via paginator |
 | | `describe_cluster` | Query | Detailed cluster info |
+| `AWS::EKS::FargateProfile` | `list_fargate_profiles` | Query | Per cluster |
+| | `describe_fargate_profile` | Query | Profile details |
 
 **Gaps**: No `list_nodegroups`, `describe_nodegroup` for node configuration.
 
@@ -738,6 +773,7 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
+| `AWS::LakeFormation::DataLakeSettings` | `get_data_lake_settings` | Query | Data lake admin settings |
 | `AWS::LakeFormation::Permission` | `list_permissions` | Query | Paginated |
 
 ---
@@ -840,6 +876,10 @@ This document lists all AWS SDK API calls made by the application for each resou
 | `AWS::Organizations::Account` | (from OUs) | Query | Via paginator |
 | `AWS::Organizations::Policy` | `describe_policy` | Query | Policy details |
 | | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::Organizations::AwsServiceAccess` | `list_aws_service_access_for_organization` | Query | Enabled services |
+| `AWS::Organizations::CreateAccountStatus` | `list_create_account_status` | Query | Account creation status |
+| `AWS::Organizations::DelegatedAdministrator` | `list_delegated_administrators` | Query | Delegated admins |
+| `AWS::Organizations::Handshake` | `list_handshakes_for_organization` | Query | Org handshakes |
 
 ---
 
@@ -848,7 +888,8 @@ This document lists all AWS SDK API calls made by the application for each resou
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
 | `AWS::Polly::Lexicon` | `list_lexicons` | Query | Paginated |
-| `AWS::Polly::Voice` | (from lexicons) | Query | |
+| `AWS::Polly::Voice` | `describe_voices` | Query | Available voices |
+| `AWS::Polly::SynthesisTask` | `list_speech_synthesis_tasks` | Query | Async synthesis tasks |
 | | `get_resources` | Normalizer | Tag enrichment |
 
 ---
@@ -993,7 +1034,8 @@ This document lists all AWS SDK API calls made by the application for each resou
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
 | `AWS::Shield::Subscription` | `describe_subscription` | Query | Gets subscription |
-| | `list_protections` | Query | Via paginator |
+| `AWS::Shield::Protection` | `list_protections` | Query | Via paginator |
+| | `describe_protection` | Query | Protection details |
 
 ---
 
@@ -1105,7 +1147,7 @@ This document lists all AWS SDK API calls made by the application for each resou
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
 | `AWS::WorkSpaces::Workspace` | `describe_workspaces` | Query | Paginated |
-| `AWS::WorkSpaces::WorkspaceDirectory` | `describe_workspace_directories` | Query | Paginated |
+| `AWS::WorkSpaces::Directory` | `describe_workspace_directories` | Query | Paginated |
 
 ---
 
