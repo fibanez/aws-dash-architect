@@ -30,12 +30,20 @@ Describe what you want in plain English. AI agents handle the rest—finding res
 
 &nbsp;
 
-## Get Started
+## Download
 
-Requires Rust 1.81+ and AWS Identity Center.
+Pre-built binaries for Linux, Windows, and macOS:
+
+**[Download Latest Release](https://github.com/fibanez/aws-dash-architect/releases/latest)**
+
+&nbsp;
+
+## Build from Source
+
+For the latest development version or to compile yourself. Requires Rust 1.81+.
 
 ```bash
-git clone https://github.com/aws/aws-dash-architect.git
+git clone https://github.com/fibanez/aws-dash-architect.git
 cd aws-dash-architect
 cargo build --release
 ./target/release/awsdash
