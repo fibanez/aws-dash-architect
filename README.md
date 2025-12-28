@@ -36,6 +36,22 @@ Pre-built binaries for Linux, Windows, and macOS:
 
 **[Download Latest Release](https://github.com/fibanez/aws-dash-architect/releases/latest)**
 
+### Installation
+
+**macOS:** Extract the zip, then remove the quarantine attribute before first run:
+```bash
+xattr -cr AWSDash.app
+```
+Then double-click AWSDash.app or drag it to Applications.
+
+**Linux (AppImage):** Download, make executable, and run:
+```bash
+chmod +x AWSDash-x86_64.AppImage
+./AWSDash-x86_64.AppImage
+```
+
+**Windows:** Extract the zip and run `awsdash.exe`.
+
 &nbsp;
 
 ## Build from Source
