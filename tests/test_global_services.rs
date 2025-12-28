@@ -30,10 +30,16 @@ mod global_services_tests {
     }
 
     #[test]
+    fn test_s3_is_global() {
+        // S3 list-buckets API returns all buckets regardless of region
+        // Individual bucket operations are regional, but listing is global
+        assert!(is_global_service("AWS::S3::Bucket"));
+    }
+
+    #[test]
     fn test_regional_services_are_not_global() {
         assert!(!is_global_service("AWS::EC2::Instance"));
         assert!(!is_global_service("AWS::Lambda::Function"));
-        assert!(!is_global_service("AWS::S3::Bucket"));
         assert!(!is_global_service("AWS::RDS::DBInstance"));
         assert!(!is_global_service("AWS::DynamoDB::Table"));
         assert!(!is_global_service("AWS::ECS::Cluster"));

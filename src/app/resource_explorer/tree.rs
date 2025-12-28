@@ -936,6 +936,8 @@ pub struct TreeRenderer {
     json_search_terms: std::collections::HashMap<String, String>,
     // Track which resource names are expanded (not truncated)
     expanded_names: std::collections::HashSet<String>,
+    // Phase 2 enrichment status (set by parent before rendering)
+    pub phase2_in_progress: bool,
 }
 
 impl Default for TreeRenderer {
@@ -959,6 +961,7 @@ impl TreeRenderer {
             json_expand_levels: std::collections::HashMap::new(),
             json_search_terms: std::collections::HashMap::new(),
             expanded_names: std::collections::HashSet::new(),
+            phase2_in_progress: false,
         }
     }
 
@@ -1099,12 +1102,13 @@ impl TreeRenderer {
         )
     }
 
-    /// Generate a cache key from resources, grouping, and search filter
+    /// Generate a cache key from resources, grouping, search filter, and enrichment version
     /// Only rebuild tree if this key changes
     fn generate_cache_key(
         resources: &[super::state::ResourceEntry],
         primary_grouping: &super::state::GroupingMode,
         search_filter: &str,
+        enrichment_version: u64,
     ) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -1124,6 +1128,9 @@ impl TreeRenderer {
         format!("{:?}", primary_grouping).hash(&mut hasher);
         search_filter.hash(&mut hasher);
 
+        // Hash enrichment version to invalidate cache when Phase 2 updates properties
+        enrichment_version.hash(&mut hasher);
+
         format!("{:x}", hasher.finish())
     }
 
@@ -1136,12 +1143,13 @@ impl TreeRenderer {
         search_filter: &str,
         badge_selector: &super::tag_badges::BadgeSelector,
         tag_popularity: &super::tag_badges::TagPopularityTracker,
+        enrichment_version: u64,
     ) {
         // Update badge support (clone to store in renderer)
         self.badge_selector = Some(badge_selector.clone());
         self.tag_popularity = Some(tag_popularity.clone());
 
-        let new_cache_key = Self::generate_cache_key(resources, &primary_grouping, search_filter);
+        let new_cache_key = Self::generate_cache_key(resources, &primary_grouping, search_filter, enrichment_version);
 
         // Only rebuild tree if cache key has changed
         if self.cache_key != new_cache_key || self.cached_tree.is_none() {
@@ -1631,6 +1639,21 @@ impl TreeRenderer {
                             ui.label("Loading detailed properties...");
                         });
                     } else {
+                        // Check if Phase 2 is loading details for this enrichable resource type
+                        let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
+                        let is_enrichable = enrichable_types.contains(&resource.resource_type.as_str());
+
+                        if self.phase2_in_progress && is_enrichable {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    egui::RichText::new("Loading details...")
+                                        .color(Color32::GRAY)
+                                        .italics(),
+                                );
+                            });
+                        }
+
                         let json_data = resource.get_display_properties();
                         ui.scope(|ui| {
                             ui.style_mut()

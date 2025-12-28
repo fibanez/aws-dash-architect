@@ -86,6 +86,41 @@ Phase 2 enrichment reports progress via `QueryProgress` with dedicated status va
 
 The UI automatically refreshes when `phase2_enrichment_completed` flag is set in state.
 
+## Global Services
+
+Some AWS services are global and return the same resources regardless of which region you query. The Resource Explorer handles these automatically.
+
+**Global Resource Types:**
+- `AWS::S3::Bucket` - The `list-buckets` API returns all buckets in the account, regardless of region
+- `AWS::IAM::Role`, `AWS::IAM::User`, `AWS::IAM::Policy` - IAM is a global service
+- `AWS::Route53::HostedZone` - Route53 DNS is global
+- `AWS::CloudFront::Distribution` - CloudFront CDN is global
+- `AWS::Organizations::*` - Organizations is global
+
+**How It Works:**
+
+The `GlobalServiceRegistry` in `global_services.rs` tracks which resource types are global. When querying:
+1. The system checks if a resource type is in the global registry
+2. For global services, it queries only once per account (not per region)
+3. Results are cached with a `Global` region indicator
+4. The region parameter in queries has no filtering effect for global services
+
+**Implementation:**
+
+```rust
+// Check if a resource type is global
+let registry = GlobalServiceRegistry::new();
+if registry.is_global("AWS::S3::Bucket") {
+    // Query once per account, not per region
+}
+
+// Get the default query region for global services
+let query_region = registry.get_query_region(); // Returns "us-east-1"
+```
+
+**Key Files:**
+- `src/app/resource_explorer/global_services.rs` - Global service registry
+
 **Integration Points:**
 - AWS Identity Center for live credential management and multi-account access
 - Window Focus System for keyboard navigation integration

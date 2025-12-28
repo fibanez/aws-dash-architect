@@ -70,6 +70,10 @@ impl GlobalServiceRegistry {
         registry.insert("AWS::Billing::CostCategory");
         registry.insert("AWS::CostExplorer::Report");
 
+        // S3 Buckets - list-buckets API returns all buckets regardless of region
+        // Individual bucket operations are regional, but listing is global
+        registry.insert("AWS::S3::Bucket");
+
         Self {
             global_resource_types: registry,
         }
@@ -111,10 +115,12 @@ mod tests {
         assert!(registry.is_global("AWS::CloudFront::Distribution"));
         assert!(registry.is_global("AWS::Organizations::Organization"));
 
+        // Test S3 buckets (global list, regional operations)
+        assert!(registry.is_global("AWS::S3::Bucket"));
+
         // Test regional services (should return false)
         assert!(!registry.is_global("AWS::EC2::Instance"));
         assert!(!registry.is_global("AWS::Lambda::Function"));
-        assert!(!registry.is_global("AWS::S3::Bucket"));
         assert!(!registry.is_global("AWS::RDS::DBInstance"));
     }
 

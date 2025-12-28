@@ -522,8 +522,9 @@ if (account) {
    - `listRegions(region_hint: string)` - Get available regions
 
 3. **Resource Queries** (`bindings/resources.rs`):
-   - `listResources(account_id, region, resource_type)` - Query resources
-   - `describeResource(account_id, region, resource_type, resource_id)` - Get details
+   - `queryResources(options)` - Query AWS resources with flexible filtering
+   - `listBookmarks()` - Get saved resource bookmarks
+   - `queryBookmarks(options)` - Query resources from a bookmark
 
 4. **CloudWatch Logs** (`bindings/cloudwatch_logs.rs`):
    - `listLogGroups(account_id, region)` - Get log groups
@@ -531,6 +532,58 @@ if (account) {
 
 5. **CloudTrail Events** (`bindings/cloudtrail_events.rs`):
    - `lookupEvents(account_id, region, filters)` - Query CloudTrail
+
+**Resource Query API Details:**
+
+The `queryResources()` function supports detail levels for performance optimization:
+
+```typescript
+interface QueryOptions {
+  accounts: string[] | null;      // Filter by account IDs, null for all
+  regions: string[] | null;       // Filter by regions, null for all
+  resourceTypes: string[];        // Required: AWS resource types
+  detail: "count" | "summary" | "tags" | "full";  // Detail level
+}
+
+interface QueryResult {
+  status: "success" | "partial" | "error";
+  data: Resource[] | null;        // null for "count" mode
+  count: number;                  // Total resources found
+  warnings: string[];             // Non-fatal issues
+  errors: string[];               // Fatal issues
+  detailsLoaded: boolean;         // Phase 2 enrichment completed
+  detailsPending: boolean;        // Phase 2 still running
+}
+```
+
+**Detail Levels:**
+- `"count"` - Returns only the count (fastest, minimal context)
+- `"summary"` - Basic info: id, name, type, account, region
+- `"tags"` - Summary + tags array (for tag-based filtering)
+- `"full"` - Complete data including `detailedProperties` (waits for Phase 2)
+
+**The `detailedProperties` Field:**
+
+Resources that support Phase 2 enrichment have a `detailedProperties` field containing security-relevant data:
+- S3 buckets: bucket policies, encryption, versioning
+- Lambda functions: function configuration, environment variables
+- IAM roles/users: inline policies, attached policies
+- KMS keys: key policies, rotation status
+
+Non-enrichable resources (EC2, VPC) have `detailedProperties: null`.
+
+**Error Codes:**
+
+Errors in the `errors` array have specific codes:
+- `AccessDenied` - IAM permissions insufficient
+- `InvalidToken` - Region not enabled (opt-in regions like me-south-1)
+- `OptInRequired` - Region requires explicit opt-in in AWS Console
+- `Timeout` - Network timeout (retryable)
+- `RateLimitExceeded` - API throttled (retryable)
+
+**Global Services:**
+
+For global services (S3, IAM, Route53, CloudFront, Organizations), the region parameter has no filtering effect. The system queries once per account automatically. See [Resource Explorer System](resource-explorer-system.md#global-services) for details
 
 ### Layer 4: Tool Implementation
 

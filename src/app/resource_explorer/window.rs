@@ -289,8 +289,41 @@ impl ResourceExplorerWindow {
                         let is_active = status_line != "Ready";
 
                         ui.horizontal(|ui| {
-                            // Show status with appropriate styling
-                            if is_active {
+                            // Check for Phase 2 enrichment status
+                            let phase2_status = if let Ok(state) = self.state.try_read() {
+                                if state.phase2_enrichment_in_progress {
+                                    let service = state.phase2_current_service.clone()
+                                        .unwrap_or_else(|| "resources".to_string());
+                                    Some((
+                                        service,
+                                        state.phase2_progress_count,
+                                        state.phase2_progress_total,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            // Show Phase 2 progress if active (takes priority)
+                            if let Some((service, count, total)) = phase2_status {
+                                // Animated spinner indicator
+                                ui.spinner();
+                                let message = format!(
+                                    "Loading {} details... ({}/{})",
+                                    service, count, total
+                                );
+                                ui.label(
+                                    egui::RichText::new(&message)
+                                        .color(Color32::from_rgb(100, 180, 255))
+                                        .small(),
+                                );
+
+                                // Request repaint to keep animation going
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(50));
+                            } else if is_active {
                                 // Animated indicator for active operations
                                 let time = ui.ctx().input(|i| i.time);
                                 let pulse = ((time * 3.0).sin() * 0.3 + 0.7) as f32;
@@ -779,6 +812,9 @@ impl ResourceExplorerWindow {
         state: &ResourceExplorerState,
         tree_renderer: &mut TreeRenderer,
     ) {
+        // Update Phase 2 status for tree renderer
+        tree_renderer.phase2_in_progress = state.phase2_enrichment_in_progress;
+
         // Use remaining available space for the tree view with scrolling
         egui::ScrollArea::vertical()
             .auto_shrink([false, false]) // Don't shrink the scroll area based on content
@@ -834,6 +870,7 @@ impl ResourceExplorerWindow {
                             &state.search_filter,
                             &state.badge_selector,
                             &state.tag_popularity,
+                            state.enrichment_version,
                         );
                     }
                 } else if state.is_loading() {
@@ -1923,6 +1960,9 @@ impl ResourceExplorerWindow {
     ) {
         tracing::info!("Applying bookmark '{}' to Explorer state", bookmark.name);
 
+        // Reset Phase 2 state from any previous bookmark
+        state.reset_phase2_state();
+
         // Clear existing query scope
         state.query_scope.accounts.clear();
         state.query_scope.regions.clear();
@@ -2994,6 +3034,163 @@ impl ResourceExplorerWindow {
 
                                 tracing::info!("✅ Parallel query completed: {} total resources (loading tasks remaining: {})",
                                     state.resources.len(), state.loading_task_count());
+
+                                // Trigger Phase 2 enrichment if there are enrichable resources
+                                let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
+                                let resources_to_enrich: Vec<_> = state.resources.iter()
+                                    .filter(|r| enrichable_types.contains(&r.resource_type.as_str())
+                                        && r.detailed_properties.is_none())
+                                    .cloned()
+                                    .collect();
+
+                                if !resources_to_enrich.is_empty() {
+                                    state.phase2_enrichment_in_progress = true;
+                                    state.phase2_enrichment_completed = false;
+                                    state.phase2_progress_total = resources_to_enrich.len();
+                                    state.phase2_progress_count = 0;
+                                    tracing::info!("🔄 Starting Phase 2 enrichment for {} resources", resources_to_enrich.len());
+
+                                    // Clone necessary data for Phase 2 background task
+                                    let aws_client_for_phase2 = aws_client.clone();
+                                    let cache_for_phase2 = cache.clone();
+                                    let state_arc_for_phase2 = state_arc.clone();
+
+                                    // Spawn Phase 2 in background
+                                    std::thread::spawn(move || {
+                                        let rt = match tokio::runtime::Runtime::new() {
+                                            Ok(rt) => rt,
+                                            Err(e) => {
+                                                tracing::error!("Failed to create Phase 2 runtime: {}", e);
+                                                if let Ok(mut s) = state_arc_for_phase2.try_write() {
+                                                    s.phase2_enrichment_in_progress = false;
+                                                }
+                                                return;
+                                            }
+                                        };
+
+                                        rt.block_on(async {
+                                            let (progress_tx, mut progress_rx) =
+                                                tokio::sync::mpsc::channel::<super::aws_client::QueryProgress>(100);
+                                            let (result_tx, _result_rx) =
+                                                tokio::sync::mpsc::channel::<super::aws_client::QueryResult>(100);
+
+                                            // Clone cache for use in progress handler (original is moved to enrichment)
+                                            let cache_for_sync = cache_for_phase2.clone();
+
+                                            // Start Phase 2 enrichment (spawns internal task)
+                                            aws_client_for_phase2.start_phase2_enrichment(
+                                                resources_to_enrich,
+                                                result_tx,
+                                                Some(progress_tx),
+                                                cache_for_phase2,
+                                            );
+
+                                            // Process progress updates until channel closes
+                                            while let Some(progress) = progress_rx.recv().await {
+                                                let is_completion = matches!(progress.status, super::aws_client::QueryStatus::EnrichmentCompleted);
+                                                let is_enrichment_update = matches!(progress.status, super::aws_client::QueryStatus::EnrichmentInProgress | super::aws_client::QueryStatus::EnrichmentCompleted);
+
+                                                // Read from cache first (async lock) - only for enrichment updates
+                                                let updated_cache = if is_enrichment_update {
+                                                    Some(cache_for_sync.read().await.clone())
+                                                } else {
+                                                    None
+                                                };
+
+                                                // Combined state update in a single lock acquisition
+                                                // Use blocking write().await for completion to ensure it succeeds
+                                                // Use try_write() for in-progress updates (less critical if missed)
+                                                if is_completion {
+                                                    // Blocking write for completion - MUST succeed
+                                                    let mut s = state_arc_for_phase2.write().await;
+
+                                                    // Update progress info
+                                                    s.phase2_current_service = Some(progress.resource_type.clone());
+                                                    if let (Some(processed), Some(total)) =
+                                                        (progress.items_processed, progress.estimated_total)
+                                                    {
+                                                        s.phase2_progress_count = processed;
+                                                        s.phase2_progress_total = total;
+                                                    }
+
+                                                    // Sync cache to state for enrichment updates
+                                                    if let Some(cache) = updated_cache {
+                                                        s.cached_queries = cache;
+
+                                                        // Refresh state.resources with enriched entries from cache
+                                                        let mut refreshed_resources = Vec::new();
+                                                        for cached_entries in s.cached_queries.values() {
+                                                            refreshed_resources.extend(cached_entries.clone());
+                                                        }
+                                                        s.resources = refreshed_resources;
+                                                        // Increment version to invalidate tree cache (forces rebuild with new data)
+                                                        s.enrichment_version = s.enrichment_version.wrapping_add(1);
+
+                                                        // Mark completion
+                                                        s.phase2_enrichment_in_progress = false;
+                                                        s.phase2_enrichment_completed = true;
+                                                        s.phase2_current_service = None;
+                                                        tracing::info!("✅ Phase 2 enrichment completed, synced {} resources to UI", s.resources.len());
+                                                    }
+
+                                                    break; // Exit loop after completion
+                                                } else if let Ok(mut s) = state_arc_for_phase2.try_write() {
+                                                    // Non-blocking for progress updates (less critical if missed)
+
+                                                    // Update progress info
+                                                    s.phase2_current_service = Some(progress.resource_type.clone());
+                                                    if let (Some(processed), Some(total)) =
+                                                        (progress.items_processed, progress.estimated_total)
+                                                    {
+                                                        s.phase2_progress_count = processed;
+                                                        s.phase2_progress_total = total;
+                                                    }
+
+                                                    // Sync cache to state for enrichment updates
+                                                    if let Some(cache) = updated_cache {
+                                                        s.cached_queries = cache;
+
+                                                        // Refresh state.resources with enriched entries from cache
+                                                        let mut refreshed_resources = Vec::new();
+                                                        for cached_entries in s.cached_queries.values() {
+                                                            refreshed_resources.extend(cached_entries.clone());
+                                                        }
+                                                        s.resources = refreshed_resources;
+                                                        // Increment version to invalidate tree cache (forces rebuild with new data)
+                                                        s.enrichment_version = s.enrichment_version.wrapping_add(1);
+                                                    }
+                                                }
+                                            }
+
+                                            // Ensure state is updated if channel closed unexpectedly
+                                            // Use blocking write().await to guarantee cleanup
+                                            {
+                                                // Read cache first (async)
+                                                let updated_cache = cache_for_sync.read().await.clone();
+
+                                                // Then update state with blocking write
+                                                let mut s = state_arc_for_phase2.write().await;
+                                                if s.phase2_enrichment_in_progress {
+                                                    s.cached_queries = updated_cache;
+
+                                                    let mut refreshed_resources = Vec::new();
+                                                    for cached_entries in s.cached_queries.values() {
+                                                        refreshed_resources.extend(cached_entries.clone());
+                                                    }
+                                                    s.resources = refreshed_resources;
+                                                    // Increment version to invalidate tree cache (forces rebuild with new data)
+                                                    s.enrichment_version = s.enrichment_version.wrapping_add(1);
+
+                                                    s.phase2_enrichment_in_progress = false;
+                                                    s.phase2_enrichment_completed = true;
+                                                    s.phase2_current_service = None;
+                                                    tracing::info!("✅ Phase 2 cleanup: marked enrichment complete after channel close");
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+
                                 break;
                             } else if attempt == 2 {
                                 tracing::warn!("Failed to update state after query completion after 3 attempts");

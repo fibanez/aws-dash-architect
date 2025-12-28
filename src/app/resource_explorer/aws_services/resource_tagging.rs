@@ -461,12 +461,25 @@ impl ResourceTaggingService {
 
         let client = s3::Client::new(&aws_config);
 
-        let response = client
-            .get_bucket_tagging()
-            .bucket(bucket_name)
-            .send()
-            .await
-            .context("Failed to fetch S3 bucket tags")?;
+        let response = match client.get_bucket_tagging().bucket(bucket_name).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Handle NoSuchTagSet error - bucket simply has no tags
+                let error_str = format!("{:?}", e);
+                if error_str.contains("NoSuchTagSet") || error_str.contains("NoSuchTagSetError") {
+                    tracing::debug!(
+                        "S3 bucket {} has no tags (NoSuchTagSet)",
+                        bucket_name
+                    );
+                    return Ok(Vec::new());
+                }
+                // For other errors, provide context and propagate
+                return Err(e).context(format!(
+                    "Failed to fetch S3 bucket tags for {}",
+                    bucket_name
+                ));
+            }
+        };
 
         let tags: Vec<ResourceTag> = response
             .tag_set

@@ -188,12 +188,31 @@ Available JavaScript APIs:
 - listRegions(): List all AWS regions with their codes and names
   Returns: Array<{ code: string, name: string }>
 - queryResources(options): Query AWS resources across accounts/regions/types
-  Parameters: { accounts: string[]|null, regions: string[]|null, resourceTypes: string[] }
-  Returns: Array<{ resourceType, accountId, region, resourceId, displayName, status, properties, rawProperties, detailedProperties, tags }>
+  Parameters: {
+    accounts: string[]|null,     // Account IDs (null = random account)
+    regions: string[]|null,      // Region codes (null = us-east-1)
+    resourceTypes: string[],     // CloudFormation types (required)
+    detail: "count"|"summary"|"tags"|"full"  // Detail level (default: "summary")
+  }
+  Detail levels:
+    - "count": Just the count (fastest, minimal context)
+    - "summary": Basic info only - id, name, type, account, region (fast)
+    - "tags": Summary + tags array (for tag-based filtering)
+    - "full": Complete data including policies/encryption (may wait up to 60s for background loading)
+  Returns: {
+    status: "success"|"partial"|"error",
+    data: Array<resource>,       // Resources at requested detail level (null for count)
+    count: number,               // Total count of resources
+    detailsLoaded: boolean,      // True if detailed properties are included
+    detailsPending: boolean,     // True if background loading is still in progress
+    warnings: Array<{ account, region, message }>,
+    errors: Array<{ account, region, code, message }>
+  }
   **CRITICAL**: Use 'rawProperties' for filtering/sorting by AWS-specific fields!
     - properties: Minimal normalized fields (id, arn, created_date ONLY)
     - rawProperties: Full AWS API response (InstanceType, Runtime, Engine, VpcId, etc.)
-    - detailedProperties: Additional Describe API data (if available)
+    - detailedProperties: Additional Describe API data (policies, encryption settings - for enrichable types)
+  Enrichable types (get detailedProperties): Lambda, S3, IAM, SQS, SNS, DynamoDB, KMS, Cognito, etc.
   Examples: AWS::EC2::Instance, AWS::S3::Bucket, AWS::IAM::Role, AWS::Lambda::Function, we support 93 services and 183 resource types
 - queryCloudWatchLogEvents(params): Query CloudWatch Logs for analysis and monitoring
   Parameters: { logGroupName: string, accountId: string, region: string, startTime?: number, endTime?: number, filterPattern?: string, limit?: number, logStreamNames?: string[], startFromHead?: boolean }

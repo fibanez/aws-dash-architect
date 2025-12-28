@@ -2440,7 +2440,7 @@ impl AWSResourceClient {
         }
     }
 
-    /// Format generic AWS errors
+    /// Format generic AWS errors with detailed, actionable messages
     fn format_generic_aws_error(
         &self,
         error_str: &str,
@@ -2450,34 +2450,75 @@ impl AWSResourceClient {
         role_info: &str,
     ) -> String {
         // Check for common AWS SDK error patterns
-        if error_str.contains("CredentialsNotLoaded") || error_str.contains("NoCredentialsError") {
+
+        // Region not enabled/available errors
+        if error_str.contains("InvalidToken")
+            || error_str.contains("InvalidIdentityToken")
+            || error_str.contains("ExpiredTokenException")
+        {
             format!(
-                "Failed to query {} in account {} region {}: Credentials error - {} credentials are invalid or expired",
-                display_name, account_id, region, role_info
+                "Failed to query {} in account {} region {}: Region unavailable or not enabled - {} is not accessible with current credentials. The region may need to be enabled in AWS Organizations or the account may not have access to this region. ({})",
+                display_name, account_id, region, region, role_info
+            )
+        } else if error_str.contains("OptInRequired")
+            || error_str.contains("SubscriptionRequiredException")
+        {
+            format!(
+                "Failed to query {} in account {} region {}: Region opt-in required - {} requires explicit opt-in through AWS Console. Enable this region in the AWS Account settings. ({})",
+                display_name, account_id, region, region, role_info
+            )
+        } else if error_str.contains("AuthFailure")
+            || error_str.contains("UnauthorizedAccess")
+            || error_str.contains("AccessDeniedException")
+            || error_str.contains("AccessDenied")
+        {
+            format!(
+                "Failed to query {} in account {} region {}: Access denied - {} does not have permission to query this resource type. Check IAM policies for {} permissions. ({})",
+                display_name, account_id, region, role_info, display_name, role_info
+            )
+        } else if error_str.contains("CredentialsNotLoaded")
+            || error_str.contains("NoCredentialsError")
+        {
+            format!(
+                "Failed to query {} in account {} region {}: Credentials error - {} credentials are invalid or expired. Try refreshing SSO credentials with 'aws sso login'. ({})",
+                display_name, account_id, region, role_info, role_info
             )
         } else if error_str.contains("TimeoutError") || error_str.contains("timeout") {
             format!(
-                "Failed to query {} in account {} region {}: Request timeout - network connectivity issue with {}",
+                "Failed to query {} in account {} region {}: Request timeout - network connectivity issue or slow response from AWS. Check network connection. ({})",
                 display_name, account_id, region, role_info
             )
         } else if error_str.contains("EndpointResolutionError") {
             format!(
-                "Failed to query {} in account {} region {}: Endpoint resolution error - service may not be available in {} with {}",
-                display_name, account_id, region, region, role_info
+                "Failed to query {} in account {} region {}: Endpoint resolution error - service {} may not be available in {}. ({})",
+                display_name, account_id, region, display_name, region, role_info
             )
         } else if error_str.contains("DispatchFailure") {
             format!(
-                "Failed to query {} in account {} region {}: Network dispatch failure - connectivity issue with {}",
+                "Failed to query {} in account {} region {}: Network dispatch failure - connectivity issue. Check network connection and VPN if applicable. ({})",
                 display_name, account_id, region, role_info
             )
         } else if error_str.contains("ConstructionFailure") {
             format!(
-                "Failed to query {} in account {} region {}: Request construction error - invalid request with {}",
+                "Failed to query {} in account {} region {}: Request construction error - invalid request parameters. ({})",
+                display_name, account_id, region, role_info
+            )
+        } else if error_str.contains("ServiceUnavailable")
+            || error_str.contains("InternalServerError")
+        {
+            format!(
+                "Failed to query {} in account {} region {}: AWS service temporarily unavailable - try again later. ({})",
+                display_name, account_id, region, role_info
+            )
+        } else if error_str.contains("ThrottlingException") || error_str.contains("Throttling") {
+            format!(
+                "Failed to query {} in account {} region {}: Request throttled - too many API calls. AWS Dash will retry automatically. ({})",
                 display_name, account_id, region, role_info
             )
         } else {
+            // For unknown errors, provide the full error string for debugging
             format!(
-                "Failed to query {} in account {} region {}: {} - {}",
+                "Failed to query {} in account {} region {}: {} ({})",
                 display_name, account_id, region, error_str, role_info
             )
         }
@@ -3828,6 +3869,16 @@ impl AWSResourceClient {
                     .await;
             }
 
+            // Log current cache state before enrichment
+            {
+                let cache_read = cache.read().await;
+                tracing::info!(
+                    "Phase 2: Current cache contains {} keys: {:?}",
+                    cache_read.len(),
+                    cache_read.keys().collect::<Vec<_>>()
+                );
+            }
+
             // Group resources by account/region/type for batch processing
             let mut grouped: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
             for resource in resources_to_enrich {
@@ -3838,52 +3889,104 @@ impl AWSResourceClient {
                 grouped.entry(key).or_default().push(resource);
             }
 
+            tracing::info!(
+                "Phase 2: Grouped resources into {} cache keys: {:?}",
+                grouped.len(),
+                grouped.keys().collect::<Vec<_>>()
+            );
+
             let mut processed = 0;
 
             for (cache_key_prefix, resources) in grouped {
+                tracing::debug!(
+                    "Phase 2: Processing {} resources for cache key: {}",
+                    resources.len(),
+                    cache_key_prefix
+                );
                 for mut resource in resources {
                     // Fetch details based on resource type
                     let details_result = client.fetch_resource_details(&resource).await;
 
-                    if let Ok(details) = details_result {
-                        // Merge details into resource
-                        resource.detailed_properties = Some(details);
-                        resource.detailed_timestamp = Some(Utc::now());
+                    match details_result {
+                        Ok(details) => {
+                            // Merge Phase 2 details with existing raw_properties
+                            // This ensures get_display_properties() shows both Phase 1 and Phase 2 data
+                            let merged = Self::merge_properties(
+                                &resource.raw_properties,
+                                &details,
+                            );
+                            resource.detailed_properties = Some(merged);
+                            resource.detailed_timestamp = Some(Utc::now());
+                            tracing::debug!(
+                                "Phase 2: Got details for {} ({})",
+                                resource.resource_id,
+                                resource.resource_type
+                            );
 
-                        // Update cache with enriched resource (use cache_key_prefix from grouping)
-                        {
-                            let mut cache_write = cache.write().await;
-                            if let Some(cached_resources) = cache_write.get_mut(&cache_key_prefix) {
-                                // Find and update the resource in cache
-                                if let Some(cached) = cached_resources
-                                    .iter_mut()
-                                    .find(|r| r.resource_id == resource.resource_id)
+                            // Update cache with enriched resource (use cache_key_prefix from grouping)
+                            {
+                                let mut cache_write = cache.write().await;
+                                if let Some(cached_resources) =
+                                    cache_write.get_mut(&cache_key_prefix)
                                 {
-                                    cached.detailed_properties =
-                                        resource.detailed_properties.clone();
-                                    cached.detailed_timestamp = resource.detailed_timestamp;
+                                    // Find and update the resource in cache
+                                    if let Some(cached) = cached_resources
+                                        .iter_mut()
+                                        .find(|r| r.resource_id == resource.resource_id)
+                                    {
+                                        // Merge with the cached resource's raw_properties
+                                        let merged = Self::merge_properties(
+                                            &cached.raw_properties,
+                                            &details,
+                                        );
+                                        cached.detailed_properties = Some(merged);
+                                        cached.detailed_timestamp = resource.detailed_timestamp;
+                                        tracing::debug!(
+                                            "Phase 2: Updated cache for {} in key {}",
+                                            resource.resource_id,
+                                            cache_key_prefix
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            "Phase 2: Resource {} not found in cache under key {}",
+                                            resource.resource_id,
+                                            cache_key_prefix
+                                        );
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "Phase 2: Cache key {} not found (available keys: {:?})",
+                                        cache_key_prefix,
+                                        cache_write.keys().collect::<Vec<_>>()
+                                    );
                                 }
                             }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Phase 2: Failed to fetch details for {} ({}): {}",
+                                resource.resource_id,
+                                resource.resource_type,
+                                e
+                            );
                         }
                     }
 
                     processed += 1;
 
-                    // Send progress update
+                    // Send progress update for every resource (not just every 10)
                     if let Some(ref sender) = progress_sender {
-                        if processed % 10 == 0 || processed == total {
-                            let _ = sender
-                                .send(QueryProgress {
-                                    account: resource.account_id.clone(),
-                                    region: resource.region.clone(),
-                                    resource_type: "Phase 2 Enrichment".to_string(),
-                                    status: QueryStatus::EnrichmentInProgress,
-                                    message: format!("Enriched {}/{} resources", processed, total),
-                                    items_processed: Some(processed),
-                                    estimated_total: Some(total),
-                                })
-                                .await;
-                        }
+                        let _ = sender
+                            .send(QueryProgress {
+                                account: resource.account_id.clone(),
+                                region: resource.region.clone(),
+                                resource_type: "Phase 2 Enrichment".to_string(),
+                                status: QueryStatus::EnrichmentInProgress,
+                                message: format!("Enriched {}/{} resources", processed, total),
+                                items_processed: Some(processed),
+                                estimated_total: Some(total),
+                            })
+                            .await;
                     }
                 }
             }
@@ -4109,6 +4212,39 @@ impl AWSResourceClient {
                 resource.resource_type
             )),
         }
+    }
+
+    /// Merge Phase 2 enrichment details with Phase 1 raw_properties
+    ///
+    /// This creates a combined JSON object that includes both the original
+    /// resource properties from Phase 1 (list operations) and the detailed
+    /// properties from Phase 2 (describe operations).
+    fn merge_properties(
+        raw_properties: &serde_json::Value,
+        enrichment_details: &serde_json::Value,
+    ) -> serde_json::Value {
+        // Start with a clone of raw_properties
+        let mut merged = raw_properties.clone();
+
+        // If both are objects, merge the enrichment details into raw_properties
+        if let (Some(merged_obj), Some(details_obj)) =
+            (merged.as_object_mut(), enrichment_details.as_object())
+        {
+            // Add enrichment details under a "DetailedInfo" key to keep them separate
+            // This preserves the original structure while adding Phase 2 data
+            merged_obj.insert(
+                "DetailedInfo".to_string(),
+                serde_json::Value::Object(details_obj.clone()),
+            );
+        } else {
+            // If structures don't match, just wrap both in a container
+            merged = serde_json::json!({
+                "OriginalProperties": raw_properties,
+                "DetailedInfo": enrichment_details
+            });
+        }
+
+        merged
     }
 }
 

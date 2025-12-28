@@ -627,6 +627,11 @@ pub struct ResourceExplorerState {
     // Two-phase loading state
     pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
     pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
+    pub phase2_current_service: Option<String>, // Current service being enriched (e.g., "S3 buckets")
+    pub phase2_progress_count: usize,        // Resources enriched so far
+    pub phase2_progress_total: usize,        // Total resources to enrich
+    // Tree cache invalidation
+    pub enrichment_version: u64,             // Incremented each time resources are enriched (forces tree rebuild)
 }
 
 impl Default for ResourceExplorerState {
@@ -664,7 +669,64 @@ impl ResourceExplorerState {
             show_property_hierarchy_builder: false,
             phase2_enrichment_in_progress: false,
             phase2_enrichment_completed: false,
+            phase2_current_service: None,
+            phase2_progress_count: 0,
+            phase2_progress_total: 0,
+            enrichment_version: 0,
         }
+    }
+
+    /// Returns the list of resource types that support Phase 2 enrichment.
+    /// These types require additional API calls to fetch detailed properties
+    /// like policies, encryption settings, and configurations.
+    pub fn enrichable_resource_types() -> &'static [&'static str] {
+        &[
+            "AWS::Lambda::Function",
+            "AWS::KMS::Key",
+            "AWS::IAM::Role",
+            "AWS::IAM::User",
+            "AWS::IAM::Policy",
+            "AWS::S3::Bucket",
+            "AWS::SQS::Queue",
+            "AWS::SNS::Topic",
+            "AWS::Cognito::UserPool",
+            "AWS::Cognito::IdentityPool",
+            "AWS::CodeCommit::Repository",
+            "AWS::DynamoDB::Table",
+            "AWS::CloudFormation::Stack",
+            "AWS::ECS::Cluster",
+            "AWS::ECS::Service",
+            "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "AWS::EMR::Cluster",
+            "AWS::Events::EventBus",
+            "AWS::Glue::Job",
+            "AWS::Backup::BackupPlan",
+            "AWS::Backup::BackupVault",
+            "AWS::StepFunctions::StateMachine",
+            "AWS::OpenSearchService::Domain",
+            "AWS::Redshift::Cluster",
+        ]
+    }
+
+    /// Check if a resource type needs Phase 2 enrichment and doesn't have details yet
+    pub fn needs_phase2_enrichment(resource_type: &str, has_detailed_properties: bool) -> bool {
+        !has_detailed_properties && Self::enrichable_resource_types().contains(&resource_type)
+    }
+
+    /// Reset Phase 2 state for a new query
+    pub fn reset_phase2_state(&mut self) {
+        self.phase2_enrichment_in_progress = false;
+        self.phase2_enrichment_completed = false;
+        self.phase2_current_service = None;
+        self.phase2_progress_count = 0;
+        self.phase2_progress_total = 0;
+    }
+
+    /// Update Phase 2 progress
+    pub fn update_phase2_progress(&mut self, service: Option<String>, count: usize, total: usize) {
+        self.phase2_current_service = service;
+        self.phase2_progress_count = count;
+        self.phase2_progress_total = total;
     }
 
     pub fn add_account(&mut self, account: AccountSelection) {

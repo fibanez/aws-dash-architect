@@ -104,6 +104,12 @@ pub struct UnifiedQueryResult<T> {
     pub warnings: Vec<QueryWarning>,
     /// Errors that occurred during query (per account/region)
     pub errors: Vec<QueryError>,
+    /// True if Phase 2 enrichment has completed and detailed_properties are available
+    #[serde(default)]
+    pub details_loaded: bool,
+    /// True if Phase 2 enrichment is currently in progress
+    #[serde(default)]
+    pub details_pending: bool,
 }
 
 impl<T: Default> UnifiedQueryResult<T> {
@@ -115,6 +121,8 @@ impl<T: Default> UnifiedQueryResult<T> {
             count,
             warnings: Vec::new(),
             errors: Vec::new(),
+            details_loaded: false,
+            details_pending: false,
         }
     }
 
@@ -126,6 +134,8 @@ impl<T: Default> UnifiedQueryResult<T> {
             count: 0,
             warnings: Vec::new(),
             errors: Vec::new(),
+            details_loaded: false,
+            details_pending: false,
         }
     }
 
@@ -137,6 +147,8 @@ impl<T: Default> UnifiedQueryResult<T> {
             count: 0,
             warnings: Vec::new(),
             errors,
+            details_loaded: false,
+            details_pending: false,
         }
     }
 
@@ -153,6 +165,8 @@ impl<T: Default> UnifiedQueryResult<T> {
             count,
             warnings,
             errors,
+            details_loaded: false,
+            details_pending: false,
         }
     }
 
@@ -179,6 +193,38 @@ impl<T: Default> UnifiedQueryResult<T> {
             count,
             warnings,
             errors,
+            details_loaded: false,
+            details_pending: false,
+        }
+    }
+
+    /// Determine status based on success/error counts with Phase 2 status
+    pub fn from_results_with_phase2_status(
+        data: T,
+        count: usize,
+        success_count: usize,
+        error_count: usize,
+        warnings: Vec<QueryWarning>,
+        errors: Vec<QueryError>,
+        details_loaded: bool,
+        details_pending: bool,
+    ) -> Self {
+        let status = if error_count == 0 {
+            QueryResultStatus::Success
+        } else if success_count == 0 {
+            QueryResultStatus::Error
+        } else {
+            QueryResultStatus::Partial
+        };
+
+        Self {
+            status,
+            data,
+            count,
+            warnings,
+            errors,
+            details_loaded,
+            details_pending,
         }
     }
 }

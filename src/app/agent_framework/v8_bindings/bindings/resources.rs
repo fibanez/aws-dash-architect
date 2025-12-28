@@ -19,7 +19,8 @@ use tracing::{debug, info, warn};
 
 use crate::app::agent_framework::tools_registry::get_global_aws_client;
 use crate::app::resource_explorer::state::{
-    AccountSelection, QueryScope, RegionSelection, ResourceEntry, ResourceTypeSelection,
+    AccountSelection, QueryScope, RegionSelection, ResourceEntry, ResourceExplorerState,
+    ResourceTypeSelection,
 };
 use crate::app::resource_explorer::unified_query::{
     BookmarkInfo, DetailLevel, QueryError, QueryWarning, ResourceFull, ResourceSummary,
@@ -291,10 +292,11 @@ async fn query_resources_internal(
     // Start parallel query (spawns background tasks)
     let client_clone = Arc::clone(&client);
     let cache_clone = Arc::clone(&query_cache);
+    let scope_for_query = scope.clone(); // Clone for spawn, keep original for later use
     tokio::spawn(async move {
         if let Err(e) = client_clone
             .query_aws_resources_parallel(
-                &scope,
+                &scope_for_query,
                 result_tx,
                 None, // No progress updates needed
                 cache_clone,
@@ -359,6 +361,77 @@ async fn query_resources_internal(
         total_count, success_count, error_count
     );
 
+    // Phase 2 wait logic for detail="full"
+    let (mut details_loaded, mut details_pending) = (false, false);
+
+    if detail_level == DetailLevel::Full {
+        // Check if any enrichable resources need Phase 2
+        let enrichable_types = ResourceExplorerState::enrichable_resource_types();
+        let needs_phase2 = all_entries.iter().any(|e| {
+            enrichable_types.contains(&e.resource_type.as_str())
+                && e.detailed_properties.is_none()
+        });
+
+        if needs_phase2 {
+            if let Some(state) = &explorer_state {
+                // Check if Phase 2 is in progress
+                let should_wait = {
+                    let guard = state.read().await;
+                    guard.phase2_enrichment_in_progress
+                };
+
+                if should_wait {
+                    info!("Waiting for Phase 2 enrichment to complete...");
+                    let start = std::time::Instant::now();
+                    let timeout = std::time::Duration::from_secs(60);
+
+                    loop {
+                        if start.elapsed() > timeout {
+                            warn!("Phase 2 wait timeout after 60 seconds");
+                            details_pending = true;
+                            break;
+                        }
+
+                        let still_waiting = {
+                            let guard = state.read().await;
+                            guard.phase2_enrichment_in_progress
+                        };
+
+                        if !still_waiting {
+                            info!("Phase 2 enrichment completed, refreshing entries");
+                            // Refresh entries from cache with enriched data
+                            all_entries = refresh_entries_from_cache(&scope, state.clone()).await;
+                            details_loaded = true;
+                            break;
+                        }
+
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                } else {
+                    // Phase 2 not running - check if details already loaded
+                    let completed = {
+                        let guard = state.read().await;
+                        guard.phase2_enrichment_completed
+                    };
+                    if completed {
+                        // Refresh to get enriched data
+                        all_entries = refresh_entries_from_cache(&scope, state.clone()).await;
+                        details_loaded = true;
+                    }
+                }
+            }
+        } else {
+            // No enrichable resources need Phase 2, or all already have details
+            details_loaded = all_entries.iter().all(|e| {
+                !enrichable_types.contains(&e.resource_type.as_str())
+                    || e.detailed_properties.is_some()
+            });
+        }
+    }
+
+    // Update total count after potential refresh
+    let total_count = all_entries.len();
+
     // Apply detail level filtering and convert to JSON
     let data = match detail_level {
         DetailLevel::Count => {
@@ -381,17 +454,45 @@ async fn query_resources_internal(
         }
     };
 
-    // Build result with appropriate status
-    let result = UnifiedQueryResult::from_results(
+    // Build result with appropriate status and Phase 2 metadata
+    let result = UnifiedQueryResult::from_results_with_phase2_status(
         data,
         total_count,
         success_count,
         error_count,
         warnings,
         errors,
+        details_loaded,
+        details_pending,
     );
 
     Ok(result)
+}
+
+/// Refresh entries from the explorer state cache
+/// This is called after Phase 2 completes to get the enriched data
+async fn refresh_entries_from_cache(
+    scope: &QueryScope,
+    state: Arc<tokio::sync::RwLock<crate::app::resource_explorer::state::ResourceExplorerState>>,
+) -> Vec<ResourceEntry> {
+    let guard = state.read().await;
+    let mut entries = Vec::new();
+
+    for account in &scope.accounts {
+        for region in &scope.regions {
+            for resource_type in &scope.resource_types {
+                let cache_key = format!(
+                    "{}:{}:{}",
+                    account.account_id, region.region_code, resource_type.resource_type
+                );
+                if let Some(cached) = guard.cached_queries.get(&cache_key) {
+                    entries.extend(cached.clone());
+                }
+            }
+        }
+    }
+
+    entries
 }
 
 /// Categorize an error message into a code and whether it's a warning
@@ -772,9 +873,11 @@ interface ResourceWithTags extends ResourceSummary {
 
 // detail: 'full'
 interface ResourceFull extends ResourceWithTags {
-  properties: object;           // Normalized properties
-  rawProperties: object;        // Original AWS API response
-  detailedProperties: object | null;  // From Describe queries
+  properties: object;           // Normalized properties from Phase 1
+  rawProperties: object;        // Original AWS API response from Phase 1
+  detailedProperties: object | null;  // Phase 2 enrichment data (only for enrichable types)
+                                      // Contains: policies, encryption settings, configurations
+                                      // null for non-enrichable types (EC2, VPC, etc.)
 }
 ```
 
@@ -917,6 +1020,60 @@ return result.data;
 - Use `detail: "full"` only when you need all properties
 - Results are cached and shared with AWS Explorer UI
 - Large queries (many accounts x regions x types) may take 10-60 seconds
+
+**Global Services (region parameter has no effect):**
+Some AWS services are global - they return the same resources regardless of which region you query:
+- `AWS::S3::Bucket` - list-buckets returns ALL buckets in the account, not region-specific
+- `AWS::IAM::Role`, `AWS::IAM::User`, `AWS::IAM::Policy` - IAM is global
+- `AWS::Route53::HostedZone` - Route53 is global DNS
+- `AWS::CloudFront::Distribution` - CloudFront is global CDN
+- `AWS::Organizations::*` - Organizations is global
+
+For global services, the region parameter doesn't filter results. The system automatically
+queries once per account regardless of how many regions you specify.
+
+**Two-Phase Loading and detailedProperties:**
+Some resource types require two phases to load complete data:
+- Phase 1: Quick list query returns basic info immediately
+- Phase 2: Background enrichment fetches detailed properties (policies, configurations, etc.)
+
+The `detailedProperties` field is ONLY populated for "enrichable" resource types after Phase 2:
+- AWS::S3::Bucket (bucket policies, encryption, versioning)
+- AWS::Lambda::Function (function configuration, environment variables)
+- AWS::IAM::Role, AWS::IAM::User, AWS::IAM::Policy (inline policies, attached policies)
+- AWS::KMS::Key (key policies, rotation status)
+- AWS::SQS::Queue (queue policies, attributes)
+- AWS::SNS::Topic (topic policies, subscriptions)
+- AWS::DynamoDB::Table (table settings, GSIs)
+- AWS::ECS::Cluster, AWS::ECS::Service
+- AWS::CloudFormation::Stack (stack resources, outputs)
+- And others (Cognito, CodeCommit, ELBv2, EMR, EventBridge, Glue)
+
+Non-enrichable resources (EC2 instances, VPCs, Subnets) have `detailedProperties: null`
+because their full data is available in Phase 1.
+
+When using `detail: "full"`, the query waits for Phase 2 to complete (up to 60s timeout).
+The result includes Phase 2 status:
+```typescript
+interface QueryResult {
+  // ... other fields ...
+  detailsLoaded: boolean;   // true if Phase 2 completed for all enrichable resources
+  detailsPending: boolean;  // true if Phase 2 is still running (timeout occurred)
+}
+```
+
+**Common Error Codes:**
+Errors in the `errors` array have specific codes:
+- `AccessDenied` - IAM permissions insufficient for this resource type
+- `InvalidToken` - Region not enabled or not accessible (common for opt-in regions like me-south-1, af-south-1)
+- `OptInRequired` - Region requires explicit opt-in in AWS Account settings
+- `Timeout` - Network timeout (retryable)
+- `RateLimitExceeded` - API throttled (retryable, appears as warning not error)
+- `NotFound` - Resource or service not found
+- `InvalidRequest` - Invalid parameters
+
+Region-related errors (InvalidToken, OptInRequired) are normal for opt-in regions that
+haven't been enabled in the account. These can be safely ignored for most use cases.
 
 ---
 
