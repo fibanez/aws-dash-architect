@@ -1,9 +1,11 @@
 # Changelog
 
-## [Unreleased] - 0.1.0
+## [Unreleased] - 0.1.3
 
 ### December 2025
-- **Unified Querying System**: Cross-service resource search with unified query API and two-phase loading pattern across 30+ AWS services
+- **Two-Phase Resource Loading**: Background enrichment for security details across 24 resource types with non-blocking UI updates
+- **Cross-Platform Distribution**: GitHub Actions release workflow with Linux AppImage, macOS app bundle, and Windows builds
+- **Unified Querying System**: Cross-service resource search with unified query API across 30+ AWS services
 - **Agent Model Selection**: Type-safe model selection with AgentModel enum and markdown rendering for LLM responses
 
 ### November 2025

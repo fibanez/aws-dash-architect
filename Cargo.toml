@@ -1,6 +1,6 @@
 [package]
 name = "awsdash"
-version = "0.1.0"
+version = "0.1.3"
 authors = ["Fernando Ibanez <fernando.ibanez@gmail.com>"]
 edition = "2021"
 default-run = "awsdash"
