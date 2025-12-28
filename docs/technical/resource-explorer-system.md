@@ -1,13 +1,13 @@
 # Resource Explorer System
 
-Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 174 resource types from 92 AWS services, with hierarchical organization, parent-child resource nesting, and real-time credential management.
+Comprehensive AWS resource discovery and visualization platform providing multi-account, multi-region resource querying across 177 resource types from 82 AWS services, with hierarchical organization, parent-child resource nesting, and real-time credential management.
 
 ## Core Functionality
 
 **Key Features:**
-- Multi-account, multi-region AWS resource querying across 174 resource types from 92 services
+- Multi-account, multi-region AWS resource querying across 177 resource types from 82 services
 - Hierarchical tree organization with customizable grouping (by Account, Region, or Resource Type)
-- Parent-child resource nesting with automatic recursive querying (6 nested resource types)
+- Parent-child resource nesting with automatic recursive querying (5 child resource types)
 - Real-time credential management with session caching and automatic renewal
 - Fuzzy search and filtering capabilities for large resource inventories
 - Tag-based filtering (show only tagged, show only untagged resources)

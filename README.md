@@ -24,7 +24,7 @@ Describe what you want in plain English. AI agents handle the rest—finding res
 
 ### Built for real AWS scale
 
-- 92 AWS services, 174 resource types
+- 82 AWS services, 177 resource types
 - Direct AWS API integration with smart caching
 - Works with AWS Identity Center
 

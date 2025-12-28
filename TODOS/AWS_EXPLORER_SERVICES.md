@@ -4,7 +4,16 @@ This document lists all AWS services currently implemented in the AWS Explorer f
 
 ## Summary
 
-Total implemented services: **157 resource types** across **72 AWS services**
+Total implemented services: **172 UI-registered resource types + 5 child resource types = 177 total** across **82 AWS services**
+
+**Last Updated**: December 2025
+
+### Child Resource Types (auto-queried, not UI-registered)
+- `AWS::Bedrock::DataSource` (child of KnowledgeBase)
+- `AWS::Bedrock::IngestionJob` (child of DataSource)
+- `AWS::Bedrock::AgentAlias` (child of Agent)
+- `AWS::Bedrock::AgentActionGroup` (child of Agent)
+- `AWS::Bedrock::FlowAlias` (child of Flow)
 
 ## Services by Category
 
@@ -32,6 +41,8 @@ Total implemented services: **157 resource types** across **72 AWS services**
 
 #### Lambda
 - Lambda Function (`AWS::Lambda::Function`)
+- Lambda Layer (`AWS::Lambda::LayerVersion`)
+- Lambda Event Source Mapping (`AWS::Lambda::EventSourceMapping`)
 
 #### ECS (Elastic Container Service)
 - ECS Cluster (`AWS::ECS::Cluster`)
@@ -181,6 +192,7 @@ Total implemented services: **157 resource types** across **72 AWS services**
 
 #### CloudTrail
 - CloudTrail Trail (`AWS::CloudTrail::Trail`)
+- CloudTrail Event (`AWS::CloudTrail::Event`)
 - CloudTrail Event Data Store (`AWS::CloudTrail::EventDataStore`)
 
 #### Config
@@ -192,8 +204,15 @@ Total implemented services: **157 resource types** across **72 AWS services**
 - Systems Manager Document (`AWS::SSM::Document`)
 
 #### Organizations
+- Organization (`AWS::Organizations::Organization`)
+- Organizations Root (`AWS::Organizations::Root`)
 - Organizational Unit (`AWS::Organizations::OrganizationalUnit`)
+- Organizations Account (`AWS::Organizations::Account`)
 - Service Control Policy (`AWS::Organizations::Policy`)
+- Delegated Administrator (`AWS::Organizations::DelegatedAdministrator`)
+- Organization Handshake (`AWS::Organizations::Handshake`)
+- Account Creation Status (`AWS::Organizations::CreateAccountStatus`)
+- AWS Service Access (`AWS::Organizations::AwsServiceAccess`)
 
 #### Backup
 - Backup Plan (`AWS::Backup::BackupPlan`)
@@ -250,7 +269,30 @@ Total implemented services: **157 resource types** across **72 AWS services**
 - SageMaker Model (`AWS::SageMaker::Model`)
 
 #### Bedrock
-- Bedrock Model (`AWS::Bedrock::Model`)
+- Bedrock Foundation Model (`AWS::Bedrock::Model`)
+- Bedrock Inference Profile (`AWS::Bedrock::InferenceProfile`)
+- Bedrock Guardrail (`AWS::Bedrock::Guardrail`)
+- Bedrock Provisioned Model Throughput (`AWS::Bedrock::ProvisionedModelThroughput`)
+- Bedrock Agent (`AWS::Bedrock::Agent`)
+- Bedrock Knowledge Base (`AWS::Bedrock::KnowledgeBase`)
+- Bedrock Custom Model (`AWS::Bedrock::CustomModel`)
+- Bedrock Imported Model (`AWS::Bedrock::ImportedModel`)
+- Bedrock Evaluation Job (`AWS::Bedrock::EvaluationJob`)
+- Bedrock Model Invocation Job (`AWS::Bedrock::ModelInvocationJob`)
+- Bedrock Prompt (`AWS::Bedrock::Prompt`)
+- Bedrock Flow (`AWS::Bedrock::Flow`)
+- Bedrock Model Customization Job (`AWS::Bedrock::ModelCustomizationJob`)
+
+#### BedrockAgentCore
+- AgentCore Runtime (`AWS::BedrockAgentCore::AgentRuntime`)
+- AgentCore Runtime Endpoint (`AWS::BedrockAgentCore::AgentRuntimeEndpoint`)
+- AgentCore Memory (`AWS::BedrockAgentCore::Memory`)
+- AgentCore Gateway (`AWS::BedrockAgentCore::Gateway`)
+- AgentCore Browser (`AWS::BedrockAgentCore::Browser`)
+- AgentCore Code Interpreter (`AWS::BedrockAgentCore::CodeInterpreter`)
+- AgentCore API Key Credential Provider (`AWS::BedrockAgentCore::ApiKeyCredentialProvider`)
+- AgentCore OAuth2 Credential Provider (`AWS::BedrockAgentCore::OAuth2CredentialProvider`)
+- AgentCore Workload Identity (`AWS::BedrockAgentCore::WorkloadIdentity`)
 
 #### Lex
 - Lex Bot (`AWS::Lex::Bot`)
@@ -295,8 +337,7 @@ Total implemented services: **157 resource types** across **72 AWS services**
 ### Application Performance Monitoring
 
 #### X-Ray
-- X-Ray Service Map (`AWS::XRay::ServiceMap`)
-- X-Ray Trace Summary (`AWS::XRay::TraceSummary`)
+- X-Ray Sampling Rule (`AWS::XRay::SamplingRule`)
 
 ### Security & DDoS Protection
 

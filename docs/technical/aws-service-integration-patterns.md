@@ -1,6 +1,6 @@
 # AWS Service Integration Patterns
 
-Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 92 integrated services with parallel processing capabilities and hierarchical parent-child resource support.
+Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 82 integrated services with parallel processing capabilities and hierarchical parent-child resource support.
 
 ## Core Functionality
 
@@ -236,6 +236,109 @@ pub async fn query_multiple_accounts_parallel(&self, accounts: Vec<String>, regi
 - Account-specific credential isolation
 - No hardcoded credentials or access keys
 - Proper error message sanitization
+
+## Adding Child Resources (Parent-Child Hierarchies)
+
+Child resources are automatically queried when their parent is discovered. They appear nested under their parent in the tree view. Child resources are queried during **Phase 1** (fast discovery), not Phase 2.
+
+**When to use child resources:**
+- Resource requires parent ID to query (e.g., `list_aliases(function_name)`)
+- Resource cannot exist without parent
+- Resource is logically nested under parent in AWS Console
+
+**Step 1: Add to child_resources.rs**
+
+```rust
+// In src/app/resource_explorer/child_resources.rs
+
+// Single parent parameter (most common)
+parent_to_children.insert(
+    "AWS::Lambda::Function".to_string(),
+    vec![
+        ChildResourceDef {
+            child_type: "AWS::Lambda::Alias".to_string(),
+            query_method: ChildQueryMethod::SingleParent {
+                param_name: "function_name",  // Key in parent's raw_data
+            },
+        },
+        ChildResourceDef {
+            child_type: "AWS::Lambda::Version".to_string(),
+            query_method: ChildQueryMethod::SingleParent {
+                param_name: "function_name",
+            },
+        },
+    ],
+);
+
+// Multiple parent parameters (for grandchildren or complex hierarchies)
+parent_to_children.insert(
+    "AWS::Glue::Database".to_string(),
+    vec![ChildResourceDef {
+        child_type: "AWS::Glue::Table".to_string(),
+        query_method: ChildQueryMethod::MultiParent {
+            params: vec!["catalog_id", "database_name"],
+        },
+    }],
+);
+```
+
+**Step 2: Add query method to aws_client.rs**
+
+```rust
+// In query_child_resources() method
+async fn query_child_resources(
+    &self,
+    parent: &ResourceEntry,
+    child_config: &ChildResourceConfig,
+) -> Result<Vec<ResourceEntry>> {
+    // ...existing code...
+
+    // Add match arm for new child type
+    "AWS::Lambda::Alias" => {
+        let function_name = parent.raw_data.get("FunctionName")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing FunctionName in parent"))?;
+
+        let service = self.get_lambda_service();
+        service.list_aliases(account, region, function_name).await?
+    }
+}
+```
+
+**Step 3: Implement service method**
+
+```rust
+// In aws_services/lambda.rs
+pub async fn list_aliases(
+    &self,
+    account_id: &str,
+    region: &str,
+    function_name: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let aws_config = self.credential_coordinator
+        .create_aws_config_for_account(account_id, region)
+        .await?;
+    let client = lambda::Client::new(&aws_config);
+
+    let response = client
+        .list_aliases()
+        .function_name(function_name)
+        .send()
+        .await?;
+
+    // Convert to JSON...
+}
+```
+
+**Step 4: Add normalizer**
+
+Create normalizer in `normalizers/lambda_alias.rs` following standard patterns.
+
+**Key Points:**
+- Child resources inherit account/region from parent
+- `parent_id` field links child to parent for tree nesting
+- Children are queried recursively (grandchildren supported up to depth 3)
+- Errors in child queries don't fail parent query (graceful degradation)
 
 **Architectural Decisions:**
 - **Lazy Loading**: Services created only when needed to minimize resource usage

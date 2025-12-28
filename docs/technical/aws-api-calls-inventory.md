@@ -1164,7 +1164,8 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Category | Count |
 |----------|-------|
-| AWS Services Covered | 92 |
+| AWS Services Covered | 82 |
+| Resource Types | 177 (172 UI-registered + 5 child types) |
 | Unique API Methods | 200+ |
 | Query-side calls (Phase 1) | All services |
 | Query-side calls (Phase 2) | 24 resource types |

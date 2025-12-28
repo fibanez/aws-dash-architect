@@ -5,15 +5,123 @@ This document lists AWS services that are **NOT YET IMPLEMENTED** in the AWS Exp
 
 ## Summary
 
-**Currently Implemented**: 156 resource types across 72 AWS services
-**Hierarchical Child Resources**: 6 child resource types (Bedrock DataSource, IngestionJob, AgentAlias, AgentActionGroup, FlowAlias) with automatic nested querying
-**Missing Resources**: 200+ critical resources across existing services
+**Currently Implemented**: 172 UI-registered resource types + 5 child resource types = 177 total queryable types across 82 AWS services
+**Hierarchical Child Resources**: 5 child resource types (Bedrock DataSource, IngestionJob, AgentAlias, AgentActionGroup, FlowAlias) with automatic nested querying
+**Missing Resources**: 180+ critical resources across existing services
 **Implementation Goal**: Complete coverage of all resources for top 100+ most-used AWS services
 
-### Recent Updates
-- ✅ **Hierarchical Child Resource System**: Implemented parent-child relationships for Bedrock resources (KnowledgeBase → DataSource → IngestionJob, Agent → AgentAlias/AgentActionGroup, Flow → FlowAlias)
-- ✅ **Automatic Recursive Querying**: Children are automatically discovered when querying parent resources
-- ✅ **Tree View Nesting**: Child resources display nested under their parents in the tree view
+### Known Issues
+- ⚠️ **EMR**: Implementation exists (emr.rs) but NOT registered in UI dialogs.rs - needs registration fix
+
+---
+
+### Implemented in Code but Missing UI Registration
+
+These are implemented in `src/app/resource_explorer/aws_client.rs` but not registered in `src/app/resource_explorer/dialogs.rs`.
+
+- `AWS::ECS::CapacityProvider`
+- `AWS::ECS::TaskSet`
+- `AWS::EKS::Addon`
+- `AWS::EKS::IdentityProviderConfig`
+- `AWS::EMR::Cluster`
+- `AWS::IAM::ServerCertificate`
+- `AWS::RDS::DBClusterSnapshot`
+- `AWS::RDS::OptionGroup`
+
+### Dev/Ops Priority Additions (from Top 50)
+
+These are top-50 Dev/Ops items that were missing from this roadmap. Added here to ensure they are scheduled.
+
+- `AWS::SSM::Command` - (list_commands)
+- `AWS::SSM::CommandInvocation` - (list_command_invocations)
+- `AWS::SSM::ManagedInstance` - (describe_instance_information)
+- `AWS::SSM::Session` - (describe_sessions)
+- `AWS::SSM::MaintenanceWindow` - (describe_maintenance_windows)
+- `AWS::SSM::PatchBaseline` - (describe_patch_baselines)
+- `AWS::SSM::ComplianceSummary` - (list_compliance_summaries)
+- `AWS::SSM::ResourceComplianceSummary` - (list_resource_compliance_summaries)
+- `AWS::SSM::InventoryEntry` - (list_inventory_entries)
+- `AWS::SSM::InstancePatchState` - (describe_instance_patch_states)
+- `AWS::AppSync::DataSource` - (list_data_sources)
+- `AWS::AppSync::Resolver` - (list_resolvers)
+- `AWS::AppSync::Function` - (list_functions)
+- `AWS::AppSync::ApiKey` - (list_api_keys)
+- `AWS::AppSync::DomainName` - (list_domain_names)
+- `AWS::Redshift::ClusterSnapshot` - (describe_cluster_snapshots)
+- `AWS::Redshift::ClusterParameterGroup` - (describe_cluster_parameter_groups)
+- `AWS::Redshift::ClusterParameter` - (describe_cluster_parameters)
+- `AWS::Redshift::ClusterSubnetGroup` - (describe_cluster_subnet_groups)
+- `AWS::Redshift::EventSubscription` - (describe_event_subscriptions)
+- `AWS::Redshift::LoggingStatus` - (describe_logging_status)
+- `AWS::Redshift::ScheduledAction` - (describe_scheduled_actions)
+- `AWS::Redshift::ReservedNode` - (describe_reserved_nodes)
+- `AWS::Redshift::ReservedNodeOffering` - (describe_reserved_node_offerings)
+- `AWS::Redshift::SnapshotCopyGrant` - (describe_snapshot_copy_grants)
+- `AWS::CloudWatch::MetricStream` - (list_metric_streams)
+- `AWS::Logs::LogStream` - (describe_log_streams)
+- `AWS::Lambda::EventInvokeConfig` - (list_function_event_invoke_configs)
+- `AWS::Lambda::ProvisionedConcurrencyConfig` - (list_provisioned_concurrency_configs)
+- `AWS::S3::ObjectVersion` - (list_object_versions)
+- `AWS::S3::BucketInventoryConfiguration` - (list_bucket_inventory_configurations)
+- `AWS::S3::BucketIntelligentTieringConfiguration` - (list_bucket_intelligent_tiering_configurations)
+- `AWS::ECS::ServiceDeployment` - (describe_service_deployments)
+- `AWS::ECS::TaskDefinitionFamily` - (list_task_definition_families)
+- `AWS::EKS::AccessEntry` - (list_access_entries)
+- `AWS::EKS::Insight` - (list_insights)
+- `AWS::EKS::Update` - (describe_update)
+
+---
+
+### 🔗 Child Resources for Auto-Query (Phase 1)
+
+These resources require a parent ID to query and should be implemented as **child resources** in `child_resources.rs` for automatic nested querying. They are queried during Phase 1 (fast discovery) when their parent is discovered.
+
+**Implementation guide:** See [AWS Service Integration Patterns - Adding Child Resources](../docs/technical/aws-service-integration-patterns.md#adding-child-resources-parent-child-hierarchies)
+
+#### High Priority (Lambda, EKS, Logs) - ~12 resources
+
+| Child Resource | Parent Resource | API Call |
+|----------------|-----------------|----------|
+| `Lambda::Version` | Lambda::Function | `list_versions_by_function(function_name)` |
+| `Lambda::Alias` | Lambda::Function | `list_aliases(function_name)` |
+| `Lambda::EventInvokeConfig` | Lambda::Function | `list_function_event_invoke_configs(function_name)` |
+| `Lambda::ProvisionedConcurrencyConfig` | Lambda::Function | `list_provisioned_concurrency_configs(function_name)` |
+| `EKS::NodeGroup` | EKS::Cluster | `list_nodegroups(cluster_name)` |
+| `EKS::Addon` | EKS::Cluster | `list_addons(cluster_name)` |
+| `EKS::AccessEntry` | EKS::Cluster | `list_access_entries(cluster_name)` |
+| `EKS::PodIdentityAssociation` | EKS::Cluster | `list_pod_identity_associations(cluster_name)` |
+| `Logs::LogStream` | Logs::LogGroup | `describe_log_streams(log_group_name)` |
+| `Logs::MetricFilter` | Logs::LogGroup | `describe_metric_filters(log_group_name)` |
+| `Logs::SubscriptionFilter` | Logs::LogGroup | `describe_subscription_filters(log_group_name)` |
+
+#### Medium Priority (IAM, CloudFormation, ECS, AppSync) - ~12 resources
+
+| Child Resource | Parent Resource | API Call |
+|----------------|-----------------|----------|
+| `IAM::AccessKey` | IAM::User | `list_access_keys(user_name)` |
+| `IAM::MFADevice` | IAM::User | `list_mfa_devices(user_name)` |
+| `CloudFormation::ChangeSet` | CloudFormation::Stack | `list_change_sets(stack_name)` |
+| `CloudFormation::StackInstance` | CloudFormation::StackSet | `list_stack_instances(stack_set_name)` |
+| `ECS::ContainerInstance` | ECS::Cluster | `list_container_instances(cluster)` |
+| `ECS::ServiceDeployment` | ECS::Service | `describe_service_deployments(service)` |
+| `AppSync::DataSource` | AppSync::GraphQLApi | `list_data_sources(api_id)` |
+| `AppSync::Resolver` | AppSync::GraphQLApi | `list_resolvers(api_id, type_name)` |
+| `AppSync::Function` | AppSync::GraphQLApi | `list_functions(api_id)` |
+| `AppSync::ApiKey` | AppSync::GraphQLApi | `list_api_keys(api_id)` |
+| `RDS::DBProxyTargetGroup` | RDS::DBProxy | `describe_db_proxy_target_groups(proxy_name)` |
+
+#### Lower Priority (Glue, S3, Redshift, SSM) - ~8 resources
+
+| Child Resource | Parent Resource | API Call |
+|----------------|-----------------|----------|
+| `Glue::Table` | Glue::Database | `get_tables(database_name)` |
+| `Glue::Partition` | Glue::Table | `get_partitions(database, table)` |
+| `S3::ObjectVersion` | S3::Bucket | `list_object_versions(bucket)` |
+| `S3::BucketInventoryConfiguration` | S3::Bucket | `list_bucket_inventory_configurations(bucket)` |
+| `Redshift::ClusterParameter` | Redshift::ClusterParameterGroup | `describe_cluster_parameters(group)` |
+| `SSM::CommandInvocation` | SSM::Command | `list_command_invocations(command_id)` |
+
+**Total: ~30 child resources** that should be auto-queried with their parents.
 
 ---
 
@@ -81,8 +189,8 @@ Missing critical S3 resources:
 - `AWS::S3::BucketLifecycle` - Lifecycle Rules
 
 ### **6. Lambda (Extended Serverless)** ⭐⭐⭐⭐⭐
-- `AWS::Lambda::LayerVersion` - Lambda Layers (list_layers)
-- `AWS::Lambda::EventSourceMapping` - Event Source Mappings (list_event_source_mappings)
+- ~~`AWS::Lambda::LayerVersion` - Lambda Layers (list_layers)~~ ✅ IMPLEMENTED
+- ~~`AWS::Lambda::EventSourceMapping` - Event Source Mappings (list_event_source_mappings)~~ ✅ IMPLEMENTED
 - `AWS::Lambda::Version` - Function Versions (list_versions_by_function)
 - `AWS::Lambda::Alias` - Function Aliases (list_aliases)
 - `AWS::Lambda::CodeSigningConfig` - Code Signing Configurations
@@ -100,9 +208,7 @@ Missing critical S3 resources:
 ### **8. RDS (Extended Database)** ⭐⭐⭐⭐⭐
 - `AWS::RDS::DBProxy` - RDS Proxies (describe_db_proxies)
 - `AWS::RDS::DBProxyTargetGroup` - Proxy Target Groups
-- `AWS::RDS::OptionGroup` - Option Groups (describe_option_groups)
 - `AWS::RDS::EventSubscription` - Event Subscriptions (describe_event_subscriptions)
-- `AWS::RDS::DBClusterSnapshot` - Cluster Snapshots
 - `AWS::RDS::DBSecurityGroup` - DB Security Groups (Classic)
 - `AWS::RDS::DBClusterParameterGroup` - Cluster Parameter Groups
 - `AWS::RDS::GlobalCluster` - Aurora Global Clusters
@@ -114,7 +220,6 @@ Missing critical S3 resources:
 - `AWS::IAM::MFADevice` - MFA Devices (list_mfa_devices)
 - `AWS::IAM::SAMLProvider` - SAML Identity Providers (list_saml_providers)
 - `AWS::IAM::OpenIDConnectProvider` - OIDC Providers
-- `AWS::IAM::ServerCertificate` - Server Certificates
 - `AWS::IAM::VirtualMFADevice` - Virtual MFA Devices
 - `AWS::IAM::ServiceLinkedRole` - Service-Linked Roles
 
@@ -128,15 +233,11 @@ Missing critical S3 resources:
 
 ### **11. ECS (Extended Container)** ⭐⭐⭐⭐
 - `AWS::ECS::ContainerInstance` - Container Instances (list_container_instances)
-- `AWS::ECS::CapacityProvider` - Capacity Providers (describe_capacity_providers)
-- `AWS::ECS::TaskSet` - Task Sets
 - `AWS::ECS::ServiceRegistry` - Service Discovery Registries
 - `AWS::ECS::Attribute` - ECS Attributes
 
 ### **12. EKS (Extended Kubernetes)** ⭐⭐⭐⭐
 - `AWS::EKS::NodeGroup` - Managed Node Groups (list_nodegroups)
-- `AWS::EKS::Addon` - EKS Add-ons (list_addons)
-- `AWS::EKS::IdentityProviderConfig` - Identity Provider Configurations
 - `AWS::EKS::PodIdentityAssociation` - Pod Identity Associations
 
 ### **13. SNS (Complete Messaging)** ⭐⭐⭐⭐
@@ -225,14 +326,14 @@ Missing critical S3 resources:
 *Very popular services not yet implemented*
 
 ### **Data & Analytics**
-20. **Amazon EMR (Registration Fix Needed)** ⭐⭐⭐⭐
-    - `AWS::EMR::Cluster` - EMR Clusters (list_clusters implemented but NOT registered)
-    - `AWS::EMR::Step` - EMR Steps (list_steps)
-    - `AWS::EMR::InstanceGroup` - Instance Groups
-    - `AWS::EMR::InstanceFleet` - Instance Fleets
-    - `AWS::EMR::SecurityConfiguration` - Security Configurations
-    - `AWS::EMR::Studio` - EMR Studios
-    - Note: Service has list_clusters but needs registration in get_default_resource_types()
+20. **Amazon EMR (Registration Fix Needed)** ⭐⭐⭐⭐ ⚠️ NEEDS UI REGISTRATION
+    - `AWS::EMR::Cluster` - EMR Clusters (IMPLEMENTED in emr.rs, NOT registered in dialogs.rs)
+    - `AWS::EMR::Step` - EMR Steps (list_steps) - needs implementation
+    - `AWS::EMR::InstanceGroup` - Instance Groups - needs implementation
+    - `AWS::EMR::InstanceFleet` - Instance Fleets - needs implementation
+    - `AWS::EMR::SecurityConfiguration` - Security Configurations - needs implementation
+    - `AWS::EMR::Studio` - EMR Studios - needs implementation
+    - **FIX NEEDED**: Add EMR::Cluster to get_default_resource_types() in dialogs.rs
 
 ### **AI/ML Services**
 21. **Amazon Comprehend** ⭐⭐⭐⭐
