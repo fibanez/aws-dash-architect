@@ -3,6 +3,9 @@
 ## [Unreleased] - 0.1.3
 
 ### December 2025
+- **Agent Middleware System**: Extensible conversation middleware with logging, token tracking, and auto-analysis layers plus cancellation support
+- **AWS Resource Expansion**: Added 27 new resource types for CloudWatch, CloudWatch Logs, EC2, and Lambda services
+- **CLI Verification Framework**: Property comparison tool for validating SDK responses against AWS CLI output
 - **Two-Phase Resource Loading**: Background enrichment for security details across 24 resource types with non-blocking UI updates
 - **Cross-Platform Distribution**: GitHub Actions release workflow with Linux AppImage, macOS app bundle, and Windows builds
 - **Unified Querying System**: Cross-service resource search with unified query API across 30+ AWS services
