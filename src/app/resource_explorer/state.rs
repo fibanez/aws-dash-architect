@@ -624,6 +624,10 @@ pub struct ResourceExplorerState {
     pub min_tag_resources_for_grouping: usize, // Minimum resource count for tags to appear in GroupBy dropdown
     // Property grouping UI state (M6)
     pub show_property_hierarchy_builder: bool, // Show property hierarchy builder dialog
+    // Phase 1: Resource listing progress tracking
+    pub phase1_pending_services: HashSet<String>, // Services still loading (display names)
+    pub phase1_failed_services: HashSet<String>,  // Services that failed to load
+    pub phase1_total_services: usize,             // Total services requested
     // Two-phase loading state
     pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
     pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
@@ -668,6 +672,9 @@ impl ResourceExplorerState {
             show_tag_hierarchy_builder: false,
             min_tag_resources_for_grouping: 1, // Default: show all tags with at least 1 resource
             show_property_hierarchy_builder: false,
+            phase1_pending_services: HashSet::new(),
+            phase1_failed_services: HashSet::new(),
+            phase1_total_services: 0,
             phase2_enrichment_in_progress: false,
             phase2_enrichment_completed: false,
             phase2_current_service: None,
@@ -708,6 +715,64 @@ impl ResourceExplorerState {
             "AWS::OpenSearchService::Domain",
             "AWS::Redshift::Cluster",
         ]
+    }
+
+    // Phase 1 progress tracking methods
+
+    /// Start Phase 1 tracking with the list of services to query
+    pub fn start_phase1_tracking(&mut self, services: Vec<String>) {
+        tracing::info!("📋 Phase 1: Starting tracking for {} services: {:?}", services.len(), services);
+        self.phase1_pending_services = services.iter().cloned().collect();
+        self.phase1_failed_services.clear();
+        self.phase1_total_services = services.len();
+    }
+
+    /// Mark a service as completed (successfully loaded)
+    pub fn mark_phase1_service_completed(&mut self, service: &str) {
+        let was_present = self.phase1_pending_services.remove(service);
+        tracing::debug!(
+            "✓ Phase 1: {} completed (was_tracked: {}, remaining: {})",
+            service, was_present, self.phase1_pending_services.len()
+        );
+        if self.phase1_pending_services.is_empty() {
+            tracing::info!("✅ Phase 1: All services completed! (failed: {})", self.phase1_failed_services.len());
+        }
+    }
+
+    /// Mark a service as failed
+    pub fn mark_phase1_service_failed(&mut self, service: &str) {
+        let was_present = self.phase1_pending_services.remove(service);
+        self.phase1_failed_services.insert(service.to_string());
+        tracing::warn!(
+            "✗ Phase 1: {} failed (was_tracked: {}, remaining: {}, total_failed: {})",
+            service, was_present, self.phase1_pending_services.len(), self.phase1_failed_services.len()
+        );
+    }
+
+    /// Check if Phase 1 is still in progress
+    pub fn is_phase1_in_progress(&self) -> bool {
+        !self.phase1_pending_services.is_empty()
+    }
+
+    /// Get Phase 1 progress info: (pending_count, total_count, pending_services)
+    pub fn get_phase1_progress(&self) -> (usize, usize, Vec<String>) {
+        let mut pending: Vec<String> = self.phase1_pending_services.iter().cloned().collect();
+        pending.sort(); // Alphabetical for consistent display
+        (pending.len(), self.phase1_total_services, pending)
+    }
+
+    /// Reset Phase 1 state
+    pub fn reset_phase1_state(&mut self) {
+        if !self.phase1_pending_services.is_empty() {
+            tracing::warn!(
+                "⚠️ Phase 1: Resetting with {} services still pending: {:?}",
+                self.phase1_pending_services.len(),
+                self.phase1_pending_services
+            );
+        }
+        self.phase1_pending_services.clear();
+        self.phase1_failed_services.clear();
+        self.phase1_total_services = 0;
     }
 
     /// Check if a resource type needs Phase 2 enrichment and doesn't have details yet

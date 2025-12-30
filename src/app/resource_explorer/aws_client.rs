@@ -565,21 +565,187 @@ impl AWSResourceClient {
                 // CloudFront is global, uses ARN
                 tagging_service.get_cloudfront_distribution_tags(account, region, resource_id).await?
             }
-            "AWS::EKS::Cluster"
-            | "AWS::EKS::FargateProfile"
-            | "AWS::EKS::Addon"
-            | "AWS::EKS::IdentityProviderConfig" => {
-                tagging_service.get_eks_resource_tags(account, region, resource_id).await?
+            // EKS - construct ARN if not provided
+            "AWS::EKS::Cluster" => {
+                let arn = if resource_id.starts_with("arn:") {
+                    resource_id.to_string()
+                } else {
+                    format!("arn:aws:eks:{}:{}:cluster/{}", region, account, resource_id)
+                };
+                tagging_service.get_eks_resource_tags(account, region, &arn).await?
             }
-            "AWS::ECS::Cluster"
-            | "AWS::ECS::Service"
-            | "AWS::ECS::Task"
-            | "AWS::ECS::TaskDefinition"
-            | "AWS::ECS::FargateService"
-            | "AWS::ECS::FargateTask"
-            | "AWS::ECS::CapacityProvider"
-            | "AWS::ECS::TaskSet" => {
-                tagging_service.get_ecs_resource_tags(account, region, resource_id).await?
+            "AWS::EKS::FargateProfile" => {
+                // FargateProfile ARN: arn:aws:eks:region:account:fargateprofile/cluster-name/profile-name
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_eks_resource_tags(account, region, resource_id).await?
+                } else {
+                    // Fallback to universal API with constructed ARN
+                    let arn = format!("arn:aws:eks:{}:{}:fargateprofile/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            "AWS::EKS::Addon" | "AWS::EKS::IdentityProviderConfig" => {
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_eks_resource_tags(account, region, resource_id).await?
+                } else {
+                    // These require ARNs - return empty if not provided
+                    tracing::warn!(
+                        "Cannot fetch tags for {} - resource_id is not an ARN: {}",
+                        resource_type,
+                        resource_id
+                    );
+                    Vec::new()
+                }
+            }
+            // ECS - construct ARN if not provided
+            "AWS::ECS::Cluster" => {
+                let arn = if resource_id.starts_with("arn:") {
+                    resource_id.to_string()
+                } else {
+                    format!("arn:aws:ecs:{}:{}:cluster/{}", region, account, resource_id)
+                };
+                tagging_service.get_ecs_resource_tags(account, region, &arn).await?
+            }
+            "AWS::ECS::Service" | "AWS::ECS::FargateService" => {
+                // Service ARN: arn:aws:ecs:region:account:service/cluster-name/service-name
+                // Since we only have service name, we can't construct full ARN
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_ecs_resource_tags(account, region, resource_id).await?
+                } else {
+                    // Try to use universal tagging API by constructing partial ARN
+                    // Services require cluster context, so this may fail
+                    let arn = format!("arn:aws:ecs:{}:{}:service/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            "AWS::ECS::Task" | "AWS::ECS::FargateTask" => {
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_ecs_resource_tags(account, region, resource_id).await?
+                } else {
+                    let arn = format!("arn:aws:ecs:{}:{}:task/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            "AWS::ECS::TaskDefinition" => {
+                let arn = if resource_id.starts_with("arn:") {
+                    resource_id.to_string()
+                } else {
+                    // TaskDefinition ARN: arn:aws:ecs:region:account:task-definition/family:revision
+                    format!("arn:aws:ecs:{}:{}:task-definition/{}", region, account, resource_id)
+                };
+                tagging_service.get_ecs_resource_tags(account, region, &arn).await?
+            }
+            "AWS::ECS::CapacityProvider" | "AWS::ECS::TaskSet" => {
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_ecs_resource_tags(account, region, resource_id).await?
+                } else {
+                    let arn = format!("arn:aws:ecs:{}:{}:capacity-provider/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            // CloudFormation - StackId is already an ARN format
+            "AWS::CloudFormation::Stack" => {
+                // StackId is in ARN format, use universal API
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_tags_for_arn(account, region, resource_id).await?
+                } else {
+                    // Fallback: construct ARN from stack name (less reliable)
+                    let arn = format!("arn:aws:cloudformation:{}:{}:stack/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            // Amazon MQ - construct ARN from broker ID
+            "AWS::AmazonMQ::Broker" => {
+                // MQ broker ARN format: arn:aws:mq:region:account:broker:broker-id
+                let arn = format!("arn:aws:mq:{}:{}:broker:{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // CodePipeline - construct ARN from pipeline name
+            "AWS::CodePipeline::Pipeline" => {
+                let arn = format!("arn:aws:codepipeline:{}:{}:{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // MSK - resource_id should already be ClusterArn, but handle both cases
+            "AWS::MSK::Cluster" => {
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_tags_for_arn(account, region, resource_id).await?
+                } else {
+                    // Construct ARN if only cluster name provided
+                    let arn = format!("arn:aws:kafka:{}:{}:cluster/{}", region, account, resource_id);
+                    tagging_service.get_tags_for_arn(account, region, &arn).await?
+                }
+            }
+            // API Gateway v1 - construct ARN from REST API ID
+            "AWS::ApiGateway::RestApi" => {
+                // API Gateway ARN format: arn:aws:apigateway:region::/restapis/api-id
+                let arn = format!("arn:aws:apigateway:{}::/restapis/{}", region, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // API Gateway v2 - construct ARN from API ID
+            "AWS::ApiGatewayV2::Api" => {
+                // API Gateway v2 ARN format: arn:aws:apigateway:region::/apis/api-id
+                let arn = format!("arn:aws:apigateway:{}::/apis/{}", region, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // Route53 - uses dedicated tag API
+            "AWS::Route53::HostedZone" => {
+                tagging_service.get_route53_hosted_zone_tags(account, region, resource_id).await?
+            }
+            // EventBridge - construct ARN and use universal API
+            "AWS::Events::EventBus" => {
+                let arn = format!("arn:aws:events:{}:{}:event-bus/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            "AWS::Events::Rule" => {
+                // Rule ARN format: arn:aws:events:region:account:rule/[event-bus-name/]rule-name
+                // Since we only have rule name, assume default bus
+                let arn = format!("arn:aws:events:{}:{}:rule/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // Lex v2 - uses dedicated tag API
+            "AWS::Lex::Bot" | "AWS::Lex::BotAlias" => {
+                tagging_service.get_lex_tags(account, region, resource_id).await?
+            }
+            // QuickSight - uses dedicated tag API
+            "AWS::QuickSight::Dashboard"
+            | "AWS::QuickSight::DataSet"
+            | "AWS::QuickSight::DataSource" => {
+                tagging_service.get_quicksight_tags(account, region, resource_id).await?
+            }
+            // Batch - uses dedicated tag API
+            "AWS::Batch::ComputeEnvironment" | "AWS::Batch::JobQueue" => {
+                tagging_service.get_batch_tags(account, region, resource_id).await?
+            }
+            // ACM - uses dedicated tag API
+            "AWS::CertificateManager::Certificate" => {
+                tagging_service.get_acm_certificate_tags(account, region, resource_id).await?
+            }
+            // Amplify - uses dedicated tag API
+            "AWS::Amplify::App" => {
+                tagging_service.get_amplify_tags(account, region, resource_id).await?
+            }
+            // AppSync - uses dedicated tag API
+            "AWS::AppSync::GraphQLApi" => {
+                tagging_service.get_appsync_tags(account, region, resource_id).await?
+            }
+            // Config - uses dedicated tag API
+            "AWS::Config::ConfigRule" | "AWS::Config::ConfigurationRecorder" => {
+                tagging_service.get_config_tags(account, region, resource_id).await?
+            }
+            // Timestream - construct ARN and use universal API
+            "AWS::Timestream::Database" => {
+                let arn = format!("arn:aws:timestream:{}:{}:database/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            "AWS::Timestream::Table" => {
+                // Table ARN includes database name, resource_id should be "database/table"
+                let arn = format!("arn:aws:timestream:{}:{}:database/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // XRay - construct ARN and use universal API
+            "AWS::XRay::SamplingRule" => {
+                let arn = format!("arn:aws:xray:{}:{}:sampling-rule/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
             }
             // Resources that explicitly don't support tagging - return empty immediately
             "AWS::Organizations::CreateAccountStatus"
@@ -753,6 +919,11 @@ impl AWSResourceClient {
                         // Acquire semaphore permit
                         let _permit = semaphore_clone.acquire().await.unwrap();
 
+                        // THEORY LOGGING: Track global service future lifecycle
+                        let query_id = format!("{}:Global:{}", account_id, resource_type_str);
+                        info!("🚀 [FUTURE START] {} - acquired semaphore (global service)", query_id);
+                        let start_time = std::time::Instant::now();
+
                         // Send start progress for global service
                         if let Some(sender) = &progress_sender_clone {
                             let _ = sender
@@ -769,9 +940,12 @@ impl AWSResourceClient {
                         }
 
                         // Execute the query from the global region
+                        info!("🔍 [API CALL START] {} - calling AWS API (global)", query_id);
                         let query_result = client
                             .query_resource_type(&account_id, &query_region, &resource_type_str)
                             .await;
+                        let elapsed = start_time.elapsed();
+                        info!("📊 [API CALL END] {} - completed in {:?} (global)", query_id, elapsed);
 
                         // Handle the result
                         let resources_result = match query_result {
@@ -839,16 +1013,18 @@ impl AWSResourceClient {
 
                         // Send the result
                         let result = QueryResult {
-                            account_id,
+                            account_id: account_id.clone(),
                             region: "Global".to_string(),
-                            resource_type: resource_type_str,
+                            resource_type: resource_type_str.clone(),
                             resources: resources_result,
                             cache_key: cache_key_clone,
                         };
 
+                        info!("📤 [SEND RESULT] {}:Global:{} - sending to channel", account_id, resource_type_str);
                         if let Err(e) = result_sender_clone.send(result).await {
                             warn!("Failed to send global query result: {}", e);
                         }
+                        info!("✅ [FUTURE END] {}:Global:{} - future completed successfully", account_id, resource_type_str);
                     };
 
                     futures.push(Box::pin(future));
@@ -899,6 +1075,11 @@ impl AWSResourceClient {
                             // Acquire semaphore permit
                             let _permit = semaphore_clone.acquire().await.unwrap();
 
+                            // THEORY LOGGING: Track future lifecycle
+                            let query_id = format!("{}:{}:{}", account_id, region_code, resource_type_str);
+                            info!("🚀 [FUTURE START] {} - acquired semaphore", query_id);
+                            let start_time = std::time::Instant::now();
+
                             // Send start progress
                             if let Some(sender) = &progress_sender_clone {
                                 let _ = sender
@@ -918,9 +1099,12 @@ impl AWSResourceClient {
                             }
 
                             // Execute the query
+                            info!("🔍 [API CALL START] {} - calling AWS API", query_id);
                             let query_result = client
                                 .query_resource_type(&account_id, &region_code, &resource_type_str)
                                 .await;
+                            let elapsed = start_time.elapsed();
+                            info!("📊 [API CALL END] {} - completed in {:?}", query_id, elapsed);
 
                             // Handle the result
                             let resources_result = match query_result {
@@ -1002,16 +1186,18 @@ impl AWSResourceClient {
 
                             // Send result back
                             let query_result = QueryResult {
-                                account_id,
-                                region: region_code,
-                                resource_type: resource_type_str,
+                                account_id: account_id.clone(),
+                                region: region_code.clone(),
+                                resource_type: resource_type_str.clone(),
                                 resources: resources_result,
                                 cache_key: cache_key_clone,
                             };
 
+                            info!("📤 [SEND RESULT] {}:{}:{} - sending to channel", account_id, region_code, resource_type_str);
                             if let Err(e) = result_sender_clone.send(query_result).await {
                                 warn!("Failed to send query result: {}", e);
                             }
+                            info!("✅ [FUTURE END] {}:{}:{} - future completed successfully", account_id, region_code, resource_type_str);
                         };
 
                         futures.push(Box::pin(future));
@@ -1027,9 +1213,20 @@ impl AWSResourceClient {
         );
 
         // Execute all futures concurrently
+        let mut completed_count = 0;
         while (futures.next().await).is_some() {
-            // Results are sent via the result_sender channel as they complete
+            completed_count += 1;
+            info!("🔄 [FUTURES LOOP] {}/{} futures completed", completed_count, total_queries);
         }
+        info!("🏁 [FUTURES LOOP] All {} futures finished", completed_count);
+
+        // CRITICAL: Explicitly drop senders to close channels.
+        // This signals to receivers that no more messages will be sent,
+        // allowing them to exit their recv() loops. Without this, the
+        // receiver in window.rs waits forever causing a deadlock when
+        // querying multiple resource types.
+        drop(result_sender);
+        drop(progress_sender);
 
         info!("All parallel queries completed");
         Ok(())

@@ -297,6 +297,18 @@ impl ResourceExplorerWindow {
                         let is_active = status_line != "Ready";
 
                         ui.horizontal(|ui| {
+                            // Check for Phase 1 (resource listing) progress
+                            let phase1_status = if let Ok(state) = self.state.try_read() {
+                                if state.is_phase1_in_progress() {
+                                    let (pending, total, services) = state.get_phase1_progress();
+                                    Some((pending, total, services, state.phase1_failed_services.len()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
                             // Check for Phase 2 enrichment status
                             let phase2_status = if let Ok(state) = self.state.try_read() {
                                 if state.phase2_enrichment_in_progress {
@@ -314,8 +326,46 @@ impl ResourceExplorerWindow {
                                 None
                             };
 
-                            // Show Phase 2 progress if active (takes priority)
-                            if let Some((service, count, total)) = phase2_status {
+                            // Show Phase 1 progress if active (takes priority over Phase 2)
+                            if let Some((pending, total, services, failed)) = phase1_status {
+                                ui.spinner();
+                                let completed = total - pending;
+                                // Shorten resource type names for display
+                                // "AWS::Lambda::Function" -> "Lambda"
+                                let short_names: Vec<String> = services
+                                    .iter()
+                                    .map(|s| {
+                                        s.strip_prefix("AWS::")
+                                            .unwrap_or(s)
+                                            .split("::")
+                                            .next()
+                                            .unwrap_or(s)
+                                            .to_string()
+                                    })
+                                    .collect();
+                                // Show up to 3 pending services
+                                let service_list = if short_names.len() <= 3 {
+                                    short_names.join(", ")
+                                } else {
+                                    format!("{}, +{} more", short_names[..3].join(", "), short_names.len() - 3)
+                                };
+                                let mut message = format!(
+                                    "Loading resources ({}/{})... {}",
+                                    completed, total, service_list
+                                );
+                                if failed > 0 {
+                                    message.push_str(&format!(" [{} failed]", failed));
+                                }
+                                ui.label(
+                                    egui::RichText::new(&message)
+                                        .color(Color32::from_rgb(255, 200, 100)) // Orange for Phase 1
+                                        .small(),
+                                );
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(100));
+                            }
+                            // Show Phase 2 progress if active
+                            else if let Some((service, count, total)) = phase2_status {
                                 // Animated spinner indicator
                                 ui.spinner();
                                 let message = format!(
@@ -2959,6 +3009,18 @@ impl ResourceExplorerWindow {
         aws_client: Arc<AWSResourceClient>,
         cache_key: String,
     ) {
+        // Build list of services to track for Phase 1 progress (by resource_type)
+        let services_to_track: Vec<String> = scope
+            .resource_types
+            .iter()
+            .map(|rt| rt.resource_type.clone())
+            .collect();
+
+        // Initialize Phase 1 tracking
+        if let Ok(mut state) = state_arc.try_write() {
+            state.start_phase1_tracking(services_to_track);
+        }
+
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
@@ -2966,6 +3028,7 @@ impl ResourceExplorerWindow {
                     tracing::error!("Failed to create Tokio runtime: {}", e);
                     if let Ok(mut state) = state_arc.try_write() {
                         state.loading_tasks.remove(&cache_key);
+                        state.reset_phase1_state();
                     }
                     return;
                 }
@@ -2995,6 +3058,7 @@ impl ResourceExplorerWindow {
 
                     let result_processing = async {
                         while let Some(result) = result_receiver.recv().await {
+                            let resource_type = result.resource_type.clone();
                             match result.resources {
                                 Ok(resources) => {
                                     tracing::info!(
@@ -3002,7 +3066,7 @@ impl ResourceExplorerWindow {
                                         resources.len(),
                                         result.account_id,
                                         result.region,
-                                        result.resource_type
+                                        resource_type
                                     );
 
                                     {
@@ -3011,6 +3075,8 @@ impl ResourceExplorerWindow {
 
                                         if let Ok(mut state) = state_arc_clone.try_write() {
                                             state.resources = all_res.clone();
+                                            // Mark service as completed in Phase 1 tracking
+                                            state.mark_phase1_service_completed(&resource_type);
                                         }
                                     }
                                 }
@@ -3019,9 +3085,13 @@ impl ResourceExplorerWindow {
                                         "Query failed for {}:{}:{}: {}",
                                         result.account_id,
                                         result.region,
-                                        result.resource_type,
+                                        resource_type,
                                         e
                                     );
+                                    // Mark service as failed in Phase 1 tracking
+                                    if let Ok(mut state) = state_arc_clone.try_write() {
+                                        state.mark_phase1_service_failed(&resource_type);
+                                    }
                                 }
                             }
                         }
@@ -3079,6 +3149,9 @@ impl ResourceExplorerWindow {
 
                             state.finish_loading_task(&cache_key);
 
+                            // Reset Phase 1 tracking since query is complete
+                            state.reset_phase1_state();
+
                             state.update_tag_popularity();
 
                             tracing::info!(
@@ -3108,6 +3181,7 @@ impl ResourceExplorerWindow {
 
                     if let Ok(mut state) = state_arc.try_write() {
                         state.loading_tasks.remove(&cache_key);
+                        state.reset_phase1_state();
                     }
                 }
             }

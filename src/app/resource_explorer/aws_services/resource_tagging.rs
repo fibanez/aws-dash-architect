@@ -1,7 +1,12 @@
 use super::super::credentials::CredentialCoordinator;
 use super::super::state::ResourceTag;
 use anyhow::{Context, Result};
+use aws_sdk_acm as acm;
+use aws_sdk_amplify as amplify;
+use aws_sdk_appsync as appsync;
+use aws_sdk_batch as batch;
 use aws_sdk_cloudfront as cloudfront;
+use aws_sdk_config as config;
 use aws_sdk_dynamodb as dynamodb;
 use aws_sdk_ec2 as ec2;
 use aws_sdk_ecs as ecs;
@@ -9,9 +14,12 @@ use aws_sdk_eks as eks;
 use aws_sdk_iam as iam;
 use aws_sdk_kms as kms;
 use aws_sdk_lambda as lambda;
+use aws_sdk_lexmodelsv2 as lex;
 use aws_sdk_organizations as organizations;
+use aws_sdk_quicksight as quicksight;
 use aws_sdk_rds as rds;
 use aws_sdk_resourcegroupstagging as tagging;
+use aws_sdk_route53 as route53;
 use aws_sdk_s3 as s3;
 use aws_sdk_sns as sns;
 use aws_sdk_sqs as sqs;
@@ -1119,6 +1127,391 @@ impl ResourceTaggingService {
 
         tracing::debug!(
             "Fetched {} ECS tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for Route53 hosted zones
+    ///
+    /// Route53 uses a dedicated tag API with resource type and ID.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let zone_id = "/hostedzone/Z1234567890ABC";
+    /// let tags = service.get_route53_hosted_zone_tags("123456789012", "us-east-1", zone_id).await?;
+    /// ```
+    pub async fn get_route53_hosted_zone_tags(
+        &self,
+        account_id: &str,
+        _region: &str, // Route53 is global
+        resource_id: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, "us-east-1")
+            .await?;
+
+        let client = route53::Client::new(&aws_config);
+
+        // Strip /hostedzone/ prefix if present
+        let zone_id = resource_id.trim_start_matches("/hostedzone/");
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_type(route53::types::TagResourceType::Hostedzone)
+            .resource_id(zone_id)
+            .send()
+            .await
+            .context("Failed to fetch Route53 hosted zone tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .resource_tag_set
+            .and_then(|set| set.tags)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|tag| {
+                let key = tag.key?;
+                let value = tag.value;
+                Some(ResourceTag {
+                    key,
+                    value: value.unwrap_or_default(),
+                })
+            })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} Route53 tags for hosted zone {}",
+            tags.len(),
+            zone_id
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for Lex v2 resources (bots, bot aliases)
+    ///
+    /// Lex v2 uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bot_arn = "arn:aws:lex:us-east-1:123456789012:bot/MYBOT123";
+    /// let tags = service.get_lex_tags("123456789012", "us-east-1", bot_arn).await?;
+    /// ```
+    pub async fn get_lex_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = lex::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch Lex tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| ResourceTag { key, value })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} Lex tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for QuickSight resources (dashboards, datasets, data sources)
+    ///
+    /// QuickSight uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let dashboard_arn = "arn:aws:quicksight:us-east-1:123456789012:dashboard/dashboard-id";
+    /// let tags = service.get_quicksight_tags("123456789012", "us-east-1", dashboard_arn).await?;
+    /// ```
+    pub async fn get_quicksight_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = quicksight::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch QuickSight tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tag| ResourceTag {
+                key: tag.key,
+                value: tag.value,
+            })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} QuickSight tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for Batch resources (compute environments, job queues)
+    ///
+    /// Batch uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let env_arn = "arn:aws:batch:us-east-1:123456789012:compute-environment/my-env";
+    /// let tags = service.get_batch_tags("123456789012", "us-east-1", env_arn).await?;
+    /// ```
+    pub async fn get_batch_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = batch::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch Batch tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| ResourceTag { key, value })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} Batch tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for ACM certificates
+    ///
+    /// ACM uses certificate ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let cert_arn = "arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012";
+    /// let tags = service.get_acm_certificate_tags("123456789012", "us-east-1", cert_arn).await?;
+    /// ```
+    pub async fn get_acm_certificate_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        certificate_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = acm::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_certificate()
+            .certificate_arn(certificate_arn)
+            .send()
+            .await
+            .context("Failed to fetch ACM certificate tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tag| ResourceTag {
+                key: tag.key,
+                value: tag.value.unwrap_or_default(),
+            })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} ACM tags for certificate {}",
+            tags.len(),
+            certificate_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for Amplify apps
+    ///
+    /// Amplify uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let app_arn = "arn:aws:amplify:us-east-1:123456789012:apps/d1234567890";
+    /// let tags = service.get_amplify_tags("123456789012", "us-east-1", app_arn).await?;
+    /// ```
+    pub async fn get_amplify_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = amplify::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch Amplify tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| ResourceTag { key, value })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} Amplify tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for AppSync GraphQL APIs
+    ///
+    /// AppSync uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let api_arn = "arn:aws:appsync:us-east-1:123456789012:apis/abcd1234efgh5678ijkl9012";
+    /// let tags = service.get_appsync_tags("123456789012", "us-east-1", api_arn).await?;
+    /// ```
+    pub async fn get_appsync_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = appsync::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch AppSync tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| ResourceTag { key, value })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} AppSync tags for resource {}",
+            tags.len(),
+            resource_arn
+        );
+        Ok(tags)
+    }
+
+    /// Fetch tags for AWS Config resources (config rules, configuration recorders)
+    ///
+    /// Config uses ARN for tag operations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let rule_arn = "arn:aws:config:us-east-1:123456789012:config-rule/my-rule";
+    /// let tags = service.get_config_tags("123456789012", "us-east-1", rule_arn).await?;
+    /// ```
+    pub async fn get_config_tags(
+        &self,
+        account_id: &str,
+        region: &str,
+        resource_arn: &str,
+    ) -> Result<Vec<ResourceTag>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await?;
+
+        let client = config::Client::new(&aws_config);
+
+        let response = client
+            .list_tags_for_resource()
+            .resource_arn(resource_arn)
+            .send()
+            .await
+            .context("Failed to fetch Config tags")?;
+
+        let tags: Vec<ResourceTag> = response
+            .tags
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|tag| {
+                let key = tag.key?;
+                let value = tag.value;
+                Some(ResourceTag {
+                    key,
+                    value: value.unwrap_or_default(),
+                })
+            })
+            .collect();
+
+        tracing::debug!(
+            "Fetched {} Config tags for resource {}",
             tags.len(),
             resource_arn
         );
