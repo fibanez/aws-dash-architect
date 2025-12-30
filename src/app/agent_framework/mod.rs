@@ -11,9 +11,12 @@ pub mod agent_types;
 pub mod agent_ui;
 pub mod cancellation;
 pub mod conversation;
+pub mod message_injection;
+pub mod middleware;
 pub mod model_selection;
 pub mod prompts;
 pub mod skills;
+pub mod status_display;
 pub mod tool_context;
 pub mod tools;
 pub mod tools_registry;
@@ -29,10 +32,15 @@ pub use agent_types::*;
 pub use agent_ui::*;
 pub use cancellation::*;
 pub use conversation::*;
+pub use message_injection::*;
+pub use middleware::{
+    ConversationLayer, LayerContext, LayerError, LayerResult, LayerStack, PostResponseAction,
+};
 pub use model_selection::*;
 // Prompts for different agent types
 pub use prompts::{TASK_MANAGER_PROMPT, TASK_WORKER_PROMPT};
 pub use skills::*;
+pub use status_display::*;
 pub use tool_context::*;
 pub use tools::*;
 pub use tools_registry::*;

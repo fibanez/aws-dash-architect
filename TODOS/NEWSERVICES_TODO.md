@@ -14,6 +14,26 @@ This document provides step-by-step instructions for adding new AWS services to 
    - Check for pagination support (`into_paginator()`)
    - Note which fields require manual JSON conversion vs automatic serde
 
+### ⚠️ SDK Drift & Integration Pitfalls (Read First)
+
+1. **Verify SDK Struct Fields**: Before coding, open the Rust SDK type definitions in
+   `~/.cargo/registry/src/index.crates.io-*/aws-sdk-{service}-*/src/types/_*.rs`
+   to confirm field names and availability. Fields like `last_update_time`, `*_arn`,
+   or `filter_arn` may not exist in the SDK version being used.
+
+2. **Paginator Availability Varies**: Not all operations support `into_paginator()`.
+   If the method is missing, use a `next_token` loop or a single `send()` call.
+
+3. **Avoid Capturing `self` in Threads**: `std::thread::spawn` requires `'static`.
+   Pass only `Arc`/owned data into the closure or use a static helper.
+
+4. **Check SDK Deprecations**: Run `cargo build` to surface deprecated fields,
+   and verify in SDK type definitions (`#[deprecated]` markers) before wiring fields.
+
+5. **Add Short Tags for New Resource Types**: Update
+   `src/app/resource_explorer/tree.rs` `resource_type_to_short_tag()` so new resource
+   types show meaningful badges (avoid falling back to `RESOURCE`).
+
 3. **Determine Tag Fetching Method**: Identify how tags are fetched for this service (see Tag Implementation section below)
 
 ## Tag Implementation Guide

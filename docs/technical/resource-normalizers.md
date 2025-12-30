@@ -1,6 +1,6 @@
 # Resource Normalizers
 
-Service-specific data normalization system transforming AWS API responses into consistent ResourceEntry format for unified display and processing across 177 resource types.
+Service-specific data normalization system transforming AWS API responses into consistent ResourceEntry format for unified display and processing across 204 resource types.
 
 ## Core Functionality
 
@@ -13,7 +13,7 @@ Service-specific data normalization system transforming AWS API responses into c
 
 **Key Features:**
 - Factory pattern for creating appropriate normalizers by resource type
-- 174 supported AWS resource types with specific normalization logic
+- 199 UI-registered AWS resource types with specific normalization logic (plus 5 child resource types)
 - Utility functions for common normalization tasks (name/status/tag extraction)
 - Property normalization for consistent field naming across services
 - Account color assignment for visual resource organization
@@ -80,12 +80,17 @@ let expanded = expand_embedded_json(raw_response);
 This transforms stringified policies like `"{\"Version\":\"2012-10-17\"}"` into proper JSON objects for improved readability in the UI.
 
 **Supported Resource Types:**
-- **EC2**: 14 resource types (Instance, VPC, SecurityGroup, Volume, etc.)
-- **RDS**: 5 resource types (DBInstance, DBCluster, DBSnapshot, etc.)
+- **EC2**: 24 resource types (Instance, VPC, SecurityGroup, Volume, ElasticIP, LaunchTemplate, PlacementGroup, ReservedInstance, SpotInstanceRequest, DHCPOptions, EgressOnlyInternetGateway, VPNConnection, VPNGateway, CustomerGateway, etc.)
+- **CloudWatch**: 6 resource types (Alarm, Dashboard, CompositeAlarm, Metric, InsightRule, AnomalyDetector)
+- **CloudWatch Logs**: 6 resource types (LogGroup, LogStream, MetricFilter, SubscriptionFilter, ResourcePolicy, QueryDefinition)
+- **RDS**: 7 resource types (DBInstance, DBCluster, DBSnapshot, DBClusterSnapshot, DBParameterGroup, DBSubnetGroup, OptionGroup)
 - **Lambda**: 3 resource types (Function, LayerVersion, EventSourceMapping)
-- **IAM**: 3 resource types (Role, User, Policy)
+- **IAM**: 4 resource types (Role, User, Policy, ServerCertificate)
+- **ECS**: 6 resource types (Cluster, Service, TaskDefinition, FargateService, CapacityProvider, TaskSet)
+- **EKS**: 4 resource types (Cluster, FargateProfile, Addon, IdentityProviderConfig)
+- **EMR**: 1 resource type (Cluster)
 - **Storage**: S3 Bucket, EFS FileSystem
-- **Additional**: 50+ more resource types across 25+ AWS services
+- **Additional**: 140+ more resource types across 70+ AWS services
 
 ## Developer Notes
 

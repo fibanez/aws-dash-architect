@@ -21,9 +21,9 @@ Simplified agent system using stood library directly for reliable AI-powered AWS
 - Markdown rendering for assistant responses with syntax highlighting
 
 **Main Components:**
-- **AgentInstanceV2**: Core agent wrapper managing lifecycle and communication
-- **MessageV2**: Simplified message structure for conversations
-- **AgentResponseV2**: Success/Error response channel for UI feedback
+- **AgentInstance**: Core agent wrapper managing lifecycle and communication
+- **ConversationMessage**: Message structure for conversations
+- **ConversationResponse**: Success/Error response channel for UI feedback
 - **AgentLogger**: Per-agent comprehensive debug logging
 - **AgentMetadata**: Agent identification and configuration
 
@@ -31,26 +31,26 @@ Simplified agent system using stood library directly for reliable AI-powered AWS
 - stood library for LLM interactions via AWS Bedrock
 - V8 bindings for JavaScript code execution
 - AWS Identity Center for credential acquisition
-- Agent UI V2 for visual interaction
+- Agent UI for visual interaction
 - Background thread pool for async operations
 
 ## Implementation Details
 
 **Key Files:**
-- `src/app/agent_framework_v2/agent_instance_v2.rs` - Core agent implementation
-- `src/app/agent_framework_v2/agent_ui_v2.rs` - UI components
-- `src/app/agent_framework_v2/message_v2.rs` - Message types
-- `src/app/agent_framework_v2/mod.rs` - Module exports
+- `src/app/agent_framework/agent_instance.rs` - Core agent implementation
+- `src/app/agent_framework/agent_ui.rs` - UI components
+- `src/app/agent_framework/conversation.rs` - Message types and responses
+- `src/app/agent_framework/mod.rs` - Module exports
 
-**AgentInstanceV2 Structure:**
+**AgentInstance Structure:**
 ```rust
-pub struct AgentInstanceV2 {
+pub struct AgentInstance {
     id: AgentId,                                // Unique identifier
     metadata: AgentMetadata,                    // Name, description, model
     status: AgentStatus,                        // Running/Stopped
     stood_agent: Arc<Mutex<Option<Agent>>>,     // Lazy-initialized stood agent
     response_channel: (Sender, Receiver),       // UI communication
-    messages: VecDeque<MessageV2>,              // Conversation history
+    messages: VecDeque<ConversationMessage>,    // Conversation history
     processing: bool,                           // Processing flag
     logger: Arc<AgentLogger>,                   // Per-agent logging
     runtime: Arc<tokio::runtime::Runtime>,      // Dedicated async runtime
@@ -58,11 +58,11 @@ pub struct AgentInstanceV2 {
 ```
 
 **Agent Lifecycle:**
-1. **Creation**: `AgentInstanceV2::new()` creates wrapper with metadata
+1. **Creation**: `AgentInstance::new()` creates wrapper with metadata
 2. **Initialization**: First message triggers lazy stood agent creation
 3. **Message Processing**: Background thread executes agent with tokio runtime
 4. **Response Delivery**: Results sent via channel to UI
-5. **Logging**: All operations logged to `~/.local/share/awsdash/logs/agents/agent-{uuid}-v2.log`
+5. **Logging**: All operations logged to `~/.local/share/awsdash/logs/agents/agent-{uuid}.log`
 
 **Lazy Initialization Pattern:**
 ```rust
@@ -94,7 +94,7 @@ fn create_stood_agent(&self, aws_identity: &mut AwsIdentityCenter)
 ```rust
 pub fn send_message(&mut self, user_message: String, aws_identity: &Arc<Mutex<AwsIdentityCenter>>) {
     // Add message to conversation
-    self.messages.push_back(MessageV2::user(user_message.clone()));
+    self.messages.push_back(ConversationMessage::user(user_message.clone()));
     self.processing = true;
 
     // Clone for background thread
@@ -108,8 +108,8 @@ pub fn send_message(&mut self, user_message: String, aws_identity: &Arc<Mutex<Aw
         runtime.block_on(async move {
             let agent = stood_agent.lock().unwrap().as_mut().unwrap();
             match agent.execute(&user_message).await {
-                Ok(response) => sender.send(AgentResponseV2::Success(response)),
-                Err(e) => sender.send(AgentResponseV2::Error(e.to_string())),
+                Ok(response) => sender.send(ConversationResponse::Success(response)),
+                Err(e) => sender.send(ConversationResponse::Error(e.to_string())),
             }
         })
     });
@@ -119,13 +119,13 @@ pub fn send_message(&mut self, user_message: String, aws_identity: &Arc<Mutex<Aw
 **Message Types:**
 ```rust
 #[derive(Debug, Clone)]
-pub enum MessageV2 {
-    User(String),       // User input
-    Assistant(String),  // Agent response
+pub struct ConversationMessage {
+    pub role: Role,       // User or Assistant
+    pub content: String,  // Message content
 }
 
 #[derive(Debug, Clone)]
-pub enum AgentResponseV2 {
+pub enum ConversationResponse {
     Success(String),    // Successful agent execution
     Error(String),      // Execution error
 }
@@ -150,7 +150,7 @@ Important: Always use the last expression in your JavaScript code as the return 
 ```
 
 **Logging Architecture:**
-- **Per-agent log files**: `~/.local/share/awsdash/logs/agents/agent-{uuid}-v2.log`
+- **Per-agent log files**: `~/.local/share/awsdash/logs/agents/agent-{uuid}.log`
 - **Comprehensive tracing**: User messages, assistant responses, tool executions
 - **stood library traces**: Captured via `RUST_LOG=stood=trace` environment variable
 - **UI separation**: Verbose logs separate from clean UI display
@@ -191,7 +191,7 @@ Key aspects:
 
 ## Architecture Decisions
 
-**Why Agent V2 
+**Why This Architecture:**
 
 1. **Simplified Architecture**: Direct stood library usage eliminates wrapper complexity
 2. **Lazy Initialization**: Agent created only when needed, improving startup time
@@ -298,7 +298,7 @@ async fn test_agent_execution() {
         ..Default::default()
     };
 
-    let mut agent = AgentInstanceV2::new(metadata);
+    let mut agent = AgentInstance::new(metadata);
 
     // Initialize with mock credentials
     let mut identity_center = mock_identity_center();
@@ -309,7 +309,7 @@ async fn test_agent_execution() {
 
     // Wait for response
     let response = agent.poll_response();
-    assert!(matches!(response, Some(AgentResponseV2::Success(_))));
+    assert!(matches!(response, Some(ConversationResponse::Success(_))));
 }
 ```
 
@@ -335,14 +335,14 @@ async fn test_agent_execution() {
 
 ```rust
 pub struct SpecializedAgent {
-    base: AgentInstanceV2,
+    base: AgentInstance,
     specialized_config: MyConfig,
 }
 
 impl SpecializedAgent {
     pub fn new(metadata: AgentMetadata, config: MyConfig) -> Self {
         Self {
-            base: AgentInstanceV2::new(metadata),
+            base: AgentInstance::new(metadata),
             specialized_config: config,
         }
     }
@@ -371,7 +371,7 @@ Agent::builder()
 **Custom Response Handling:**
 
 ```rust
-pub enum AgentResponseV2 {
+pub enum ConversationResponse {
     Success(String),
     Error(String),
     Progress(f32),          // Add progress tracking
@@ -381,6 +381,7 @@ pub enum AgentResponseV2 {
 
 ## Related Documentation
 
+- [Agent Feedback Systems](agent-feedback-systems.md) - Status display, message injection, and conversation middleware
 - [Code Execution Tool](code-execution-tool.md) - JavaScript execution system
 - [AWS Data Plane Integration](aws-data-plane-integration-guide.md) - Adding AWS service bindings
 - [Credential Management](credential-management.md) - AWS Identity Center integration

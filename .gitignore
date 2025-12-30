@@ -43,6 +43,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# SSO quick login config (DEBUG only - contains Identity Center URL)
+sso.json
+
 # Temporary files
 *.tmp
 *.temp

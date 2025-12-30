@@ -2,6 +2,8 @@ use super::{
     aws_client::*, bookmarks::*, colors::*, dialogs::*, state::*, status::global_status, tree::*,
     widgets::*,
 };
+#[cfg(debug_assertions)]
+use super::verification_window::VerificationWindow;
 use crate::app::agent_framework::tools_registry::set_global_aws_client;
 use crate::app::aws_identity::AwsIdentityCenter;
 use egui::{Color32, Context, Ui, Window};
@@ -73,6 +75,10 @@ pub struct ResourceExplorerWindow {
 
     // Pending actions to communicate with main app
     pending_actions: Arc<Mutex<Vec<super::ResourceExplorerAction>>>,
+
+    // Verification window (DEBUG builds only)
+    #[cfg(debug_assertions)]
+    verification_window: VerificationWindow,
 }
 
 impl ResourceExplorerWindow {
@@ -121,6 +127,8 @@ impl ResourceExplorerWindow {
             bookmark_clipboard: None,
             bookmark_clipboard_is_cut: false,
             pending_actions,
+            #[cfg(debug_assertions)]
+            verification_window: VerificationWindow::new(),
         }
     }
 
@@ -547,6 +555,10 @@ impl ResourceExplorerWindow {
                         state.query_scope.regions.len(),
                         state.query_scope.resource_types.len());
 
+                    if state.phase2_enrichment_in_progress {
+                        state.cancel_phase2_enrichment();
+                    }
+
                     // Trigger query if we have all required scope elements
                     self.trigger_query_if_ready(&state, ctx);
                 }
@@ -578,6 +590,10 @@ impl ResourceExplorerWindow {
                         state.query_scope.regions.len(),
                         state.query_scope.resource_types.len());
 
+                    if state.phase2_enrichment_in_progress {
+                        state.cancel_phase2_enrichment();
+                    }
+
                     // Trigger query if we have all required scope elements
                     self.trigger_query_if_ready(&state, ctx);
                 }
@@ -608,6 +624,10 @@ impl ResourceExplorerWindow {
                         state.query_scope.accounts.len(),
                         state.query_scope.regions.len(),
                         state.query_scope.resource_types.len());
+
+                    if state.phase2_enrichment_in_progress {
+                        state.cancel_phase2_enrichment();
+                    }
 
                     // Trigger query if we have all required scope elements
                     self.trigger_query_if_ready(&state, ctx);
@@ -667,6 +687,14 @@ impl ResourceExplorerWindow {
             self.render_bookmark_edit_dialog(ctx);
         }
 
+        // Verification window (DEBUG builds only)
+        #[cfg(debug_assertions)]
+        {
+            // Get credential coordinator from AWS client if available
+            let credential_coordinator = self.aws_client.as_ref().map(|c| c.get_credential_coordinator());
+            self.verification_window.show(ctx, &self.state, credential_coordinator.as_ref());
+        }
+
         response.is_some()
     }
 
@@ -684,6 +712,7 @@ impl ResourceExplorerWindow {
             }
             for account_id in accounts_to_remove {
                 tracing::info!("❌ Removing account: {}", account_id);
+                let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_account(&account_id);
 
                 // Log current scope after removal
@@ -692,8 +721,7 @@ impl ResourceExplorerWindow {
                     state.query_scope.regions.len(),
                     state.query_scope.resource_types.len());
 
-                // Filter displayed resources when account is removed
-                self.filter_resources_by_current_scope(state);
+                self.handle_active_selection_reduction(state, was_phase2_running);
             }
 
             // Region tags with new colored tag rendering
@@ -706,6 +734,7 @@ impl ResourceExplorerWindow {
             }
             for region_code in regions_to_remove {
                 tracing::info!("❌ Removing region: {}", region_code);
+                let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_region(&region_code);
 
                 // Log current scope after removal
@@ -714,8 +743,7 @@ impl ResourceExplorerWindow {
                     state.query_scope.regions.len(),
                     state.query_scope.resource_types.len());
 
-                // Filter displayed resources when region is removed
-                self.filter_resources_by_current_scope(state);
+                self.handle_active_selection_reduction(state, was_phase2_running);
             }
 
             // Resource type tags with improved styling
@@ -733,6 +761,7 @@ impl ResourceExplorerWindow {
             }
             for resource_type in resource_types_to_remove {
                 tracing::info!("❌ Removing resource type: {}", resource_type);
+                let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_resource_type(&resource_type);
 
                 // Log current scope after removal
@@ -741,8 +770,7 @@ impl ResourceExplorerWindow {
                     state.query_scope.regions.len(),
                     state.query_scope.resource_types.len());
 
-                // Filter displayed resources when resource type is removed
-                self.filter_resources_by_current_scope(state);
+                self.handle_active_selection_reduction(state, was_phase2_running);
             }
         });
     }
@@ -1547,7 +1575,7 @@ impl ResourceExplorerWindow {
 
     /// Render unified toolbar combining bookmarks menu and control buttons
     /// Returns: (clicked_bookmark_id, show_add_dialog, show_manage_dialog, clear_clicked)
-    fn render_unified_toolbar(&self, ui: &mut Ui) -> (Option<String>, bool, bool, bool) {
+    fn render_unified_toolbar(&mut self, ui: &mut Ui) -> (Option<String>, bool, bool, bool) {
         let mut clicked_bookmark_id: Option<String> = None;
         let mut show_add_dialog = false;
         let mut show_manage_dialog = false;
@@ -1610,6 +1638,19 @@ impl ResourceExplorerWindow {
                     .clicked()
                 {
                     clear_clicked = true;
+                }
+
+                // Verify with CLI button (DEBUG builds only)
+                #[cfg(debug_assertions)]
+                {
+                    ui.separator();
+                    if ui
+                        .button("Verify with CLI")
+                        .on_hover_text("Compare cached resources with AWS CLI output")
+                        .clicked()
+                    {
+                        self.verification_window.open = true;
+                    }
                 }
 
                 // Show loading indicator if queries are active
@@ -1961,7 +2002,7 @@ impl ResourceExplorerWindow {
         tracing::info!("Applying bookmark '{}' to Explorer state", bookmark.name);
 
         // Reset Phase 2 state from any previous bookmark
-        state.reset_phase2_state();
+        state.cancel_phase2_enrichment();
 
         // Clear existing query scope
         state.query_scope.accounts.clear();
@@ -2205,25 +2246,27 @@ impl ResourceExplorerWindow {
 
         // Handle folder deletion
         if let Some(folder_id) = folder_to_delete {
-            match self
-                .bookmark_manager
-                .write()
-                .unwrap()
-                .remove_folder(&folder_id)
-            {
-                Ok(Some(removed)) => {
-                    tracing::info!("Deleted folder: {}", removed.name);
-                    self.expanded_folders.remove(&folder_id);
+            match self.bookmark_manager.write() {
+                Ok(mut manager) => {
+                    match manager.remove_folder(&folder_id) {
+                        Ok(Some(removed)) => {
+                            tracing::info!("Deleted folder: {}", removed.name);
+                            self.expanded_folders.remove(&folder_id);
 
-                    // Save to disk
-                    if let Err(e) = self.bookmark_manager.write().unwrap().save() {
-                        tracing::error!("Failed to save folders: {}", e);
+                            // Save while holding the lock
+                            if let Err(e) = manager.save() {
+                                tracing::error!("Failed to save folders: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Cannot delete folder: {}", e);
+                        }
+                        _ => {}
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Cannot delete folder: {}", e);
+                    tracing::error!("Failed to acquire write lock for folder deletion: {}", e);
                 }
-                _ => {}
             }
         }
 
@@ -2311,19 +2354,28 @@ impl ResourceExplorerWindow {
 
         // Handle bookmark deletion
         if let Some(bookmark_id) = bookmark_to_delete {
-            if let Some(removed) = self
-                .bookmark_manager
-                .write()
-                .unwrap()
-                .remove_bookmark(&bookmark_id)
-            {
-                tracing::info!("Deleted bookmark: {}", removed.name);
+            tracing::debug!("Attempting to delete bookmark: {}", bookmark_id);
 
-                // Save bookmarks to disk
-                if let Err(e) = self.bookmark_manager.write().unwrap().save() {
-                    tracing::error!("Failed to save bookmarks: {}", e);
+            // Use match to handle potential lock poisoning
+            match self.bookmark_manager.write() {
+                Ok(mut manager) => {
+                    if let Some(removed) = manager.remove_bookmark(&bookmark_id) {
+                        tracing::info!("Deleted bookmark: {}", removed.name);
+
+                        // Save inline while we still hold the lock
+                        tracing::debug!("Saving bookmarks after deletion...");
+                        if let Err(e) = manager.save() {
+                            tracing::error!("Failed to save bookmarks: {}", e);
+                        } else {
+                            tracing::debug!("Bookmarks saved successfully");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to acquire write lock for bookmark deletion: {}", e);
                 }
             }
+            tracing::debug!("Bookmark deletion handling complete");
         }
 
         // Handle window close via X button
@@ -2896,320 +2948,164 @@ impl ResourceExplorerWindow {
             // Force UI repaint to show spinner immediately and schedule continuous updates
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
 
-            // Spawn background thread to avoid blocking UI
-            std::thread::spawn(move || {
-                // Create tokio runtime for async operations
-                let runtime = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        tracing::error!("Failed to create Tokio runtime: {}", e);
-                        // Remove loading indicator
-                        if let Ok(mut state) = state_arc.try_write() {
-                            state.loading_tasks.remove(&cache_key);
-                        }
-                        return;
+            Self::spawn_parallel_query(state_arc, scope, cache, aws_client, cache_key);
+        }
+    }
+
+    fn spawn_parallel_query(
+        state_arc: Arc<RwLock<ResourceExplorerState>>,
+        scope: QueryScope,
+        cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
+        aws_client: Arc<AWSResourceClient>,
+        cache_key: String,
+    ) {
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create Tokio runtime: {}", e);
+                    if let Ok(mut state) = state_arc.try_write() {
+                        state.loading_tasks.remove(&cache_key);
                     }
-                };
+                    return;
+                }
+            };
 
-                // Perform parallel queries with real-time updates
-                let result: Result<Vec<super::state::ResourceEntry>, anyhow::Error> = runtime
-                    .block_on(async {
-                        // Create channels for parallel results
-                        let (result_sender, mut result_receiver) =
-                            tokio::sync::mpsc::channel::<super::aws_client::QueryResult>(1000);
-                        let (progress_sender, mut progress_receiver) =
-                            tokio::sync::mpsc::channel::<super::aws_client::QueryProgress>(100);
+            let result: Result<Vec<super::state::ResourceEntry>, anyhow::Error> = runtime
+                .block_on(async {
+                    let (result_sender, mut result_receiver) =
+                        tokio::sync::mpsc::channel::<super::aws_client::QueryResult>(1000);
+                    let (progress_sender, mut progress_receiver) =
+                        tokio::sync::mpsc::channel::<super::aws_client::QueryProgress>(100);
 
-                        // Clone data for spawned tasks to avoid lifetime issues
-                        let aws_client_clone = aws_client.clone();
-                        let scope_clone = scope.clone();
-                        let cache_clone = cache.clone();
+                    let aws_client_clone = aws_client.clone();
+                    let scope_clone = scope.clone();
+                    let cache_clone = cache.clone();
 
-                        // Start parallel queries
-                        let query_future = aws_client_clone.query_aws_resources_parallel(
-                            &scope_clone,
-                            result_sender,
-                            Some(progress_sender),
-                            cache_clone,
-                        );
+                    let query_future = aws_client_clone.query_aws_resources_parallel(
+                        &scope_clone,
+                        result_sender,
+                        Some(progress_sender),
+                        cache_clone,
+                    );
 
-                        // Use Arc<Mutex> to share resources between async tasks
-                        let all_resources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-                        let all_resources_clone = all_resources.clone();
-                        let state_arc_clone = state_arc.clone();
+                    let all_resources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+                    let all_resources_clone = all_resources.clone();
+                    let state_arc_clone = state_arc.clone();
 
-                        // Run query and result processing concurrently - the key is CONCURRENT not sequential
-                        let result_processing = async {
-                            while let Some(result) = result_receiver.recv().await {
-                                match result.resources {
-                                    Ok(resources) => {
-                                        tracing::info!(
-                                            "Received {} resources for {}:{}:{}",
-                                            resources.len(),
-                                            result.account_id,
-                                            result.region,
-                                            result.resource_type
-                                        );
+                    let result_processing = async {
+                        while let Some(result) = result_receiver.recv().await {
+                            match result.resources {
+                                Ok(resources) => {
+                                    tracing::info!(
+                                        "Received {} resources for {}:{}:{}",
+                                        resources.len(),
+                                        result.account_id,
+                                        result.region,
+                                        result.resource_type
+                                    );
 
-                                        // Add to shared collection
-                                        {
-                                            let mut all_res = all_resources_clone.lock().await;
-                                            all_res.extend(resources);
+                                    {
+                                        let mut all_res = all_resources_clone.lock().await;
+                                        all_res.extend(resources);
 
-                                            // Update UI in real-time with current resources
-                                            if let Ok(mut state) = state_arc_clone.try_write() {
-                                                state.resources = all_res.clone();
-                                                // Note: Don't remove loading tasks yet, we're still receiving results
-                                            }
+                                        if let Ok(mut state) = state_arc_clone.try_write() {
+                                            state.resources = all_res.clone();
                                         }
                                     }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Query failed for {}:{}:{}: {}",
-                                            result.account_id,
-                                            result.region,
-                                            result.resource_type,
-                                            e
-                                        );
-                                    }
                                 }
-                            }
-                            let final_count = all_resources_clone.lock().await.len();
-                            tracing::debug!(
-                                "Result receiver channel closed, collected {} total resources",
-                                final_count
-                            );
-                        };
-
-                        // Process progress updates concurrently
-                        let progress_processing = async {
-                            while let Some(progress) = progress_receiver.recv().await {
-                                tracing::debug!(
-                                    "Progress: {} - {} - {}",
-                                    progress.account,
-                                    progress.region,
-                                    progress.message
-                                );
-                            }
-                            tracing::debug!("Progress receiver channel closed");
-                        };
-
-                        // Run ALL THREE concurrently - this is the key fix!
-                        tokio::join!(
-                            async {
-                                match query_future.await {
-                                    Ok(()) => {
-                                        tracing::debug!("Query execution completed successfully")
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Parallel query execution failed: {}", e)
-                                    }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Query failed for {}:{}:{}: {}",
+                                        result.account_id,
+                                        result.region,
+                                        result.resource_type,
+                                        e
+                                    );
                                 }
-                            },
-                            result_processing,
-                            progress_processing
-                        );
-
-                        // Get final results from shared storage
-                        let final_resources = all_resources.lock().await.clone();
-
-                        Ok(final_resources)
-                    });
-
-                // Final update with all results
-                match result {
-                    Ok(resources) => {
-                        // Update state with results and remove loading indicator - use retry with fallback
-                        for attempt in 0..3 {
-                            if let Ok(mut state) = state_arc.try_write() {
-                                // Update cached queries from the async cache
-                                let final_cache =
-                                    runtime.block_on(async { cache.read().await.clone() });
-                                state.cached_queries = final_cache;
-                                state.resources = resources;
-                                state.finish_loading_task(&cache_key);
-
-                                // Update tag popularity and badge selection based on loaded resources
-                                state.update_tag_popularity();
-
-                                tracing::info!("✅ Parallel query completed: {} total resources (loading tasks remaining: {})",
-                                    state.resources.len(), state.loading_task_count());
-
-                                // Trigger Phase 2 enrichment if there are enrichable resources
-                                let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
-                                let resources_to_enrich: Vec<_> = state.resources.iter()
-                                    .filter(|r| enrichable_types.contains(&r.resource_type.as_str())
-                                        && r.detailed_properties.is_none())
-                                    .cloned()
-                                    .collect();
-
-                                if !resources_to_enrich.is_empty() {
-                                    state.phase2_enrichment_in_progress = true;
-                                    state.phase2_enrichment_completed = false;
-                                    state.phase2_progress_total = resources_to_enrich.len();
-                                    state.phase2_progress_count = 0;
-                                    tracing::info!("🔄 Starting Phase 2 enrichment for {} resources", resources_to_enrich.len());
-
-                                    // Clone necessary data for Phase 2 background task
-                                    let aws_client_for_phase2 = aws_client.clone();
-                                    let cache_for_phase2 = cache.clone();
-                                    let state_arc_for_phase2 = state_arc.clone();
-
-                                    // Spawn Phase 2 in background
-                                    std::thread::spawn(move || {
-                                        let rt = match tokio::runtime::Runtime::new() {
-                                            Ok(rt) => rt,
-                                            Err(e) => {
-                                                tracing::error!("Failed to create Phase 2 runtime: {}", e);
-                                                if let Ok(mut s) = state_arc_for_phase2.try_write() {
-                                                    s.phase2_enrichment_in_progress = false;
-                                                }
-                                                return;
-                                            }
-                                        };
-
-                                        rt.block_on(async {
-                                            let (progress_tx, mut progress_rx) =
-                                                tokio::sync::mpsc::channel::<super::aws_client::QueryProgress>(100);
-                                            let (result_tx, _result_rx) =
-                                                tokio::sync::mpsc::channel::<super::aws_client::QueryResult>(100);
-
-                                            // Clone cache for use in progress handler (original is moved to enrichment)
-                                            let cache_for_sync = cache_for_phase2.clone();
-
-                                            // Start Phase 2 enrichment (spawns internal task)
-                                            aws_client_for_phase2.start_phase2_enrichment(
-                                                resources_to_enrich,
-                                                result_tx,
-                                                Some(progress_tx),
-                                                cache_for_phase2,
-                                            );
-
-                                            // Process progress updates until channel closes
-                                            while let Some(progress) = progress_rx.recv().await {
-                                                let is_completion = matches!(progress.status, super::aws_client::QueryStatus::EnrichmentCompleted);
-                                                let is_enrichment_update = matches!(progress.status, super::aws_client::QueryStatus::EnrichmentInProgress | super::aws_client::QueryStatus::EnrichmentCompleted);
-
-                                                // Read from cache first (async lock) - only for enrichment updates
-                                                let updated_cache = if is_enrichment_update {
-                                                    Some(cache_for_sync.read().await.clone())
-                                                } else {
-                                                    None
-                                                };
-
-                                                // Combined state update in a single lock acquisition
-                                                // Use blocking write().await for completion to ensure it succeeds
-                                                // Use try_write() for in-progress updates (less critical if missed)
-                                                if is_completion {
-                                                    // Blocking write for completion - MUST succeed
-                                                    let mut s = state_arc_for_phase2.write().await;
-
-                                                    // Update progress info
-                                                    s.phase2_current_service = Some(progress.resource_type.clone());
-                                                    if let (Some(processed), Some(total)) =
-                                                        (progress.items_processed, progress.estimated_total)
-                                                    {
-                                                        s.phase2_progress_count = processed;
-                                                        s.phase2_progress_total = total;
-                                                    }
-
-                                                    // Sync cache to state for enrichment updates
-                                                    if let Some(cache) = updated_cache {
-                                                        s.cached_queries = cache;
-
-                                                        // Refresh state.resources with enriched entries from cache
-                                                        let mut refreshed_resources = Vec::new();
-                                                        for cached_entries in s.cached_queries.values() {
-                                                            refreshed_resources.extend(cached_entries.clone());
-                                                        }
-                                                        s.resources = refreshed_resources;
-                                                        // Increment version to invalidate tree cache (forces rebuild with new data)
-                                                        s.enrichment_version = s.enrichment_version.wrapping_add(1);
-
-                                                        // Mark completion
-                                                        s.phase2_enrichment_in_progress = false;
-                                                        s.phase2_enrichment_completed = true;
-                                                        s.phase2_current_service = None;
-                                                        tracing::info!("✅ Phase 2 enrichment completed, synced {} resources to UI", s.resources.len());
-                                                    }
-
-                                                    break; // Exit loop after completion
-                                                } else if let Ok(mut s) = state_arc_for_phase2.try_write() {
-                                                    // Non-blocking for progress updates (less critical if missed)
-
-                                                    // Update progress info
-                                                    s.phase2_current_service = Some(progress.resource_type.clone());
-                                                    if let (Some(processed), Some(total)) =
-                                                        (progress.items_processed, progress.estimated_total)
-                                                    {
-                                                        s.phase2_progress_count = processed;
-                                                        s.phase2_progress_total = total;
-                                                    }
-
-                                                    // Sync cache to state for enrichment updates
-                                                    if let Some(cache) = updated_cache {
-                                                        s.cached_queries = cache;
-
-                                                        // Refresh state.resources with enriched entries from cache
-                                                        let mut refreshed_resources = Vec::new();
-                                                        for cached_entries in s.cached_queries.values() {
-                                                            refreshed_resources.extend(cached_entries.clone());
-                                                        }
-                                                        s.resources = refreshed_resources;
-                                                        // Increment version to invalidate tree cache (forces rebuild with new data)
-                                                        s.enrichment_version = s.enrichment_version.wrapping_add(1);
-                                                    }
-                                                }
-                                            }
-
-                                            // Ensure state is updated if channel closed unexpectedly
-                                            // Use blocking write().await to guarantee cleanup
-                                            {
-                                                // Read cache first (async)
-                                                let updated_cache = cache_for_sync.read().await.clone();
-
-                                                // Then update state with blocking write
-                                                let mut s = state_arc_for_phase2.write().await;
-                                                if s.phase2_enrichment_in_progress {
-                                                    s.cached_queries = updated_cache;
-
-                                                    let mut refreshed_resources = Vec::new();
-                                                    for cached_entries in s.cached_queries.values() {
-                                                        refreshed_resources.extend(cached_entries.clone());
-                                                    }
-                                                    s.resources = refreshed_resources;
-                                                    // Increment version to invalidate tree cache (forces rebuild with new data)
-                                                    s.enrichment_version = s.enrichment_version.wrapping_add(1);
-
-                                                    s.phase2_enrichment_in_progress = false;
-                                                    s.phase2_enrichment_completed = true;
-                                                    s.phase2_current_service = None;
-                                                    tracing::info!("✅ Phase 2 cleanup: marked enrichment complete after channel close");
-                                                }
-                                            }
-                                        });
-                                    });
-                                }
-
-                                break;
-                            } else if attempt == 2 {
-                                tracing::warn!("Failed to update state after query completion after 3 attempts");
-                            } else {
-                                std::thread::sleep(std::time::Duration::from_millis(10));
                             }
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to execute parallel queries: {}", e);
+                        let final_count = all_resources_clone.lock().await.len();
+                        tracing::debug!(
+                            "Result receiver channel closed, collected {} total resources",
+                            final_count
+                        );
+                    };
 
-                        // Remove loading indicator
+                    let progress_processing = async {
+                        while let Some(progress) = progress_receiver.recv().await {
+                            tracing::debug!(
+                                "Progress: {} - {} - {}",
+                                progress.account,
+                                progress.region,
+                                progress.message
+                            );
+                        }
+                        tracing::debug!("Progress receiver channel closed");
+                    };
+
+                    tokio::join!(
+                        async {
+                            match query_future.await {
+                                Ok(()) => {
+                                    tracing::debug!("Query execution completed successfully")
+                                }
+                                Err(e) => {
+                                    tracing::error!("Parallel query execution failed: {}", e)
+                                }
+                            }
+                        },
+                        result_processing,
+                        progress_processing
+                    );
+
+                    let final_resources = all_resources.lock().await.clone();
+
+                    Ok(final_resources)
+                });
+
+            match result {
+                Ok(resources) => {
+                    for attempt in 0..3 {
                         if let Ok(mut state) = state_arc.try_write() {
-                            state.loading_tasks.remove(&cache_key);
+                            let final_cache = runtime.block_on(async { cache.read().await.clone() });
+                            state.cached_queries = final_cache;
+                            state.resources = resources;
+                            state.finish_loading_task(&cache_key);
+
+                            state.update_tag_popularity();
+
+                            tracing::info!(
+                                "✅ Parallel query completed: {} total resources (loading tasks remaining: {})",
+                                state.resources.len(),
+                                state.loading_task_count()
+                            );
+
+                            Self::maybe_start_phase2_enrichment_for_state(
+                                &mut state,
+                                state_arc.clone(),
+                                aws_client.clone(),
+                            );
+
+                            break;
+                        } else if attempt == 2 {
+                            tracing::warn!(
+                                "Failed to update state after query completion after 3 attempts"
+                            );
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
                         }
                     }
                 }
-            });
-        }
+                Err(e) => {
+                    tracing::error!("Failed to execute parallel queries: {}", e);
+
+                    if let Ok(mut state) = state_arc.try_write() {
+                        state.loading_tasks.remove(&cache_key);
+                    }
+                }
+            }
+        });
     }
 
     /// Trigger selective refresh for selected combinations
@@ -3470,39 +3366,247 @@ impl ResourceExplorerWindow {
         }
     }
 
+    fn handle_active_selection_reduction(
+        &self,
+        state: &mut ResourceExplorerState,
+        was_phase2_running: bool,
+    ) {
+        state.cancel_phase2_enrichment();
+        self.filter_resources_by_current_scope(state);
+
+        if was_phase2_running {
+            self.maybe_start_phase2_enrichment(state);
+        }
+    }
+
+    fn resource_matches_scope(resource: &ResourceEntry, scope: &QueryScope) -> bool {
+        let account_matches = scope
+            .accounts
+            .iter()
+            .any(|a| a.account_id == resource.account_id);
+
+        let region_matches = scope
+            .regions
+            .iter()
+            .any(|r| r.region_code == resource.region);
+
+        let resource_type_matches = scope
+            .resource_types
+            .iter()
+            .any(|rt| rt.resource_type == resource.resource_type);
+
+        account_matches && region_matches && resource_type_matches
+    }
+
+    fn refresh_resources_from_cache_filtered(
+        state: &mut ResourceExplorerState,
+        cache: &HashMap<String, Vec<ResourceEntry>>,
+    ) {
+        let mut refreshed_resources = Vec::new();
+        for cached_entries in cache.values() {
+            for resource in cached_entries {
+                if Self::resource_matches_scope(resource, &state.query_scope) {
+                    refreshed_resources.push(resource.clone());
+                }
+            }
+        }
+
+        state.resources = refreshed_resources;
+    }
+
+    fn maybe_start_phase2_enrichment(&self, state: &mut ResourceExplorerState) {
+        let Some(aws_client) = self.aws_client.clone() else {
+            return;
+        };
+        let state_arc_for_phase2 = self.state.clone();
+        Self::maybe_start_phase2_enrichment_for_state(state, state_arc_for_phase2, aws_client);
+    }
+
+    fn maybe_start_phase2_enrichment_for_state(
+        state: &mut ResourceExplorerState,
+        state_arc_for_phase2: Arc<RwLock<ResourceExplorerState>>,
+        aws_client: Arc<AWSResourceClient>,
+    ) {
+        let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
+        let resources_to_enrich: Vec<_> = state
+            .resources
+            .iter()
+            .filter(|r| {
+                enrichable_types.contains(&r.resource_type.as_str())
+                    && r.detailed_properties.is_none()
+            })
+            .cloned()
+            .collect();
+
+        if resources_to_enrich.is_empty() {
+            return;
+        }
+
+        if state.phase2_enrichment_in_progress {
+            state.cancel_phase2_enrichment();
+        }
+
+        state.phase2_enrichment_in_progress = true;
+        state.phase2_enrichment_completed = false;
+        state.phase2_progress_total = resources_to_enrich.len();
+        state.phase2_progress_count = 0;
+
+        let phase2_generation = state.phase2_generation;
+        let cache_for_phase2 = Arc::new(tokio::sync::RwLock::new(state.cached_queries.clone()));
+
+        tracing::info!(
+            "🔄 Starting Phase 2 enrichment for {} resources",
+            resources_to_enrich.len()
+        );
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create Phase 2 runtime: {}", e);
+                    if let Ok(mut s) = state_arc_for_phase2.try_write() {
+                        s.phase2_enrichment_in_progress = false;
+                    }
+                    return;
+                }
+            };
+
+            rt.block_on(async {
+                let (progress_tx, mut progress_rx) =
+                    tokio::sync::mpsc::channel::<super::aws_client::QueryProgress>(100);
+                let (result_tx, _result_rx) =
+                    tokio::sync::mpsc::channel::<super::aws_client::QueryResult>(100);
+
+                let cache_for_sync = cache_for_phase2.clone();
+
+                aws_client.start_phase2_enrichment(
+                    resources_to_enrich,
+                    result_tx,
+                    Some(progress_tx),
+                    cache_for_phase2,
+                );
+
+                let mut canceled = false;
+
+                while let Some(progress) = progress_rx.recv().await {
+                    let generation_matches = {
+                        let s = state_arc_for_phase2.read().await;
+                        s.phase2_generation == phase2_generation
+                    };
+
+                    if !generation_matches {
+                        canceled = true;
+                        tracing::info!(
+                            "Phase 2 enrichment canceled due to active selection change"
+                        );
+                        break;
+                    }
+
+                    let is_completion = matches!(
+                        progress.status,
+                        super::aws_client::QueryStatus::EnrichmentCompleted
+                    );
+                    let is_enrichment_update = matches!(
+                        progress.status,
+                        super::aws_client::QueryStatus::EnrichmentInProgress
+                            | super::aws_client::QueryStatus::EnrichmentCompleted
+                    );
+
+                    let updated_cache = if is_enrichment_update {
+                        Some(cache_for_sync.read().await.clone())
+                    } else {
+                        None
+                    };
+
+                    if is_completion {
+                        let mut s = state_arc_for_phase2.write().await;
+
+                        s.phase2_current_service = Some(progress.resource_type.clone());
+                        if let (Some(processed), Some(total)) =
+                            (progress.items_processed, progress.estimated_total)
+                        {
+                            s.phase2_progress_count = processed;
+                            s.phase2_progress_total = total;
+                        }
+
+                        if let Some(cache) = updated_cache {
+                            s.cached_queries = cache;
+                            let cached_queries = s.cached_queries.clone();
+                            Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
+                            s.enrichment_version = s.enrichment_version.wrapping_add(1);
+
+                            s.phase2_enrichment_in_progress = false;
+                            s.phase2_enrichment_completed = true;
+                            s.phase2_current_service = None;
+                            tracing::info!(
+                                "✅ Phase 2 enrichment completed, synced {} resources to UI",
+                                s.resources.len()
+                            );
+                        }
+
+                        break;
+                    } else if let Ok(mut s) = state_arc_for_phase2.try_write() {
+                        s.phase2_current_service = Some(progress.resource_type.clone());
+                        if let (Some(processed), Some(total)) =
+                            (progress.items_processed, progress.estimated_total)
+                        {
+                            s.phase2_progress_count = processed;
+                            s.phase2_progress_total = total;
+                        }
+
+                        if let Some(cache) = updated_cache {
+                            s.cached_queries = cache;
+                            let cached_queries = s.cached_queries.clone();
+                            Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
+                            s.enrichment_version = s.enrichment_version.wrapping_add(1);
+                        }
+                    }
+                }
+
+                if canceled {
+                    return;
+                }
+
+                let generation_matches = {
+                    let s = state_arc_for_phase2.read().await;
+                    s.phase2_generation == phase2_generation
+                };
+
+                if !generation_matches {
+                    return;
+                }
+
+                let updated_cache = cache_for_sync.read().await.clone();
+
+                let mut s = state_arc_for_phase2.write().await;
+                if s.phase2_enrichment_in_progress {
+                    s.cached_queries = updated_cache;
+                    let cached_queries = s.cached_queries.clone();
+                    Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
+                    s.enrichment_version = s.enrichment_version.wrapping_add(1);
+
+                    s.phase2_enrichment_in_progress = false;
+                    s.phase2_enrichment_completed = true;
+                    s.phase2_current_service = None;
+                    tracing::info!(
+                        "✅ Phase 2 cleanup: marked enrichment complete after channel close"
+                    );
+                }
+            });
+        });
+    }
+
     /// Filter displayed resources to match current query scope without clearing cache
     /// This preserves cached data while updating what's visible in the tree
     fn filter_resources_by_current_scope(&self, state: &mut ResourceExplorerState) {
-        // Keep all cached resources intact
         let mut filtered_resources = Vec::new();
 
-        // Only include resources that match current scope (accounts, regions, resource types)
         for resource in &state.resources {
-            let account_matches = state
-                .query_scope
-                .accounts
-                .iter()
-                .any(|a| a.account_id == resource.account_id);
-
-            let region_matches = state
-                .query_scope
-                .regions
-                .iter()
-                .any(|r| r.region_code == resource.region);
-
-            let resource_type_matches = state
-                .query_scope
-                .resource_types
-                .iter()
-                .any(|rt| rt.resource_type == resource.resource_type);
-
-            // Only include if ALL criteria match current scope
-            if account_matches && region_matches && resource_type_matches {
+            if Self::resource_matches_scope(resource, &state.query_scope) {
                 filtered_resources.push(resource.clone());
             }
         }
 
-        // Update displayed resources (but preserve cache)
         state.resources = filtered_resources;
 
         tracing::info!(

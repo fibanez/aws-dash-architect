@@ -123,5 +123,4 @@ let command_enabled = logged_in; // Control command availability
 
 **References:**
 - [Keyboard Navigation System](keyboard-navigation-system.md) - Space bar priority integration
-- [Window Focus System](window-focus-system.md) - FocusedWindow integration
 - [Resource Explorer System](resource-explorer-system.md) - Explorer command integration

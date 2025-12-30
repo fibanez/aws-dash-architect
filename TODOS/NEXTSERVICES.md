@@ -5,28 +5,61 @@ This document lists AWS services that are **NOT YET IMPLEMENTED** in the AWS Exp
 
 ## Summary
 
-**Currently Implemented**: 172 UI-registered resource types + 5 child resource types = 177 total queryable types across 82 AWS services
+**Currently Implemented**: 199 UI-registered resource types + 5 child resource types = 204 total queryable types across 83 AWS services
 **Hierarchical Child Resources**: 5 child resource types (Bedrock DataSource, IngestionJob, AgentAlias, AgentActionGroup, FlowAlias) with automatic nested querying
-**Missing Resources**: 180+ critical resources across existing services
+**Missing Resources**: 150+ critical resources across existing services
 **Implementation Goal**: Complete coverage of all resources for top 100+ most-used AWS services
 
 ### Known Issues
-- ⚠️ **EMR**: Implementation exists (emr.rs) but NOT registered in UI dialogs.rs - needs registration fix
+
+#### CloudWatch/Logs Issues
+- ⚠️ **CloudWatch Metrics (`AWS::CloudWatch::Metric`)**: Implementation exists but does NOT work correctly. The `list_metrics` API returns thousands of metrics (especially AWS/ namespace metrics) and the filtering logic to show only "useful" metrics (custom + alarm-associated) may not be functioning as intended. Needs investigation.
+- ⚠️ **Non-taggable CloudWatch Resources**: The following resources do NOT support tags and need to be marked as non-taggable in `aws_client.rs` to avoid unnecessary tag fetch attempts:
+  - `AWS::CloudWatch::Metric` - Metrics are not taggable resources
+  - `AWS::CloudWatch::InsightRule` - No tag support
+  - `AWS::CloudWatch::AnomalyDetector` - No tag support
+  - `AWS::Logs::LogStream` - Log streams don't support tags (only log groups do)
+  - `AWS::Logs::MetricFilter` - Metric filters don't support tags
+  - `AWS::Logs::SubscriptionFilter` - Subscription filters don't support tags
+  - `AWS::Logs::ResourcePolicy` - Resource policies don't support tags
+  - `AWS::Logs::QueryDefinition` - Query definitions don't support tags (use Resource Groups Tagging API workaround or mark non-taggable)
+
+#### Resolved Issues
+- ~~⚠️ **EMR**: Implementation exists (emr.rs) but NOT registered in UI dialogs.rs - needs registration fix~~ ✅ FIXED
 
 ---
 
-### Implemented in Code but Missing UI Registration
+### Newly Implemented CloudWatch/Logs Resources ✅
 
-These are implemented in `src/app/resource_explorer/aws_client.rs` but not registered in `src/app/resource_explorer/dialogs.rs`.
+The following CloudWatch and Logs resources were newly implemented and registered:
 
-- `AWS::ECS::CapacityProvider`
-- `AWS::ECS::TaskSet`
-- `AWS::EKS::Addon`
-- `AWS::EKS::IdentityProviderConfig`
-- `AWS::EMR::Cluster`
-- `AWS::IAM::ServerCertificate`
-- `AWS::RDS::DBClusterSnapshot`
-- `AWS::RDS::OptionGroup`
+**CloudWatch** (4 new resource types):
+- ~~`AWS::CloudWatch::CompositeAlarm`~~ ✅ Implemented
+- ~~`AWS::CloudWatch::Metric`~~ ⚠️ Implemented but NOT WORKING (see Known Issues)
+- ~~`AWS::CloudWatch::InsightRule`~~ ✅ Implemented
+- ~~`AWS::CloudWatch::AnomalyDetector`~~ ✅ Implemented
+
+**CloudWatch Logs** (5 new resource types):
+- ~~`AWS::Logs::LogStream`~~ ✅ Implemented (as top-level resource, not child)
+- ~~`AWS::Logs::MetricFilter`~~ ✅ Implemented (as top-level resource, not child)
+- ~~`AWS::Logs::SubscriptionFilter`~~ ✅ Implemented (as top-level resource, not child)
+- ~~`AWS::Logs::ResourcePolicy`~~ ✅ Implemented
+- ~~`AWS::Logs::QueryDefinition`~~ ✅ Implemented
+
+**Note**: LogStream, MetricFilter, and SubscriptionFilter are currently implemented as top-level resources (queried globally). They could be refactored as child resources of LogGroup for better UX in the future.
+
+### Recently Registered (Previously Missing UI Registration) ✅
+
+These resources were implemented in `src/app/resource_explorer/aws_client.rs` and are now properly registered in `src/app/resource_explorer/dialogs.rs`:
+
+- ~~`AWS::ECS::CapacityProvider`~~ ✅ Registered
+- ~~`AWS::ECS::TaskSet`~~ ✅ Registered
+- ~~`AWS::EKS::Addon`~~ ✅ Registered
+- ~~`AWS::EKS::IdentityProviderConfig`~~ ✅ Registered
+- ~~`AWS::EMR::Cluster`~~ ✅ Registered
+- ~~`AWS::IAM::ServerCertificate`~~ ✅ Registered
+- ~~`AWS::RDS::DBClusterSnapshot`~~ ✅ Registered
+- ~~`AWS::RDS::OptionGroup`~~ ✅ Registered
 
 ### Dev/Ops Priority Additions (from Top 50)
 
@@ -58,7 +91,7 @@ These are top-50 Dev/Ops items that were missing from this roadmap. Added here t
 - `AWS::Redshift::ReservedNodeOffering` - (describe_reserved_node_offerings)
 - `AWS::Redshift::SnapshotCopyGrant` - (describe_snapshot_copy_grants)
 - `AWS::CloudWatch::MetricStream` - (list_metric_streams)
-- `AWS::Logs::LogStream` - (describe_log_streams)
+- ~~`AWS::Logs::LogStream` - (describe_log_streams)~~ ✅ Implemented
 - `AWS::Lambda::EventInvokeConfig` - (list_function_event_invoke_configs)
 - `AWS::Lambda::ProvisionedConcurrencyConfig` - (list_provisioned_concurrency_configs)
 - `AWS::S3::ObjectVersion` - (list_object_versions)
@@ -90,9 +123,9 @@ These resources require a parent ID to query and should be implemented as **chil
 | `EKS::Addon` | EKS::Cluster | `list_addons(cluster_name)` |
 | `EKS::AccessEntry` | EKS::Cluster | `list_access_entries(cluster_name)` |
 | `EKS::PodIdentityAssociation` | EKS::Cluster | `list_pod_identity_associations(cluster_name)` |
-| `Logs::LogStream` | Logs::LogGroup | `describe_log_streams(log_group_name)` |
-| `Logs::MetricFilter` | Logs::LogGroup | `describe_metric_filters(log_group_name)` |
-| `Logs::SubscriptionFilter` | Logs::LogGroup | `describe_subscription_filters(log_group_name)` |
+| ~~`Logs::LogStream`~~ | Logs::LogGroup | `describe_log_streams(log_group_name)` | ✅ Implemented as top-level |
+| ~~`Logs::MetricFilter`~~ | Logs::LogGroup | `describe_metric_filters(log_group_name)` | ✅ Implemented as top-level |
+| ~~`Logs::SubscriptionFilter`~~ | Logs::LogGroup | `describe_subscription_filters(log_group_name)` | ✅ Implemented as top-level |
 
 #### Medium Priority (IAM, CloudFormation, ECS, AppSync) - ~12 resources
 
@@ -130,27 +163,27 @@ These resources require a parent ID to query and should be implemented as **chil
 
 ### **1. EC2 (Extended Resources)** ⭐⭐⭐⭐⭐
 Missing critical EC2 resources that are essential for complete infrastructure management:
-- `AWS::EC2::ElasticIP` - Elastic IP addresses (describe_addresses)
-- `AWS::EC2::LaunchTemplate` - Launch Templates (describe_launch_templates)
-- `AWS::EC2::PlacementGroup` - Placement Groups (describe_placement_groups)
-- `AWS::EC2::ReservedInstance` - Reserved Instances (describe_reserved_instances)
-- `AWS::EC2::SpotInstanceRequest` - Spot Instance Requests (describe_spot_instance_requests)
-- `AWS::EC2::DHCPOptions` - DHCP Options Sets (describe_dhcp_options)
-- `AWS::EC2::EgressOnlyInternetGateway` - Egress-Only Internet Gateways
-- `AWS::EC2::VPNConnection` - VPN Connections (describe_vpn_connections)
-- `AWS::EC2::VPNGateway` - VPN Gateways (describe_vpn_gateways)
-- `AWS::EC2::CustomerGateway` - Customer Gateways (describe_customer_gateways)
+- ~~`AWS::EC2::ElasticIP` - Elastic IP addresses (describe_addresses)~~ ✅
+- ~~`AWS::EC2::LaunchTemplate` - Launch Templates (describe_launch_templates)~~ ✅
+- ~~`AWS::EC2::PlacementGroup` - Placement Groups (describe_placement_groups)~~ ✅
+- ~~`AWS::EC2::ReservedInstance` - Reserved Instances (describe_reserved_instances)~~ ✅
+- ~~`AWS::EC2::SpotInstanceRequest` - Spot Instance Requests (describe_spot_instance_requests)~~ ✅
+- ~~`AWS::EC2::DHCPOptions` - DHCP Options Sets (describe_dhcp_options)~~ ✅
+- ~~`AWS::EC2::EgressOnlyInternetGateway` - Egress-Only Internet Gateways~~ ✅
+- ~~`AWS::EC2::VPNConnection` - VPN Connections (describe_vpn_connections)~~ ✅
+- ~~`AWS::EC2::VPNGateway` - VPN Gateways (describe_vpn_gateways)~~ ✅
+- ~~`AWS::EC2::CustomerGateway` - Customer Gateways (describe_customer_gateways)~~ ✅
 
 ### **2. CloudWatch (Complete Monitoring)** ⭐⭐⭐⭐⭐
 Critical monitoring resources missing:
-- `AWS::CloudWatch::Metric` - CloudWatch Metrics (list_metrics)
-- `AWS::CloudWatch::CompositeAlarm` - Composite Alarms (describe_composite_alarms)
-- `AWS::CloudWatch::InsightRule` - Contributor Insights Rules
-- `AWS::CloudWatch::AnomalyDetector` - Anomaly Detectors
-- `AWS::Logs::MetricFilter` - Log Metric Filters
-- `AWS::Logs::SubscriptionFilter` - Log Subscription Filters
-- `AWS::Logs::ResourcePolicy` - Resource Policies
-- `AWS::Logs::QueryDefinition` - CloudWatch Insights Query Definitions
+- ~~`AWS::CloudWatch::Metric` - CloudWatch Metrics (list_metrics)~~ ✅
+- ~~`AWS::CloudWatch::CompositeAlarm` - Composite Alarms (describe_composite_alarms)~~ ✅
+- ~~`AWS::CloudWatch::InsightRule` - Contributor Insights Rules~~ ✅
+- ~~`AWS::CloudWatch::AnomalyDetector` - Anomaly Detectors~~ ✅
+- ~~`AWS::Logs::MetricFilter` - Log Metric Filters~~ ✅
+- ~~`AWS::Logs::SubscriptionFilter` - Log Subscription Filters~~ ✅
+- ~~`AWS::Logs::ResourcePolicy` - Resource Policies~~ ✅
+- ~~`AWS::Logs::QueryDefinition` - CloudWatch Insights Query Definitions~~ ✅
 
 ### **3. Glue (Complete Data Catalog)** ⭐⭐⭐⭐⭐
 Missing all critical Glue resources except Jobs:
@@ -326,14 +359,14 @@ Missing critical S3 resources:
 *Very popular services not yet implemented*
 
 ### **Data & Analytics**
-20. **Amazon EMR (Registration Fix Needed)** ⭐⭐⭐⭐ ⚠️ NEEDS UI REGISTRATION
-    - `AWS::EMR::Cluster` - EMR Clusters (IMPLEMENTED in emr.rs, NOT registered in dialogs.rs)
+20. **Amazon EMR (Registration Fix Complete)** ⭐⭐⭐⭐
+    - ~~`AWS::EMR::Cluster` - EMR Clusters (IMPLEMENTED in emr.rs, NOT registered in dialogs.rs)~~ ✅
     - `AWS::EMR::Step` - EMR Steps (list_steps) - needs implementation
     - `AWS::EMR::InstanceGroup` - Instance Groups - needs implementation
     - `AWS::EMR::InstanceFleet` - Instance Fleets - needs implementation
     - `AWS::EMR::SecurityConfiguration` - Security Configurations - needs implementation
     - `AWS::EMR::Studio` - EMR Studios - needs implementation
-    - **FIX NEEDED**: Add EMR::Cluster to get_default_resource_types() in dialogs.rs
+    - **FIX COMPLETED**: Added EMR::Cluster to get_default_resource_types() in dialogs.rs
 
 ### **AI/ML Services**
 21. **Amazon Comprehend** ⭐⭐⭐⭐

@@ -34,4 +34,8 @@ pub mod fonts;
 pub mod notifications;
 pub mod resource_explorer;
 
+// Debug-only modules
+#[cfg(debug_assertions)]
+pub mod sso_config;
+
 pub use dashui::app::DashApp;

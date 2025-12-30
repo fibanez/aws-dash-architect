@@ -797,6 +797,30 @@ impl EC2Service {
             );
         }
 
+        // InstanceTenancy (e.g., "default", "dedicated", "host")
+        if let Some(instance_tenancy) = &vpc.instance_tenancy {
+            json.insert(
+                "InstanceTenancy".to_string(),
+                serde_json::Value::String(instance_tenancy.as_str().to_string()),
+            );
+        }
+
+        // DhcpOptionsId
+        if let Some(dhcp_options_id) = &vpc.dhcp_options_id {
+            json.insert(
+                "DhcpOptionsId".to_string(),
+                serde_json::Value::String(dhcp_options_id.clone()),
+            );
+        }
+
+        // OwnerId (AWS account ID)
+        if let Some(owner_id) = &vpc.owner_id {
+            json.insert(
+                "OwnerId".to_string(),
+                serde_json::Value::String(owner_id.clone()),
+            );
+        }
+
         // Add CIDR block associations
         if let Some(ref cidr_block_associations) = vpc.cidr_block_association_set {
             if !cidr_block_associations.is_empty() {
@@ -1493,6 +1517,340 @@ impl EC2Service {
         }
 
         Ok(attachments)
+    }
+
+    /// List Elastic IP addresses
+    pub async fn list_elastic_ips(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_addresses().send().await?;
+
+        let mut addresses = Vec::new();
+        if let Some(address_list) = response.addresses {
+            for address in address_list {
+                let address_json = self.elastic_ip_to_json(&address);
+                addresses.push(address_json);
+            }
+        }
+
+        Ok(addresses)
+    }
+
+    /// List EC2 Launch Templates
+    pub async fn list_launch_templates(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_launch_templates()
+            .into_paginator()
+            .send();
+
+        let mut templates = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(template_list) = page.launch_templates {
+                for template in template_list {
+                    let template_json = self.launch_template_to_json(&template);
+                    templates.push(template_json);
+                }
+            }
+        }
+
+        Ok(templates)
+    }
+
+    /// List EC2 Placement Groups
+    pub async fn list_placement_groups(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_placement_groups().send().await?;
+
+        let mut groups = Vec::new();
+        if let Some(group_list) = response.placement_groups {
+            for group in group_list {
+                let group_json = self.placement_group_to_json(&group);
+                groups.push(group_json);
+            }
+        }
+
+        Ok(groups)
+    }
+
+    /// List EC2 Reserved Instances
+    pub async fn list_reserved_instances(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_reserved_instances().send().await?;
+
+        let mut reserved_instances = Vec::new();
+        if let Some(instance_list) = response.reserved_instances {
+            for instance in instance_list {
+                let instance_json = self.reserved_instance_to_json(&instance);
+                reserved_instances.push(instance_json);
+            }
+        }
+
+        Ok(reserved_instances)
+    }
+
+    /// List EC2 Spot Instance Requests
+    pub async fn list_spot_instance_requests(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_spot_instance_requests()
+            .into_paginator()
+            .send();
+
+        let mut requests = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(request_list) = page.spot_instance_requests {
+                for request in request_list {
+                    let request_json = self.spot_instance_request_to_json(&request);
+                    requests.push(request_json);
+                }
+            }
+        }
+
+        Ok(requests)
+    }
+
+    /// List DHCP Options Sets
+    pub async fn list_dhcp_options(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_dhcp_options()
+            .into_paginator()
+            .send();
+
+        let mut options_sets = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(options_list) = page.dhcp_options {
+                for options in options_list {
+                    let options_json = self.dhcp_options_to_json(&options);
+                    options_sets.push(options_json);
+                }
+            }
+        }
+
+        Ok(options_sets)
+    }
+
+    /// List Egress-Only Internet Gateways
+    pub async fn list_egress_only_internet_gateways(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let mut paginator = client
+            .describe_egress_only_internet_gateways()
+            .into_paginator()
+            .send();
+
+        let mut gateways = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page?;
+            if let Some(gateway_list) = page.egress_only_internet_gateways {
+                for gateway in gateway_list {
+                    let gateway_json = self.egress_only_internet_gateway_to_json(&gateway);
+                    gateways.push(gateway_json);
+                }
+            }
+        }
+
+        Ok(gateways)
+    }
+
+    /// List VPN Connections
+    pub async fn list_vpn_connections(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_vpn_connections().send().await?;
+
+        let mut connections = Vec::new();
+        if let Some(connection_list) = response.vpn_connections {
+            for connection in connection_list {
+                let connection_json = self.vpn_connection_to_json(&connection);
+                connections.push(connection_json);
+            }
+        }
+
+        Ok(connections)
+    }
+
+    /// List VPN Gateways
+    pub async fn list_vpn_gateways(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_vpn_gateways().send().await?;
+
+        let mut gateways = Vec::new();
+        if let Some(gateway_list) = response.vpn_gateways {
+            for gateway in gateway_list {
+                let gateway_json = self.vpn_gateway_to_json(&gateway);
+                gateways.push(gateway_json);
+            }
+        }
+
+        Ok(gateways)
+    }
+
+    /// List Customer Gateways
+    pub async fn list_customer_gateways(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = ec2::Client::new(&aws_config);
+        let response = client.describe_customer_gateways().send().await?;
+
+        let mut gateways = Vec::new();
+        if let Some(gateway_list) = response.customer_gateways {
+            for gateway in gateway_list {
+                let gateway_json = self.customer_gateway_to_json(&gateway);
+                gateways.push(gateway_json);
+            }
+        }
+
+        Ok(gateways)
     }
 
     /// Convert EBS volume to JSON format
@@ -3512,6 +3870,934 @@ impl EC2Service {
         // Generate a display name
         let display_name = format!("{} → {}", volume_id, instance_id);
         json.insert("Name".to_string(), serde_json::Value::String(display_name));
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Elastic IP to JSON format
+    fn elastic_ip_to_json(&self, address: &ec2::types::Address) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(allocation_id) = &address.allocation_id {
+            json.insert(
+                "AllocationId".to_string(),
+                serde_json::Value::String(allocation_id.clone()),
+            );
+        }
+
+        if let Some(public_ip) = &address.public_ip {
+            json.insert(
+                "PublicIp".to_string(),
+                serde_json::Value::String(public_ip.clone()),
+            );
+        }
+
+        if let Some(association_id) = &address.association_id {
+            json.insert(
+                "AssociationId".to_string(),
+                serde_json::Value::String(association_id.clone()),
+            );
+        }
+
+        if let Some(domain) = &address.domain {
+            json.insert(
+                "Domain".to_string(),
+                serde_json::Value::String(domain.as_str().to_string()),
+            );
+        }
+
+        if let Some(instance_id) = &address.instance_id {
+            json.insert(
+                "InstanceId".to_string(),
+                serde_json::Value::String(instance_id.clone()),
+            );
+        }
+
+        if let Some(network_interface_id) = &address.network_interface_id {
+            json.insert(
+                "NetworkInterfaceId".to_string(),
+                serde_json::Value::String(network_interface_id.clone()),
+            );
+        }
+
+        if let Some(network_interface_owner_id) = &address.network_interface_owner_id {
+            json.insert(
+                "NetworkInterfaceOwnerId".to_string(),
+                serde_json::Value::String(network_interface_owner_id.clone()),
+            );
+        }
+
+        if let Some(private_ip) = &address.private_ip_address {
+            json.insert(
+                "PrivateIpAddress".to_string(),
+                serde_json::Value::String(private_ip.clone()),
+            );
+        }
+
+        if let Some(public_ipv4_pool) = &address.public_ipv4_pool {
+            json.insert(
+                "PublicIpv4Pool".to_string(),
+                serde_json::Value::String(public_ipv4_pool.clone()),
+            );
+        }
+
+        if let Some(border_group) = &address.network_border_group {
+            json.insert(
+                "NetworkBorderGroup".to_string(),
+                serde_json::Value::String(border_group.clone()),
+            );
+        }
+
+        if let Some(tags) = &address.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Launch Template to JSON format
+    fn launch_template_to_json(
+        &self,
+        template: &ec2::types::LaunchTemplate,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(template_id) = &template.launch_template_id {
+            json.insert(
+                "LaunchTemplateId".to_string(),
+                serde_json::Value::String(template_id.clone()),
+            );
+        }
+
+        if let Some(template_name) = &template.launch_template_name {
+            json.insert(
+                "LaunchTemplateName".to_string(),
+                serde_json::Value::String(template_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(template_name.clone()),
+            );
+        }
+
+        if let Some(created_by) = &template.created_by {
+            json.insert(
+                "CreatedBy".to_string(),
+                serde_json::Value::String(created_by.clone()),
+            );
+        }
+
+        if let Some(create_time) = template.create_time {
+            json.insert(
+                "CreateTime".to_string(),
+                serde_json::Value::String(create_time.to_string()),
+            );
+        }
+
+        if let Some(default_version) = template.default_version_number {
+            json.insert(
+                "DefaultVersionNumber".to_string(),
+                serde_json::Value::Number(default_version.into()),
+            );
+        }
+
+        if let Some(latest_version) = template.latest_version_number {
+            json.insert(
+                "LatestVersionNumber".to_string(),
+                serde_json::Value::Number(latest_version.into()),
+            );
+        }
+
+        if let Some(tags) = &template.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                if !json.contains_key("Name") {
+                    for tag in tags {
+                        if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                            if key == "Name" {
+                                json.insert(
+                                    "Name".to_string(),
+                                    serde_json::Value::String(value.clone()),
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Placement Group to JSON format
+    fn placement_group_to_json(
+        &self,
+        group: &ec2::types::PlacementGroup,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(group_id) = &group.group_id {
+            json.insert(
+                "GroupId".to_string(),
+                serde_json::Value::String(group_id.clone()),
+            );
+        }
+
+        if let Some(group_name) = &group.group_name {
+            json.insert(
+                "GroupName".to_string(),
+                serde_json::Value::String(group_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(group_name.clone()),
+            );
+        }
+
+        if let Some(strategy) = &group.strategy {
+            json.insert(
+                "Strategy".to_string(),
+                serde_json::Value::String(strategy.as_str().to_string()),
+            );
+        }
+
+        if let Some(state) = &group.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(partition_count) = group.partition_count {
+            json.insert(
+                "PartitionCount".to_string(),
+                serde_json::Value::Number(partition_count.into()),
+            );
+        }
+
+        if let Some(spread_level) = &group.spread_level {
+            json.insert(
+                "SpreadLevel".to_string(),
+                serde_json::Value::String(spread_level.as_str().to_string()),
+            );
+        }
+
+        if let Some(tags) = &group.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                if !json.contains_key("Name") {
+                    for tag in tags {
+                        if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                            if key == "Name" {
+                                json.insert(
+                                    "Name".to_string(),
+                                    serde_json::Value::String(value.clone()),
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Reserved Instance to JSON format
+    fn reserved_instance_to_json(
+        &self,
+        instance: &ec2::types::ReservedInstances,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(reserved_id) = &instance.reserved_instances_id {
+            json.insert(
+                "ReservedInstancesId".to_string(),
+                serde_json::Value::String(reserved_id.clone()),
+            );
+        }
+
+        if let Some(instance_type) = &instance.instance_type {
+            json.insert(
+                "InstanceType".to_string(),
+                serde_json::Value::String(instance_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(state) = &instance.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(availability_zone) = &instance.availability_zone {
+            json.insert(
+                "AvailabilityZone".to_string(),
+                serde_json::Value::String(availability_zone.clone()),
+            );
+        }
+
+        if let Some(start) = instance.start {
+            json.insert(
+                "Start".to_string(),
+                serde_json::Value::String(start.to_string()),
+            );
+        }
+
+        if let Some(end) = instance.end {
+            json.insert(
+                "End".to_string(),
+                serde_json::Value::String(end.to_string()),
+            );
+        }
+
+        if let Some(instance_count) = instance.instance_count {
+            json.insert(
+                "InstanceCount".to_string(),
+                serde_json::Value::Number(instance_count.into()),
+            );
+        }
+
+        if let Some(offering_type) = &instance.offering_type {
+            json.insert(
+                "OfferingType".to_string(),
+                serde_json::Value::String(offering_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(offering_class) = &instance.offering_class {
+            json.insert(
+                "OfferingClass".to_string(),
+                serde_json::Value::String(offering_class.as_str().to_string()),
+            );
+        }
+
+        if let Some(product_description) = &instance.product_description {
+            json.insert(
+                "ProductDescription".to_string(),
+                serde_json::Value::String(product_description.as_str().to_string()),
+            );
+        }
+
+        if let Some(tags) = &instance.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Spot Instance Request to JSON format
+    fn spot_instance_request_to_json(
+        &self,
+        request: &ec2::types::SpotInstanceRequest,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(request_id) = &request.spot_instance_request_id {
+            json.insert(
+                "SpotInstanceRequestId".to_string(),
+                serde_json::Value::String(request_id.clone()),
+            );
+        }
+
+        if let Some(state) = &request.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(spot_price) = &request.spot_price {
+            json.insert(
+                "SpotPrice".to_string(),
+                serde_json::Value::String(spot_price.clone()),
+            );
+        }
+
+        if let Some(instance_id) = &request.instance_id {
+            json.insert(
+                "InstanceId".to_string(),
+                serde_json::Value::String(instance_id.clone()),
+            );
+        }
+
+        if let Some(create_time) = request.create_time {
+            json.insert(
+                "CreateTime".to_string(),
+                serde_json::Value::String(create_time.to_string()),
+            );
+        }
+
+        if let Some(status) = &request.status {
+            if let Some(code) = &status.code {
+                json.insert(
+                    "StatusCode".to_string(),
+                    serde_json::Value::String(code.clone()),
+                );
+            }
+            if let Some(message) = &status.message {
+                json.insert(
+                    "StatusMessage".to_string(),
+                    serde_json::Value::String(message.clone()),
+                );
+            }
+        }
+
+        if let Some(tags) = &request.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert DHCP Options Set to JSON format
+    fn dhcp_options_to_json(&self, options: &ec2::types::DhcpOptions) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(options_id) = &options.dhcp_options_id {
+            json.insert(
+                "DhcpOptionsId".to_string(),
+                serde_json::Value::String(options_id.clone()),
+            );
+        }
+
+        if let Some(configurations) = &options.dhcp_configurations {
+            let configs_json: Vec<serde_json::Value> = configurations
+                .iter()
+                .map(|config| {
+                    let mut config_json = serde_json::Map::new();
+                    if let Some(key) = &config.key {
+                        config_json
+                            .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                    }
+                    if let Some(values) = &config.values {
+                        let values_json: Vec<serde_json::Value> = values
+                            .iter()
+                            .filter_map(|value| {
+                                value.value.as_ref().map(|v| {
+                                    serde_json::Value::String(v.clone())
+                                })
+                            })
+                            .collect();
+                        config_json.insert(
+                            "Values".to_string(),
+                            serde_json::Value::Array(values_json),
+                        );
+                    }
+                    serde_json::Value::Object(config_json)
+                })
+                .collect();
+            json.insert(
+                "DhcpConfigurations".to_string(),
+                serde_json::Value::Array(configs_json),
+            );
+        }
+
+        if let Some(tags) = &options.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Egress-Only Internet Gateway to JSON format
+    fn egress_only_internet_gateway_to_json(
+        &self,
+        gateway: &ec2::types::EgressOnlyInternetGateway,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(gateway_id) = &gateway.egress_only_internet_gateway_id {
+            json.insert(
+                "EgressOnlyInternetGatewayId".to_string(),
+                serde_json::Value::String(gateway_id.clone()),
+            );
+        }
+
+        if let Some(attachments) = &gateway.attachments {
+            let attachments_json: Vec<serde_json::Value> = attachments
+                .iter()
+                .map(|attachment| {
+                    let mut attachment_json = serde_json::Map::new();
+                    if let Some(state) = &attachment.state {
+                        attachment_json.insert(
+                            "State".to_string(),
+                            serde_json::Value::String(state.as_str().to_string()),
+                        );
+                    }
+                    if let Some(vpc_id) = &attachment.vpc_id {
+                        attachment_json.insert(
+                            "VpcId".to_string(),
+                            serde_json::Value::String(vpc_id.clone()),
+                        );
+                    }
+                    serde_json::Value::Object(attachment_json)
+                })
+                .collect();
+            json.insert(
+                "Attachments".to_string(),
+                serde_json::Value::Array(attachments_json),
+            );
+        }
+
+        if let Some(tags) = &gateway.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert VPN Connection to JSON format
+    fn vpn_connection_to_json(
+        &self,
+        connection: &ec2::types::VpnConnection,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(connection_id) = &connection.vpn_connection_id {
+            json.insert(
+                "VpnConnectionId".to_string(),
+                serde_json::Value::String(connection_id.clone()),
+            );
+        }
+
+        if let Some(state) = &connection.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(connection_type) = &connection.r#type {
+            json.insert(
+                "Type".to_string(),
+                serde_json::Value::String(connection_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(customer_gateway_id) = &connection.customer_gateway_id {
+            json.insert(
+                "CustomerGatewayId".to_string(),
+                serde_json::Value::String(customer_gateway_id.clone()),
+            );
+        }
+
+        if let Some(vpn_gateway_id) = &connection.vpn_gateway_id {
+            json.insert(
+                "VpnGatewayId".to_string(),
+                serde_json::Value::String(vpn_gateway_id.clone()),
+            );
+        }
+
+        if let Some(transit_gateway_id) = &connection.transit_gateway_id {
+            json.insert(
+                "TransitGatewayId".to_string(),
+                serde_json::Value::String(transit_gateway_id.clone()),
+            );
+        }
+
+        if let Some(tags) = &connection.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert VPN Gateway to JSON format
+    fn vpn_gateway_to_json(&self, gateway: &ec2::types::VpnGateway) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(gateway_id) = &gateway.vpn_gateway_id {
+            json.insert(
+                "VpnGatewayId".to_string(),
+                serde_json::Value::String(gateway_id.clone()),
+            );
+        }
+
+        if let Some(state) = &gateway.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(gateway_type) = &gateway.r#type {
+            json.insert(
+                "Type".to_string(),
+                serde_json::Value::String(gateway_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(amazon_side_asn) = gateway.amazon_side_asn {
+            json.insert(
+                "AmazonSideAsn".to_string(),
+                serde_json::Value::Number(amazon_side_asn.into()),
+            );
+        }
+
+        if let Some(tags) = &gateway.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    /// Convert Customer Gateway to JSON format
+    fn customer_gateway_to_json(
+        &self,
+        gateway: &ec2::types::CustomerGateway,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(gateway_id) = &gateway.customer_gateway_id {
+            json.insert(
+                "CustomerGatewayId".to_string(),
+                serde_json::Value::String(gateway_id.clone()),
+            );
+        }
+
+        if let Some(state) = &gateway.state {
+            json.insert(
+                "State".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+            json.insert(
+                "Status".to_string(),
+                serde_json::Value::String(state.as_str().to_string()),
+            );
+        }
+
+        if let Some(gateway_type) = &gateway.r#type {
+            json.insert(
+                "Type".to_string(),
+                serde_json::Value::String(gateway_type.as_str().to_string()),
+            );
+        }
+
+        if let Some(bgp_asn) = &gateway.bgp_asn {
+            json.insert(
+                "BgpAsn".to_string(),
+                serde_json::Value::String(bgp_asn.clone()),
+            );
+        }
+
+        if let Some(ip_address) = &gateway.ip_address {
+            json.insert(
+                "IpAddress".to_string(),
+                serde_json::Value::String(ip_address.clone()),
+            );
+        }
+
+        if let Some(tags) = &gateway.tags {
+            if !tags.is_empty() {
+                let tags_json: Vec<serde_json::Value> = tags
+                    .iter()
+                    .map(|tag| {
+                        let mut tag_json = serde_json::Map::new();
+                        if let Some(key) = &tag.key {
+                            tag_json
+                                .insert("Key".to_string(), serde_json::Value::String(key.clone()));
+                        }
+                        if let Some(value) = &tag.value {
+                            tag_json.insert(
+                                "Value".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                        }
+                        serde_json::Value::Object(tag_json)
+                    })
+                    .collect();
+                json.insert("Tags".to_string(), serde_json::Value::Array(tags_json));
+
+                for tag in tags {
+                    if let (Some(key), Some(value)) = (&tag.key, &tag.value) {
+                        if key == "Name" {
+                            json.insert(
+                                "Name".to_string(),
+                                serde_json::Value::String(value.clone()),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         serde_json::Value::Object(json)
     }

@@ -1,6 +1,6 @@
 # AWS Service Integration Patterns
 
-Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 82 integrated services with parallel processing capabilities and hierarchical parent-child resource support.
+Standardized integration patterns for AWS services providing consistent client interfaces, error handling, and data transformation across 83 integrated services with parallel processing capabilities and hierarchical parent-child resource support.
 
 ## Core Functionality
 

@@ -21,11 +21,28 @@ pub struct AwsLoginWindow {
 
 impl Default for AwsLoginWindow {
     fn default() -> Self {
+        // Try to load defaults from sso.json (DEBUG builds only)
+        #[cfg(debug_assertions)]
+        let (short_name, region, role_name) = {
+            use crate::app::sso_config::SsoConfig;
+            if let Some(config) = SsoConfig::load() {
+                tracing::info!("Loaded SSO defaults from sso.json");
+                (config.short_name(), config.region, config.default_role_name)
+            } else {
+                ("your-org".to_string(), "us-east-1".to_string(), "awsdash".to_string())
+            }
+        };
+
+        #[cfg(not(debug_assertions))]
+        let (short_name, region, role_name) = {
+            ("your-org".to_string(), "us-east-1".to_string(), "awsdash".to_string())
+        };
+
         Self {
             open: false,
-            identity_center_short_name: "your-org".to_string(),
-            identity_center_region: "us-east-1".to_string(),
-            default_role_name: "awsdash".to_string(),
+            identity_center_short_name: short_name,
+            identity_center_region: region,
+            default_role_name: role_name,
             login_in_progress: false,
             completing_login: false,
             error_message: None,

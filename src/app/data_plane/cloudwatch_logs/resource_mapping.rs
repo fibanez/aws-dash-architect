@@ -225,8 +225,9 @@ mod tests {
         assert!(has_cloudwatch_logs("AWS::Lambda::Function"));
         assert!(has_cloudwatch_logs("AWS::ApiGateway::RestApi"));
         assert!(has_cloudwatch_logs("AWS::ECS::Task"));
+        assert!(has_cloudwatch_logs("AWS::DynamoDB::Table")); // DynamoDB has CloudWatch Logs via Contributor Insights
         assert!(!has_cloudwatch_logs("AWS::S3::Bucket"));
-        assert!(!has_cloudwatch_logs("AWS::DynamoDB::Table"));
+        assert!(!has_cloudwatch_logs("AWS::IAM::Role"));
     }
 
     #[test]

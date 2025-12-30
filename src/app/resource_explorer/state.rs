@@ -630,6 +630,7 @@ pub struct ResourceExplorerState {
     pub phase2_current_service: Option<String>, // Current service being enriched (e.g., "S3 buckets")
     pub phase2_progress_count: usize,        // Resources enriched so far
     pub phase2_progress_total: usize,        // Total resources to enrich
+    pub phase2_generation: u64,              // Selection generation for Phase 2 cancellation
     // Tree cache invalidation
     pub enrichment_version: u64,             // Incremented each time resources are enriched (forces tree rebuild)
 }
@@ -672,6 +673,7 @@ impl ResourceExplorerState {
             phase2_current_service: None,
             phase2_progress_count: 0,
             phase2_progress_total: 0,
+            phase2_generation: 0,
             enrichment_version: 0,
         }
     }
@@ -720,6 +722,12 @@ impl ResourceExplorerState {
         self.phase2_current_service = None;
         self.phase2_progress_count = 0;
         self.phase2_progress_total = 0;
+    }
+
+    /// Cancel any in-progress Phase 2 enrichment and bump generation to invalidate updates.
+    pub fn cancel_phase2_enrichment(&mut self) {
+        self.reset_phase2_state();
+        self.phase2_generation = self.phase2_generation.wrapping_add(1);
     }
 
     /// Update Phase 2 progress
@@ -831,6 +839,8 @@ impl ResourceExplorerState {
     /// This resets the explorer to its initial state, clearing all user selections
     /// but preserving the resource data and cache.
     pub fn clear_all_selections(&mut self) {
+        self.cancel_phase2_enrichment();
+
         // Clear query scope (accounts, regions, resource types)
         self.query_scope.accounts.clear();
         self.query_scope.regions.clear();

@@ -860,6 +860,56 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "EBS Volume Attachment".to_string(),
             "EC2".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::ElasticIP".to_string(),
+            "Elastic IP".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::LaunchTemplate".to_string(),
+            "Launch Template".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::PlacementGroup".to_string(),
+            "Placement Group".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::ReservedInstance".to_string(),
+            "Reserved Instance".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::SpotInstanceRequest".to_string(),
+            "Spot Instance Request".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::DHCPOptions".to_string(),
+            "DHCP Options Set".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::EgressOnlyInternetGateway".to_string(),
+            "Egress-Only Internet Gateway".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::VPNConnection".to_string(),
+            "VPN Connection".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::VPNGateway".to_string(),
+            "VPN Gateway".to_string(),
+            "EC2".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EC2::CustomerGateway".to_string(),
+            "Customer Gateway".to_string(),
+            "EC2".to_string(),
+        ),
         // Fargate Resources
         ResourceTypeSelection::new(
             "AWS::ECS::FargateService".to_string(),
@@ -890,6 +940,11 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         ResourceTypeSelection::new(
             "AWS::IAM::Policy".to_string(),
             "IAM Policy".to_string(),
+            "IAM".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::IAM::ServerCertificate".to_string(),
+            "IAM Server Certificate".to_string(),
             "IAM".to_string(),
         ),
         // S3 Resources
@@ -1115,6 +1170,16 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "RDS DB Subnet Group".to_string(),
             "RDS".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::RDS::DBClusterSnapshot".to_string(),
+            "RDS DB Cluster Snapshot".to_string(),
+            "RDS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::RDS::OptionGroup".to_string(),
+            "RDS Option Group".to_string(),
+            "RDS".to_string(),
+        ),
         // Lambda Resources
         ResourceTypeSelection::new(
             "AWS::Lambda::Function".to_string(),
@@ -1146,6 +1211,26 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         ResourceTypeSelection::new(
             "AWS::CloudWatch::Dashboard".to_string(),
             "CloudWatch Dashboard".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CloudWatch::CompositeAlarm".to_string(),
+            "CloudWatch Composite Alarm".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CloudWatch::Metric".to_string(),
+            "CloudWatch Metric".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CloudWatch::InsightRule".to_string(),
+            "CloudWatch Insight Rule".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::CloudWatch::AnomalyDetector".to_string(),
+            "CloudWatch Anomaly Detector".to_string(),
             "CloudWatch".to_string(),
         ),
         // API Gateway Resources
@@ -1187,10 +1272,30 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "ECS Task Definition".to_string(),
             "ECS".to_string(),
         ),
+        ResourceTypeSelection::new(
+            "AWS::ECS::CapacityProvider".to_string(),
+            "ECS Capacity Provider".to_string(),
+            "ECS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::ECS::TaskSet".to_string(),
+            "ECS Task Set".to_string(),
+            "ECS".to_string(),
+        ),
         // EKS Resources
         ResourceTypeSelection::new(
             "AWS::EKS::Cluster".to_string(),
             "EKS Cluster".to_string(),
+            "EKS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EKS::Addon".to_string(),
+            "EKS Addon".to_string(),
+            "EKS".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::EKS::IdentityProviderConfig".to_string(),
+            "EKS Identity Provider Config".to_string(),
             "EKS".to_string(),
         ),
         // Load Balancer Resources
@@ -1213,6 +1318,31 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
         ResourceTypeSelection::new(
             "AWS::Logs::LogGroup".to_string(),
             "CloudWatch Log Group".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Logs::LogStream".to_string(),
+            "CloudWatch Log Stream".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Logs::MetricFilter".to_string(),
+            "CloudWatch Log Metric Filter".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Logs::SubscriptionFilter".to_string(),
+            "CloudWatch Log Subscription Filter".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Logs::ResourcePolicy".to_string(),
+            "CloudWatch Logs Resource Policy".to_string(),
+            "CloudWatch".to_string(),
+        ),
+        ResourceTypeSelection::new(
+            "AWS::Logs::QueryDefinition".to_string(),
+            "CloudWatch Logs Query Definition".to_string(),
             "CloudWatch".to_string(),
         ),
         // API Gateway v2 Resources
@@ -1248,6 +1378,12 @@ pub fn get_default_resource_types() -> Vec<ResourceTypeSelection> {
             "AWS::Redshift::Cluster".to_string(),
             "Redshift Cluster".to_string(),
             "Redshift".to_string(),
+        ),
+        // EMR Resources
+        ResourceTypeSelection::new(
+            "AWS::EMR::Cluster".to_string(),
+            "EMR Cluster".to_string(),
+            "EMR".to_string(),
         ),
         // Glue Resources
         ResourceTypeSelection::new(

@@ -502,6 +502,16 @@ impl AWSResourceClient {
             | "AWS::EC2::TransitGateway"    // tgw-* prefix
             | "AWS::EC2::VPCPeeringConnection" // pcx-* prefix
             | "AWS::EC2::VolumeAttachment"  // Special case: inherits from volume
+            | "AWS::EC2::ElasticIP"
+            | "AWS::EC2::LaunchTemplate"
+            | "AWS::EC2::PlacementGroup"
+            | "AWS::EC2::ReservedInstance"
+            | "AWS::EC2::SpotInstanceRequest"
+            | "AWS::EC2::DHCPOptions"
+            | "AWS::EC2::EgressOnlyInternetGateway"
+            | "AWS::EC2::VPNConnection"
+            | "AWS::EC2::VPNGateway"
+            | "AWS::EC2::CustomerGateway"
             => {
                 tracing::debug!("Fetching EC2 tags for {} resource: {}", resource_type, resource_id);
                 tagging_service.get_ec2_tags(account, region, resource_id).await?
@@ -577,6 +587,7 @@ impl AWSResourceClient {
             | "AWS::Organizations::DelegatedAdministrator"
             | "AWS::Organizations::Handshake"
             | "AWS::Organizations::Organization"
+            | "AWS::CloudWatch::Metric"
             | "AWS::BedrockAgentCore::AgentRuntime"
             | "AWS::BedrockAgentCore::AgentRuntimeEndpoint"
             | "AWS::BedrockAgentCore::Memory"
@@ -1135,6 +1146,56 @@ impl AWSResourceClient {
                     .list_volume_attachments(account, region)
                     .await?
             }
+            "AWS::EC2::ElasticIP" => {
+                self.get_ec2_service()
+                    .list_elastic_ips(account, region)
+                    .await?
+            }
+            "AWS::EC2::LaunchTemplate" => {
+                self.get_ec2_service()
+                    .list_launch_templates(account, region)
+                    .await?
+            }
+            "AWS::EC2::PlacementGroup" => {
+                self.get_ec2_service()
+                    .list_placement_groups(account, region)
+                    .await?
+            }
+            "AWS::EC2::ReservedInstance" => {
+                self.get_ec2_service()
+                    .list_reserved_instances(account, region)
+                    .await?
+            }
+            "AWS::EC2::SpotInstanceRequest" => {
+                self.get_ec2_service()
+                    .list_spot_instance_requests(account, region)
+                    .await?
+            }
+            "AWS::EC2::DHCPOptions" => {
+                self.get_ec2_service()
+                    .list_dhcp_options(account, region)
+                    .await?
+            }
+            "AWS::EC2::EgressOnlyInternetGateway" => {
+                self.get_ec2_service()
+                    .list_egress_only_internet_gateways(account, region)
+                    .await?
+            }
+            "AWS::EC2::VPNConnection" => {
+                self.get_ec2_service()
+                    .list_vpn_connections(account, region)
+                    .await?
+            }
+            "AWS::EC2::VPNGateway" => {
+                self.get_ec2_service()
+                    .list_vpn_gateways(account, region)
+                    .await?
+            }
+            "AWS::EC2::CustomerGateway" => {
+                self.get_ec2_service()
+                    .list_customer_gateways(account, region)
+                    .await?
+            }
             "AWS::ECS::FargateService" => {
                 self.get_ecs_service()
                     .list_fargate_services(account, region)
@@ -1324,6 +1385,26 @@ impl AWSResourceClient {
                     .list_alarms(account, region)
                     .await?
             }
+            "AWS::CloudWatch::CompositeAlarm" => {
+                self.get_cloudwatch_service()
+                    .list_composite_alarms(account, region)
+                    .await?
+            }
+            "AWS::CloudWatch::Metric" => {
+                self.get_cloudwatch_service()
+                    .list_metrics(account, region)
+                    .await?
+            }
+            "AWS::CloudWatch::InsightRule" => {
+                self.get_cloudwatch_service()
+                    .list_insight_rules(account, region)
+                    .await?
+            }
+            "AWS::CloudWatch::AnomalyDetector" => {
+                self.get_cloudwatch_service()
+                    .list_anomaly_detectors(account, region)
+                    .await?
+            }
             "AWS::ApiGateway::RestApi" => {
                 self.get_apigateway_service()
                     .list_rest_apis(account, region)
@@ -1354,6 +1435,31 @@ impl AWSResourceClient {
             "AWS::Logs::LogGroup" => {
                 self.get_logs_service()
                     .list_log_groups(account, region)
+                    .await?
+            }
+            "AWS::Logs::LogStream" => {
+                self.get_logs_service()
+                    .list_log_streams(account, region)
+                    .await?
+            }
+            "AWS::Logs::MetricFilter" => {
+                self.get_logs_service()
+                    .list_metric_filters(account, region)
+                    .await?
+            }
+            "AWS::Logs::SubscriptionFilter" => {
+                self.get_logs_service()
+                    .list_subscription_filters(account, region)
+                    .await?
+            }
+            "AWS::Logs::ResourcePolicy" => {
+                self.get_logs_service()
+                    .list_resource_policies(account, region)
+                    .await?
+            }
+            "AWS::Logs::QueryDefinition" => {
+                self.get_logs_service()
+                    .list_query_definitions(account, region)
                     .await?
             }
             "AWS::ApiGatewayV2::Api" => {
@@ -2270,6 +2376,7 @@ impl AWSResourceClient {
     ) -> String {
         // Convert anyhow error to string for analysis
         let error_str = error.to_string();
+        let error_debug = format!("{:?}", error);
 
         // Check if this is an AWS SDK error by examining the error chain
         let root_error = error.root_cause();
@@ -2301,6 +2408,7 @@ impl AWSResourceClient {
                 // Generic AWS error formatting
                 self.format_generic_aws_error(
                     &error_str,
+                    &error_debug,
                     display_name,
                     account_id,
                     region,
@@ -2444,73 +2552,80 @@ impl AWSResourceClient {
     fn format_generic_aws_error(
         &self,
         error_str: &str,
+        error_debug: &str,
         display_name: &str,
         account_id: &str,
         region: &str,
         role_info: &str,
     ) -> String {
+        let detail = if error_str.contains("service error") {
+            error_debug
+        } else {
+            error_str
+        };
+
         // Check for common AWS SDK error patterns
 
         // Region not enabled/available errors
-        if error_str.contains("InvalidToken")
-            || error_str.contains("InvalidIdentityToken")
-            || error_str.contains("ExpiredTokenException")
+        if detail.contains("InvalidToken")
+            || detail.contains("InvalidIdentityToken")
+            || detail.contains("ExpiredTokenException")
         {
             format!(
                 "Failed to query {} in account {} region {}: Region unavailable or not enabled - {} is not accessible with current credentials. The region may need to be enabled in AWS Organizations or the account may not have access to this region. ({})",
                 display_name, account_id, region, region, role_info
             )
-        } else if error_str.contains("OptInRequired")
-            || error_str.contains("SubscriptionRequiredException")
+        } else if detail.contains("OptInRequired")
+            || detail.contains("SubscriptionRequiredException")
         {
             format!(
                 "Failed to query {} in account {} region {}: Region opt-in required - {} requires explicit opt-in through AWS Console. Enable this region in the AWS Account settings. ({})",
                 display_name, account_id, region, region, role_info
             )
-        } else if error_str.contains("AuthFailure")
-            || error_str.contains("UnauthorizedAccess")
-            || error_str.contains("AccessDeniedException")
-            || error_str.contains("AccessDenied")
+        } else if detail.contains("AuthFailure")
+            || detail.contains("UnauthorizedAccess")
+            || detail.contains("AccessDeniedException")
+            || detail.contains("AccessDenied")
         {
             format!(
                 "Failed to query {} in account {} region {}: Access denied - {} does not have permission to query this resource type. Check IAM policies for {} permissions. ({})",
                 display_name, account_id, region, role_info, display_name, role_info
             )
-        } else if error_str.contains("CredentialsNotLoaded")
-            || error_str.contains("NoCredentialsError")
+        } else if detail.contains("CredentialsNotLoaded")
+            || detail.contains("NoCredentialsError")
         {
             format!(
                 "Failed to query {} in account {} region {}: Credentials error - {} credentials are invalid or expired. Try refreshing SSO credentials with 'aws sso login'. ({})",
                 display_name, account_id, region, role_info, role_info
             )
-        } else if error_str.contains("TimeoutError") || error_str.contains("timeout") {
+        } else if detail.contains("TimeoutError") || detail.contains("timeout") {
             format!(
                 "Failed to query {} in account {} region {}: Request timeout - network connectivity issue or slow response from AWS. Check network connection. ({})",
                 display_name, account_id, region, role_info
             )
-        } else if error_str.contains("EndpointResolutionError") {
+        } else if detail.contains("EndpointResolutionError") {
             format!(
                 "Failed to query {} in account {} region {}: Endpoint resolution error - service {} may not be available in {}. ({})",
                 display_name, account_id, region, display_name, region, role_info
             )
-        } else if error_str.contains("DispatchFailure") {
+        } else if detail.contains("DispatchFailure") {
             format!(
                 "Failed to query {} in account {} region {}: Network dispatch failure - connectivity issue. Check network connection and VPN if applicable. ({})",
                 display_name, account_id, region, role_info
             )
-        } else if error_str.contains("ConstructionFailure") {
+        } else if detail.contains("ConstructionFailure") {
             format!(
                 "Failed to query {} in account {} region {}: Request construction error - invalid request parameters. ({})",
                 display_name, account_id, region, role_info
             )
-        } else if error_str.contains("ServiceUnavailable")
-            || error_str.contains("InternalServerError")
+        } else if detail.contains("ServiceUnavailable")
+            || detail.contains("InternalServerError")
         {
             format!(
                 "Failed to query {} in account {} region {}: AWS service temporarily unavailable - try again later. ({})",
                 display_name, account_id, region, role_info
             )
-        } else if error_str.contains("ThrottlingException") || error_str.contains("Throttling") {
+        } else if detail.contains("ThrottlingException") || detail.contains("Throttling") {
             format!(
                 "Failed to query {} in account {} region {}: Request throttled - too many API calls. AWS Dash will retry automatically. ({})",
                 display_name, account_id, region, role_info
@@ -2519,7 +2634,7 @@ impl AWSResourceClient {
             // For unknown errors, provide the full error string for debugging
             format!(
                 "Failed to query {} in account {} region {}: {} ({})",
-                display_name, account_id, region, error_str, role_info
+                display_name, account_id, region, detail, role_info
             )
         }
     }
@@ -2856,6 +2971,15 @@ impl AWSResourceClient {
                     )
                     .await
             }
+            "AWS::CloudWatch::CompositeAlarm"
+            | "AWS::CloudWatch::Metric"
+            | "AWS::CloudWatch::InsightRule"
+            | "AWS::CloudWatch::AnomalyDetector"
+            | "AWS::Logs::LogStream"
+            | "AWS::Logs::MetricFilter"
+            | "AWS::Logs::SubscriptionFilter"
+            | "AWS::Logs::ResourcePolicy"
+            | "AWS::Logs::QueryDefinition" => Ok(resource.raw_properties.clone()),
             "AWS::ApiGateway::RestApi" => {
                 self.get_apigateway_service()
                     .describe_rest_api(

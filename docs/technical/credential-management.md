@@ -214,5 +214,4 @@ impl CredentialCoordinator {
 
 **References:**
 - [Resource Explorer System](resource-explorer-system.md) - Multi-account resource query integration
-- [Identity Center Setup](identity-center-setup.md) - AWS SSO configuration
 - [AWS Service Integration Patterns](aws-service-integration-patterns.md) - Service client creation patterns

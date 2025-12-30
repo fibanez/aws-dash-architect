@@ -263,8 +263,18 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
-| `AWS::CloudWatch::Alarm` | `describe_alarms` | Query | Via paginator |
+| `AWS::CloudWatch::Alarm` | `describe_alarms` | Query | Via paginator (AlarmType::MetricAlarm) |
+| `AWS::CloudWatch::CompositeAlarm` | `describe_alarms` | Query | Via paginator (AlarmType::CompositeAlarm) |
 | `AWS::CloudWatch::Dashboard` | `list_dashboards` | Query | Via paginator |
+| `AWS::CloudWatch::Metric` | `list_metrics` | Query | Via paginator (filtered to custom + alarm-associated) |
+| `AWS::CloudWatch::InsightRule` | `describe_insight_rules` | Query | Via paginator |
+| `AWS::CloudWatch::AnomalyDetector` | `describe_anomaly_detectors` | Query | Via paginator |
+
+**Note**: CloudWatch Metrics filtering shows custom namespaces and AWS/ namespace metrics that have associated alarms, reducing noise from thousands of built-in metrics.
+
+**Known Issues**:
+- `AWS::CloudWatch::Metric` implementation exists but may not filter correctly
+- CompositeAlarm, Metric, InsightRule, AnomalyDetector are non-taggable
 
 **Gaps**: No `get_dashboard` for dashboard body/content.
 
@@ -276,8 +286,17 @@ This document lists all AWS SDK API calls made by the application for each resou
 |---------------|----------|------|-------|
 | `AWS::Logs::LogGroup` | `describe_log_groups` | Query | Paginated |
 | | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::Logs::LogStream` | `describe_log_streams` | Query | All log groups, limited per group |
+| `AWS::Logs::MetricFilter` | `describe_metric_filters` | Query | All log groups |
+| `AWS::Logs::SubscriptionFilter` | `describe_subscription_filters` | Query | All log groups |
+| `AWS::Logs::ResourcePolicy` | `describe_resource_policies` | Query | Account-level |
+| `AWS::Logs::QueryDefinition` | `describe_query_definitions` | Query | Via paginator |
 
-**Gaps**: No `describe_metric_filters`, `describe_subscription_filters` for log group configs.
+**Note**: LogStream, MetricFilter, and SubscriptionFilter are implemented as top-level resources (queried globally across all log groups) rather than as child resources of LogGroup.
+
+**Known Issues**: LogStream, MetricFilter, SubscriptionFilter, ResourcePolicy, QueryDefinition are non-taggable.
+
+**Gaps**: None - all major CloudWatch Logs resource types are now covered.
 
 ---
 
@@ -463,13 +482,33 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Resource Type | API Call | Side | Notes |
 |---------------|----------|------|-------|
-| `AWS::EC2::TransitGateway` | (from describe calls) | Query | |
+| `AWS::EC2::TransitGateway` | `describe_transit_gateways` | Query | Via paginator |
 | | `get_resources` | Normalizer | Tag enrichment |
-| `AWS::EC2::VPCPeeringConnection` | (from describe calls) | Query | |
+| `AWS::EC2::VPCPeeringConnection` | `describe_vpc_peering_connections` | Query | |
 | | `get_resources` | Normalizer | Tag enrichment |
-| `AWS::EC2::FlowLog` | (from describe calls) | Query | |
+| `AWS::EC2::FlowLog` | `describe_flow_logs` | Query | Via paginator |
 | | `get_resources` | Normalizer | Tag enrichment |
 | `AWS::EC2::VolumeAttachment` | `describe_volumes` | Query | Attachment info in volume response |
+| `AWS::EC2::ElasticIP` | `describe_addresses` | Query | Lists Elastic IPs |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::LaunchTemplate` | `describe_launch_templates` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::PlacementGroup` | `describe_placement_groups` | Query | Lists placement groups |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::ReservedInstance` | `describe_reserved_instances` | Query | Lists reserved instances |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::SpotInstanceRequest` | `describe_spot_instance_requests` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::DHCPOptions` | `describe_dhcp_options` | Query | Lists DHCP option sets |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::EgressOnlyInternetGateway` | `describe_egress_only_internet_gateways` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::VPNConnection` | `describe_vpn_connections` | Query | Lists VPN connections |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::VPNGateway` | `describe_vpn_gateways` | Query | Lists VPN gateways |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EC2::CustomerGateway` | `describe_customer_gateways` | Query | Lists customer gateways |
+| | `get_resources` | Normalizer | Tag enrichment |
 
 **Gaps**: No `describe_instance_attribute` for detailed instance settings.
 
@@ -506,6 +545,10 @@ This document lists all AWS SDK API calls made by the application for each resou
 | | `describe_services` | Query | Service details |
 | `AWS::ECS::FargateTask` | `list_tasks` | Query | Fargate launch type tasks |
 | | `describe_tasks` | Query | Task details |
+| `AWS::ECS::CapacityProvider` | `describe_capacity_providers` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::ECS::TaskSet` | `describe_task_sets` | Query | Per service |
+| | `get_resources` | Normalizer | Tag enrichment |
 
 **Security Details Retrieved**:
 - Cluster capacity providers and default strategy
@@ -535,6 +578,12 @@ This document lists all AWS SDK API calls made by the application for each resou
 | | `describe_cluster` | Query | Detailed cluster info |
 | `AWS::EKS::FargateProfile` | `list_fargate_profiles` | Query | Per cluster |
 | | `describe_fargate_profile` | Query | Profile details |
+| `AWS::EKS::Addon` | `list_addons` | Query | Per cluster |
+| | `describe_addon` | Query | Addon details |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::EKS::IdentityProviderConfig` | `list_identity_provider_configs` | Query | Per cluster |
+| | `describe_identity_provider_config` | Query | Config details |
+| | `get_resources` | Normalizer | Tag enrichment |
 
 **Gaps**: No `list_nodegroups`, `describe_nodegroup` for node configuration.
 
@@ -707,6 +756,9 @@ This document lists all AWS SDK API calls made by the application for each resou
 | `AWS::IAM::Policy` | `list_policies` | Query | Paginated, customer-managed only |
 | | `get_policy` | Query | Detailed policy info |
 | | `get_policy_version` | Query | Policy document JSON |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::IAM::ServerCertificate` | `list_server_certificates` | Query | Via paginator |
+| | `get_server_certificate` | Query | Certificate details |
 | | `get_resources` | Normalizer | Tag enrichment |
 
 **Gaps**: None - comprehensive IAM security data is now available.
@@ -918,6 +970,10 @@ This document lists all AWS SDK API calls made by the application for each resou
 | `AWS::RDS::DBParameterGroup` | (from instances) | Query | Via paginator |
 | | `get_resources` | Normalizer | Tag enrichment |
 | `AWS::RDS::DBSubnetGroup` | `describe_db_subnet_groups` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::RDS::DBClusterSnapshot` | `describe_db_cluster_snapshots` | Query | Via paginator |
+| | `get_resources` | Normalizer | Tag enrichment |
+| `AWS::RDS::OptionGroup` | `describe_option_groups` | Query | Via paginator |
 | | `get_resources` | Normalizer | Tag enrichment |
 
 ---
@@ -1164,9 +1220,9 @@ This document lists all AWS SDK API calls made by the application for each resou
 
 | Category | Count |
 |----------|-------|
-| AWS Services Covered | 82 |
-| Resource Types | 177 (172 UI-registered + 5 child types) |
-| Unique API Methods | 200+ |
+| AWS Services Covered | 83 |
+| Resource Types | 204 (199 UI-registered + 5 child types) |
+| Unique API Methods | 220+ |
 | Query-side calls (Phase 1) | All services |
 | Query-side calls (Phase 2) | 24 resource types |
 | Normalizer-side calls | Primarily `get_resources` (tags) |
@@ -1214,8 +1270,7 @@ The following services have comprehensive security details via Phase 2 enrichmen
 1. **EKS**: Missing `list_nodegroups`, `describe_nodegroup`
 2. **CloudTrail**: Missing `describe_trails` for trail configuration
 3. **GuardDuty**: Missing `get_detector` for detector settings
-4. **CloudWatch Logs**: Missing `describe_metric_filters`, `describe_subscription_filters`
-5. **Secrets Manager**: Missing `get_resource_policy`
+4. **Secrets Manager**: Missing `get_resource_policy`
 
 ---
 

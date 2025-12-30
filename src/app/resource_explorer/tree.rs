@@ -1982,6 +1982,15 @@ impl TreeRenderer {
             "AWS::QuickSight::DataSource" => "QUICKSIGHT",
             "AWS::Timestream::Database" => "TIMESTREAM",
             "AWS::OpenSearchService::Domain" => "OPENSEARCH",
+            "AWS::CloudWatch::CompositeAlarm" => "CW-COMP",
+            "AWS::CloudWatch::Metric" => "CW-METRIC",
+            "AWS::CloudWatch::InsightRule" => "CW-INSIGHT",
+            "AWS::CloudWatch::AnomalyDetector" => "CW-ANOM",
+            "AWS::Logs::LogStream" => "LOG-STREAM",
+            "AWS::Logs::MetricFilter" => "LOG-METRIC",
+            "AWS::Logs::SubscriptionFilter" => "LOG-SUB",
+            "AWS::Logs::ResourcePolicy" => "LOG-POLICY",
+            "AWS::Logs::QueryDefinition" => "LOG-QUERY",
 
             // Organizations
             "AWS::Organizations::Organization" => "ORG",
@@ -2013,6 +2022,22 @@ impl TreeRenderer {
             "AWS::Batch::JobQueue" => "BATCH",
             "AWS::EMR::Cluster" => "EMR",
             "AWS::LakeFormation::Resource" => "LAKEFORM",
+            "AWS::EC2::ElasticIP" => "EIP",
+            "AWS::EC2::LaunchTemplate" => "LT",
+            "AWS::EC2::PlacementGroup" => "PLACEMENT",
+            "AWS::EC2::ReservedInstance" => "RI",
+            "AWS::EC2::SpotInstanceRequest" => "SPOT",
+            "AWS::EC2::DHCPOptions" => "DHCP",
+            "AWS::EC2::EgressOnlyInternetGateway" => "EIGW",
+            "AWS::EC2::VPNConnection" => "VPN-CONN",
+            "AWS::EC2::VPNGateway" => "VPN-GW",
+            "AWS::EC2::CustomerGateway" => "CUST-GW",
+            "AWS::ECS::CapacityProvider" => "ECS-CAP",
+            "AWS::ECS::TaskSet" => "ECS-TS",
+            "AWS::EKS::IdentityProviderConfig" => "EKS-IDP",
+            "AWS::IAM::ServerCertificate" => "IAM-CERT",
+            "AWS::RDS::DBClusterSnapshot" => "RDS-CLSNAP",
+            "AWS::RDS::OptionGroup" => "RDS-OPT",
 
             // Fallback: extract service name from resource type
             _ => {
@@ -2031,10 +2056,17 @@ impl TreeRenderer {
                         "SNS" => "SNS",
                         "ECS" => "ECS",
                         "EKS" => "EKS",
-                        _ => "RESOURCE",
+                        _ => {
+                            let upper = service
+                                .chars()
+                                .filter(|c| c.is_ascii_alphanumeric())
+                                .collect::<String>()
+                                .to_ascii_uppercase();
+                            Box::leak(upper.into_boxed_str())
+                        }
                     }
                 } else {
-                    "RESOURCE"
+                    "AWS"
                 }
             }
         }

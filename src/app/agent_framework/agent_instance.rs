@@ -7,12 +7,20 @@
 
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::app::agent_framework::agent_logger::AgentLogger;
 use crate::app::agent_framework::agent_types::{
     AgentId, AgentMetadata, AgentStatus, AgentType, StoodLogLevel,
 };
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationResponse};
+use crate::app::agent_framework::message_injection::{
+    InjectionContext, InjectionTrigger, InjectionType, MessageInjector,
+};
+use crate::app::agent_framework::middleware::{
+    ConversationLayer, LayerContext, LayerError, LayerStack,
+};
+use crate::app::agent_framework::status_display::ProcessingPhase;
 use crate::app::agent_framework::tools::TodoItem;
 
 /// Standalone Agent Instance
@@ -62,6 +70,26 @@ pub struct AgentInstance {
     runtime: Arc<tokio::runtime::Runtime>,
     /// Stood library log level for this agent
     stood_log_level: StoodLogLevel,
+
+    // Message injection
+    /// Message injector for programmatic message injection
+    message_injector: MessageInjector,
+    /// Flag indicating a pending injection should be processed
+    has_pending_injection: bool,
+    /// Deferred injection message to be sent on next poll
+    deferred_injection: Option<String>,
+
+    // Processing phase tracking
+    /// Current processing phase for UI status display
+    processing_phase: ProcessingPhase,
+
+    // Middleware
+    /// Layer stack for pre/post message processing
+    layer_stack: LayerStack,
+
+    // Cancellation
+    /// Cancellation token captured from stood agent (for Stop button)
+    cancel_token: Option<CancellationToken>,
 }
 
 impl AgentInstance {
@@ -106,6 +134,12 @@ impl AgentInstance {
             logger,
             runtime,
             stood_log_level: StoodLogLevel::default(), // Debug by default
+            message_injector: MessageInjector::new(),
+            has_pending_injection: false,
+            deferred_injection: None,
+            processing_phase: ProcessingPhase::Idle,
+            layer_stack: LayerStack::new(),
+            cancel_token: None,
         }
     }
 
@@ -157,6 +191,12 @@ impl AgentInstance {
             logger,
             runtime,
             stood_log_level: StoodLogLevel::default(), // Debug by default
+            message_injector: MessageInjector::new(),
+            has_pending_injection: false,
+            deferred_injection: None,
+            processing_phase: ProcessingPhase::Idle,
+            layer_stack: LayerStack::new(),
+            cancel_token: None,
         }
     }
 
@@ -210,10 +250,196 @@ impl AgentInstance {
         self.status_message.as_deref()
     }
 
+    /// Get the current processing phase for UI status display
+    pub fn processing_phase(&self) -> &ProcessingPhase {
+        &self.processing_phase
+    }
+
+    // ========== Middleware API ==========
+
+    /// Get reference to the layer stack
+    pub fn layer_stack(&self) -> &LayerStack {
+        &self.layer_stack
+    }
+
+    /// Get mutable reference to the layer stack
+    pub fn layer_stack_mut(&mut self) -> &mut LayerStack {
+        &mut self.layer_stack
+    }
+
+    /// Add a middleware layer to the agent
+    ///
+    /// Layers process messages before sending and responses after receiving.
+    /// Layers are processed in the order they are added for pre-send,
+    /// and in reverse order for post-response.
+    pub fn add_layer<L: ConversationLayer + 'static>(&mut self, layer: L) {
+        self.layer_stack.add(layer);
+    }
+
+    /// Create a LayerContext from the current agent state
+    fn create_layer_context(&self) -> LayerContext {
+        LayerContext::builder()
+            .agent_id(self.id.to_string())
+            .agent_type(self.agent_type)
+            .message_count(self.messages.len())
+            .turn_count(self.messages.len() / 2)
+            .token_count(self.estimate_token_count())
+            .build()
+    }
+
+    /// Estimate total token count from conversation messages
+    fn estimate_token_count(&self) -> usize {
+        self.messages
+            .iter()
+            .map(|m| LayerContext::estimate_tokens(&m.content))
+            .sum()
+    }
+
+    /// Configure the agent with a logging middleware layer
+    ///
+    /// This adds the LoggingLayer which logs all message flow for debugging.
+    /// Returns self for method chaining.
+    pub fn with_logging_layer(mut self) -> Self {
+        use crate::app::agent_framework::middleware::layers::LoggingLayer;
+        self.layer_stack.add(LoggingLayer::with_defaults());
+        self
+    }
+
+    /// Configure the agent with recommended middleware layers
+    ///
+    /// This adds:
+    /// - LoggingLayer for debugging
+    /// - TokenTrackingLayer for monitoring token usage (default 100k token threshold)
+    ///
+    /// Returns self for method chaining.
+    pub fn with_recommended_layers(mut self) -> Self {
+        use crate::app::agent_framework::middleware::layers::{LoggingLayer, TokenTrackingLayer};
+        self.layer_stack.add(LoggingLayer::with_defaults());
+        self.layer_stack.add(TokenTrackingLayer::with_defaults());
+        self
+    }
+
+    // ========== End Middleware API ==========
+
+    // ========== Cancellation API ==========
+
+    /// Cancel the current agent execution
+    ///
+    /// This signals the stood agent's event loop to stop at the next
+    /// cancellation check point (between cycles). The execution will
+    /// return with a "cancelled" status.
+    ///
+    /// Returns true if cancellation was requested, false if no token available.
+    pub fn cancel(&mut self) -> bool {
+        if let Some(token) = &self.cancel_token {
+            token.cancel();
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Cancellation requested - stopping agent execution",
+            );
+            true
+        } else {
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Cancel requested but no cancellation token available",
+            );
+            false
+        }
+    }
+
+    /// Check if cancellation is available for this agent
+    ///
+    /// Returns true if the agent was initialized with cancellation support
+    /// and has not been reset.
+    pub fn can_cancel(&self) -> bool {
+        self.cancel_token.is_some()
+    }
+
+    /// Check if cancellation has been requested
+    ///
+    /// Returns true if cancel() was called and the token is cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token
+            .as_ref()
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false)
+    }
+
+    // ========== End Cancellation API ==========
+
     /// Get reference to the agent's logger
     pub fn logger(&self) -> &Arc<AgentLogger> {
         &self.logger
     }
+
+    // ========== Message Injection API ==========
+
+    /// Get reference to the message injector
+    pub fn message_injector(&self) -> &MessageInjector {
+        &self.message_injector
+    }
+
+    /// Get mutable reference to the message injector
+    pub fn message_injector_mut(&mut self) -> &mut MessageInjector {
+        &mut self.message_injector
+    }
+
+    /// Queue an injection for later processing
+    ///
+    /// The injection will be triggered based on its trigger condition
+    /// and processed on the next poll_response() call.
+    pub fn queue_injection(&mut self, injection_type: InjectionType, trigger: InjectionTrigger) {
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!(
+                "Queueing injection: {} with trigger {:?}",
+                injection_type.label(),
+                trigger
+            ),
+        );
+        self.message_injector.queue_injection(injection_type, trigger);
+    }
+
+    /// Queue an immediate injection
+    ///
+    /// The message will be injected on the next poll_response() call
+    /// after the current processing completes.
+    pub fn queue_immediate_injection(&mut self, injection_type: InjectionType) {
+        self.queue_injection(injection_type, InjectionTrigger::Immediate);
+    }
+
+    /// Inject a message programmatically (bypassing user input)
+    ///
+    /// This is equivalent to send_message() but is marked as a system injection
+    /// in the logs. Use this for automated follow-ups, context management, etc.
+    pub fn inject_message(&mut self, message: String) {
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!("Injecting message: {}", if message.len() > 100 {
+                format!("{}...", &message[..100])
+            } else {
+                message.clone()
+            }),
+        );
+
+        // Use the same send mechanism as user messages
+        self.send_message(message);
+    }
+
+    /// Check if there are pending injections
+    pub fn has_pending_injections(&self) -> bool {
+        self.message_injector.has_pending()
+    }
+
+    /// Process pending injections with the given context
+    ///
+    /// Returns the injection message if one is ready, otherwise None.
+    /// Call this from poll_response() or after tool completions.
+    fn check_and_process_injection(&mut self, context: &InjectionContext) -> Option<String> {
+        self.message_injector.check_triggers(context)
+    }
+
+    // ========== End Message Injection API ==========
 
     /// Get the current stood log level for this agent
     pub fn stood_log_level(&self) -> StoodLogLevel {
@@ -252,10 +478,12 @@ impl AgentInstance {
 
     /// Reset the stood agent for reinitialization
     ///
-    /// This clears the stood agent instance, which will be re-created
-    /// with current settings on the next message send or initialize() call.
+    /// This clears the stood agent instance and cancellation token.
+    /// The agent will be re-created with current settings on the next
+    /// message send or initialize() call.
     pub fn reset_stood_agent(&mut self) {
         *self.stood_agent.lock().unwrap() = None;
+        self.cancel_token = None; // Clear token - will be recaptured on reinit
         self.logger.log_system_message(
             &self.agent_type,
             "Stood agent reset - will reinitialize on next message",
@@ -345,7 +573,7 @@ impl AgentInstance {
         &self,
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
     ) -> Result<stood::agent::Agent, String> {
-        use stood::agent::Agent;
+        use stood::agent::{Agent, EventLoopConfig};
         use stood::llm::Bedrock;
 
         // Get AWS credentials
@@ -379,13 +607,40 @@ impl AgentInstance {
             &format!("Using model: {}", self.metadata.model),
         );
 
+        // Configure event loop with appropriate limits based on agent type
+        // TaskManager (orchestration): 1000 tool iterations, 100 cycles
+        // TaskWorker: 200 tool iterations, 20 cycles
+        let event_loop_config = match self.agent_type {
+            AgentType::TaskManager => EventLoopConfig {
+                max_cycles: 100,
+                max_tool_iterations: 1000,
+                ..Default::default()
+            },
+            AgentType::TaskWorker { .. } => EventLoopConfig {
+                max_cycles: 20,
+                max_tool_iterations: 200,
+                ..Default::default()
+            },
+        };
+
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!(
+                "Event loop config: max_cycles={}, max_tool_iterations={}",
+                event_loop_config.max_cycles, event_loop_config.max_tool_iterations
+            ),
+        );
+
         // Build agent with selected model (match on enum to get concrete type)
+        // Enable cancellation support for all models
         use crate::app::agent_framework::AgentModel;
         let agent_builder = match self.metadata.model {
             AgentModel::ClaudeSonnet45 => Agent::builder()
                 .model(Bedrock::ClaudeSonnet45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
+                .with_cancellation()
+                .with_event_loop_config(event_loop_config.clone())
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -397,6 +652,8 @@ impl AgentInstance {
                 .model(Bedrock::ClaudeHaiku45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
+                .with_cancellation()
+                .with_event_loop_config(event_loop_config.clone())
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -408,6 +665,8 @@ impl AgentInstance {
                 .model(Bedrock::ClaudeOpus45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
+                .with_cancellation()
+                .with_event_loop_config(event_loop_config.clone())
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -419,6 +678,8 @@ impl AgentInstance {
                 .model(Bedrock::NovaPro)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
+                .with_cancellation()
+                .with_event_loop_config(event_loop_config.clone())
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -430,6 +691,8 @@ impl AgentInstance {
                 .model(Bedrock::NovaLite)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
+                .with_cancellation()
+                .with_event_loop_config(event_loop_config.clone())
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -452,31 +715,54 @@ impl AgentInstance {
     /// Send a user message and execute the agent in background
     ///
     /// This method:
+    /// - Processes message through middleware layers (can modify or abort)
     /// - Adds user message to conversation
     /// - Lazily initializes stood agent if needed
     /// - Spawns background thread for execution
     /// - Sets processing flag
     pub fn send_message(&mut self, user_message: String) {
+        // === Pre-send middleware processing ===
+        let ctx = self.create_layer_context();
+        let processed_message = match self.layer_stack.process_pre_send(&user_message, &ctx) {
+            Ok(msg) => msg,
+            Err(LayerError::Abort(reason)) => {
+                self.logger.log_system_message(
+                    &self.agent_type,
+                    &format!("Message send aborted by middleware: {}", reason),
+                );
+                return; // Don't send if middleware aborts
+            }
+            Err(e) => {
+                self.logger.log_system_message(
+                    &self.agent_type,
+                    &format!("Middleware error (continuing): {}", e),
+                );
+                user_message.clone() // Continue with original on non-fatal error
+            }
+        };
+        // === End pre-send middleware processing ===
+
         // Log message being sent (with preview)
-        let message_preview = if user_message.len() > 100 {
-            format!("{}...", &user_message[..100])
+        let message_preview = if processed_message.len() > 100 {
+            format!("{}...", &processed_message[..100])
         } else {
-            user_message.clone()
+            processed_message.clone()
         };
         self.logger.log_system_message(
             &self.agent_type,
             &format!("Sending message: {}", message_preview),
         );
 
-        // Add user message to conversation
+        // Add user message to conversation (use original for display, processed for sending)
         self.messages
             .push_back(ConversationMessage::user(user_message.clone()));
         self.processing = true;
+        self.processing_phase = ProcessingPhase::Thinking;
         self.status_message = Some("Processing...".to_string());
 
         // Log message
         self.logger
-            .log_user_message(&self.agent_type, &user_message);
+            .log_user_message(&self.agent_type, &processed_message);
 
         // Clone what we need for the background thread
         let stood_agent = Arc::clone(&self.stood_agent);
@@ -486,6 +772,7 @@ impl AgentInstance {
         let agent_id = self.id;
         let agent_type = self.agent_type;
         let stood_log_level = self.stood_log_level;
+        let message_for_agent = processed_message; // Use processed message for agent
 
         // Spawn background thread
         std::thread::spawn(move || {
@@ -551,7 +838,7 @@ Query result presentation:
 </critical_instructions>
 
 ";
-                let full_message = format!("{}{}", instruction_template, user_message);
+                let full_message = format!("{}{}", instruction_template, message_for_agent);
 
                 // Execute agent with full message (instructions + user query)
                 logger.log_system_message(&agent_type, "Executing agent...");
@@ -596,7 +883,25 @@ Query result presentation:
     ///
     /// Call this from the UI thread (every frame) to check for responses.
     /// Returns true if a response was received.
+    ///
+    /// Also handles deferred message injections - if an injection is queued
+    /// and the agent is not currently processing, the injection will be sent.
     pub fn poll_response(&mut self) -> bool {
+        // Handle deferred injections when not processing
+        if !self.processing && self.has_pending_injection {
+            if let Some(injection_msg) = self.deferred_injection.take() {
+                self.logger.log_system_message(
+                    &self.agent_type,
+                    "Processing deferred injection",
+                );
+                self.has_pending_injection = false;
+                self.inject_message(injection_msg);
+                // Return true to signal that we've started a new processing cycle
+                return true;
+            }
+            self.has_pending_injection = false;
+        }
+
         match self.response_channel.1.try_recv() {
             Ok(response) => {
                 let response_received_at = std::time::Instant::now();
@@ -605,37 +910,107 @@ Query result presentation:
                     "Response received from background thread",
                 );
                 self.processing = false;
+                self.processing_phase = ProcessingPhase::Idle;
                 self.status_message = None;
 
                 match response {
                     ConversationResponse::Success(text) => {
-                        // Log successful response
-                        let text_preview = if text.len() > 200 {
-                            format!("{}...", &text[..200])
-                        } else {
-                            text.clone()
-                        };
-                        self.logger.log_system_message(
-                            &self.agent_type,
-                            &format!("Success response: {}", text_preview),
-                        );
-                        let msg = ConversationMessage::assistant(text);
-                        let message_timestamp = msg.timestamp;
-                        self.messages.push_back(msg);
+                        // === Post-response middleware processing ===
+                        let ctx = self.create_layer_context();
+                        let (final_text, middleware_injections) =
+                            match self.layer_stack.process_post_response(&text, &ctx) {
+                                Ok(result) => {
+                                    if result.suppress {
+                                        // Don't add to messages if suppressed
+                                        self.logger.log_system_message(
+                                            &self.agent_type,
+                                            "Response suppressed by middleware",
+                                        );
+                                        (None, result.injections)
+                                    } else if result.was_modified {
+                                        (Some(result.final_response), result.injections)
+                                    } else {
+                                        (Some(text.clone()), result.injections)
+                                    }
+                                }
+                                Err(e) => {
+                                    self.logger.log_system_message(
+                                        &self.agent_type,
+                                        &format!("Post-response middleware error: {}", e),
+                                    );
+                                    (Some(text.clone()), vec![])
+                                }
+                            };
+                        // === End post-response middleware processing ===
 
-                        log::info!(
-                            "[TIMING] Response added to messages at {:?} (message timestamp: {})",
-                            response_received_at,
-                            message_timestamp.format("%H:%M:%S%.3f")
-                        );
-                        self.logger.log_system_message(
-                            &self.agent_type,
-                            &format!(
-                                "Response added at {} (timestamp: {})",
-                                response_received_at.elapsed().as_millis(),
+                        // Add message to conversation (if not suppressed)
+                        if let Some(response_text) = final_text {
+                            // Log successful response
+                            let text_preview = if response_text.len() > 200 {
+                                format!("{}...", &response_text[..200])
+                            } else {
+                                response_text.clone()
+                            };
+                            self.logger.log_system_message(
+                                &self.agent_type,
+                                &format!("Success response: {}", text_preview),
+                            );
+                            let msg = ConversationMessage::assistant(response_text);
+                            let message_timestamp = msg.timestamp;
+                            self.messages.push_back(msg);
+
+                            log::info!(
+                                "[TIMING] Response added to messages at {:?} (message timestamp: {})",
+                                response_received_at,
                                 message_timestamp.format("%H:%M:%S%.3f")
-                            ),
-                        );
+                            );
+                            self.logger.log_system_message(
+                                &self.agent_type,
+                                &format!(
+                                    "Response added at {} (timestamp: {})",
+                                    response_received_at.elapsed().as_millis(),
+                                    message_timestamp.format("%H:%M:%S%.3f")
+                                ),
+                            );
+                        }
+
+                        // Queue middleware injections
+                        if let Some(first_injection) = middleware_injections.into_iter().next() {
+                            self.logger.log_system_message(
+                                &self.agent_type,
+                                &format!(
+                                    "Middleware injection queued: {}",
+                                    if first_injection.len() > 50 {
+                                        format!("{}...", &first_injection[..50])
+                                    } else {
+                                        first_injection.clone()
+                                    }
+                                ),
+                            );
+                            self.has_pending_injection = true;
+                            self.deferred_injection = Some(first_injection);
+                        } else {
+                            // Check for AfterResponse injections from MessageInjector
+                            let context = InjectionContext::after_response();
+                            if let Some(injection_msg) =
+                                self.check_and_process_injection(&context)
+                            {
+                                self.logger.log_system_message(
+                                    &self.agent_type,
+                                    &format!(
+                                        "AfterResponse injection triggered: {}",
+                                        if injection_msg.len() > 50 {
+                                            format!("{}...", &injection_msg[..50])
+                                        } else {
+                                            injection_msg.clone()
+                                        }
+                                    ),
+                                );
+                                // Store the injection message to be sent on next poll
+                                self.has_pending_injection = true;
+                                self.deferred_injection = Some(injection_msg);
+                            }
+                        }
                     }
                     ConversationResponse::Error(error) => {
                         self.messages
@@ -648,6 +1023,8 @@ Query result presentation:
                         // Update status message without finishing processing
                         self.status_message = Some(status);
                         self.processing = true; // Keep processing state
+                        // Status updates typically indicate tool execution in progress
+                        self.processing_phase = ProcessingPhase::ExecutingTool("Running tool".to_string());
                         return false; // Don't mark as complete, continue polling
                     }
                 }
@@ -656,6 +1033,7 @@ Query result presentation:
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.processing = false;
+                self.processing_phase = ProcessingPhase::Idle;
                 self.status_message = None;
                 self.logger
                     .log_error(&self.agent_type, "Response channel disconnected");
@@ -666,12 +1044,22 @@ Query result presentation:
 
     /// Initialize the stood agent (must be called before first send_message)
     ///
-    /// This is separate from construction to allow async credential loading
+    /// This is separate from construction to allow async credential loading.
+    /// Also captures the cancellation token for Stop button support.
     pub fn initialize(
         &mut self,
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
     ) -> Result<(), String> {
         let agent = self.create_stood_agent(aws_identity)?;
+
+        // Capture the cancellation token for Stop button support
+        self.cancel_token = agent.cancellation_token();
+        if self.cancel_token.is_some() {
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Cancellation token captured - Stop button enabled",
+            );
+        }
 
         let mut guard = self.stood_agent.lock().unwrap();
         *guard = Some(agent);
@@ -698,8 +1086,9 @@ Query result presentation:
         self.logger
             .log_system_message(&self.agent_type, "Conversation cleared by user");
 
-        // Reset stood agent (will be re-initialized on next message)
+        // Reset stood agent and token (will be re-initialized on next message)
         *self.stood_agent.lock().unwrap() = None;
+        self.cancel_token = None;
 
         // Reset processing state
         self.processing = false;
@@ -710,9 +1099,20 @@ Query result presentation:
     }
 
     /// Terminate the agent and clean up resources
+    ///
+    /// This cancels any ongoing execution and marks the agent as terminated.
     pub fn terminate(&mut self) {
+        // Cancel any ongoing execution
+        if let Some(token) = &self.cancel_token {
+            token.cancel();
+            self.logger
+                .log_system_message(&self.agent_type, "Cancelled ongoing execution");
+        }
+
         self.status = AgentStatus::Cancelled;
         self.processing = false;
+        self.processing_phase = ProcessingPhase::Idle;
+        self.cancel_token = None;
         self.logger
             .log_system_message(&self.agent_type, "Agent terminated");
     }
@@ -861,5 +1261,167 @@ mod tests {
         // TaskWorker should have 1 tool: execute_javascript
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "execute_javascript");
+    }
+
+    // ========== Middleware Integration Tests ==========
+
+    #[test]
+    fn test_layer_stack_initialized() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // LayerStack should be initialized but empty
+        assert!(agent.layer_stack().is_empty());
+        assert!(agent.layer_stack().is_enabled());
+    }
+
+    #[test]
+    fn test_add_layer() {
+        use crate::app::agent_framework::middleware::layers::LoggingLayer;
+
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        assert!(agent.layer_stack().is_empty());
+
+        agent.add_layer(LoggingLayer::with_defaults());
+
+        assert_eq!(agent.layer_stack().len(), 1);
+        assert_eq!(agent.layer_stack().layer_names(), vec!["Logging"]);
+    }
+
+    #[test]
+    fn test_with_logging_layer() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager).with_logging_layer();
+
+        assert_eq!(agent.layer_stack().len(), 1);
+        assert_eq!(agent.layer_stack().layer_names(), vec!["Logging"]);
+    }
+
+    #[test]
+    fn test_with_recommended_layers() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager).with_recommended_layers();
+
+        assert_eq!(agent.layer_stack().len(), 2);
+        assert_eq!(
+            agent.layer_stack().layer_names(),
+            vec!["Logging", "TokenTracking"]
+        );
+    }
+
+    #[test]
+    fn test_create_layer_context() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        let ctx = agent.create_layer_context();
+
+        assert!(!ctx.agent_id.is_empty());
+        assert!(matches!(ctx.agent_type, AgentType::TaskManager));
+        assert_eq!(ctx.message_count, 0);
+        assert_eq!(ctx.turn_count, 0);
+        assert_eq!(ctx.token_count, 0);
+    }
+
+    #[test]
+    fn test_estimate_token_count_empty() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        assert_eq!(agent.estimate_token_count(), 0);
+    }
+
+    // ========== Cancellation API Tests ==========
+
+    #[test]
+    fn test_cancel_token_none_before_init() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Before initialization, cancel token should be None
+        assert!(!agent.can_cancel());
+    }
+
+    #[test]
+    fn test_is_cancelled_false_initially() {
+        let metadata = create_test_metadata();
+        let agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Should return false when no token available
+        assert!(!agent.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_returns_false_without_token() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Cancel should return false when no token available
+        assert!(!agent.cancel());
+        assert!(!agent.can_cancel());
+    }
+
+    #[test]
+    fn test_cancel_token_cleared_on_reset() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Manually set a token for testing
+        agent.cancel_token = Some(CancellationToken::new());
+        assert!(agent.can_cancel());
+
+        // Reset should clear the token
+        agent.reset_stood_agent();
+        assert!(!agent.can_cancel());
+    }
+
+    #[test]
+    fn test_cancel_token_cleared_on_clear_conversation() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Manually set a token for testing
+        agent.cancel_token = Some(CancellationToken::new());
+        assert!(agent.can_cancel());
+
+        // Clear conversation should clear the token
+        agent.clear_conversation();
+        assert!(!agent.can_cancel());
+    }
+
+    #[test]
+    fn test_cancel_with_token() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Manually set a token for testing
+        let token = CancellationToken::new();
+        agent.cancel_token = Some(token.clone());
+
+        assert!(agent.can_cancel());
+        assert!(!agent.is_cancelled());
+
+        // Cancel should work
+        assert!(agent.cancel());
+        assert!(agent.is_cancelled());
+        assert!(token.is_cancelled()); // Original token should also be cancelled
+    }
+
+    #[test]
+    fn test_terminate_cancels_token() {
+        let metadata = create_test_metadata();
+        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+
+        // Manually set a token for testing
+        let token = CancellationToken::new();
+        agent.cancel_token = Some(token.clone());
+
+        // Terminate should cancel the token
+        agent.terminate();
+
+        assert!(token.is_cancelled());
+        assert!(!agent.can_cancel()); // Token should be cleared after terminate
     }
 }

@@ -546,6 +546,40 @@ fn format_execution_result(result: ExecutionResult) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_framework::v8_bindings::bindings::accounts::set_global_aws_identity;
+    use crate::app::aws_identity::{AwsAccount, AwsIdentityCenter, LoginState};
+    use std::sync::{Arc, Mutex};
+
+    /// Setup test identity for JavaScript tests that use listAccounts()
+    fn setup_test_identity() {
+        let mut identity_center = AwsIdentityCenter::new(
+            "https://test.awsapps.com/start".to_string(),
+            "test-role".to_string(),
+            "us-east-1".to_string(),
+        );
+
+        // Add test accounts (2 accounts to match bindings/accounts.rs tests)
+        identity_center.accounts = vec![
+            AwsAccount {
+                account_id: "123456789012".to_string(),
+                account_name: "Test Production Account".to_string(),
+                account_email: Some("prod@test.com".to_string()),
+                role_name: "test-role".to_string(),
+                credentials: None,
+            },
+            AwsAccount {
+                account_id: "987654321098".to_string(),
+                account_name: "Test Development Account".to_string(),
+                account_email: Some("dev@test.com".to_string()),
+                role_name: "test-role".to_string(),
+                credentials: None,
+            },
+        ];
+        identity_center.login_state = LoginState::LoggedIn;
+
+        // Set globally for tests
+        set_global_aws_identity(Some(Arc::new(Mutex::new(identity_center))));
+    }
 
     #[tokio::test]
     async fn test_tool_metadata() {
@@ -679,6 +713,7 @@ mod tests {
     async fn test_function_binding_available() {
         use crate::app::agent_framework::v8_bindings::initialize_v8_platform;
         let _ = initialize_v8_platform();
+        setup_test_identity();
 
         let tool = ExecuteJavaScriptTool::new();
 
@@ -690,14 +725,15 @@ mod tests {
 
         assert!(result.success);
         let content_obj = result.content.as_object().unwrap();
-        // Should return the number of accounts from mock data (3 accounts)
-        assert_eq!(content_obj["result"], 3);
+        // Should return the number of accounts from test data (2 accounts)
+        assert_eq!(content_obj["result"], 2);
     }
 
     #[tokio::test]
     async fn test_complex_javascript_execution() {
         use crate::app::agent_framework::v8_bindings::initialize_v8_platform;
         let _ = initialize_v8_platform();
+        setup_test_identity();
 
         let tool = ExecuteJavaScriptTool::new();
 
@@ -725,12 +761,12 @@ mod tests {
         let content_obj = result.content.as_object().unwrap();
 
         let stdout = content_obj["stdout"].as_str().unwrap();
-        assert!(stdout.contains("Found 3 accounts"));
-        assert!(stdout.contains("Production accounts: 1"));
+        assert!(stdout.contains("Found 2 accounts"));
+        assert!(stdout.contains("Production accounts: 0")); // No 'prod' alias in test data
 
         let result_value = &content_obj["result"];
-        assert_eq!(result_value["total"], 3);
-        assert_eq!(result_value["prod"], 1);
+        assert_eq!(result_value["total"], 2);
+        assert_eq!(result_value["prod"], 0);
         assert!(result_value["names"].is_array());
     }
 

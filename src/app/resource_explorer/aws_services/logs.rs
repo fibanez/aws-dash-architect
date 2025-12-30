@@ -416,4 +416,511 @@ impl LogsService {
 
         serde_json::Value::Object(json)
     }
+
+    /// List CloudWatch Log Streams across log groups
+    pub async fn list_log_streams(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let log_groups = self.list_log_groups(account_id, region).await?;
+        let log_group_names: Vec<String> = log_groups
+            .into_iter()
+            .filter_map(|group| {
+                group
+                    .get("LogGroupName")
+                    .and_then(|name| name.as_str())
+                    .map(|name| name.to_string())
+            })
+            .collect();
+
+        if log_group_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = logs::Client::new(&aws_config);
+        let mut log_streams = Vec::new();
+
+        for log_group_name in log_group_names {
+            let mut next_token = None;
+            loop {
+                let mut request = client
+                    .describe_log_streams()
+                    .log_group_name(&log_group_name);
+
+                if let Some(token) = next_token.take() {
+                    request = request.next_token(token);
+                }
+
+                let response = match request.send().await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to describe log streams for {}: {}",
+                            log_group_name,
+                            error
+                        );
+                        break;
+                    }
+                };
+                if let Some(stream_list) = response.log_streams {
+                    for stream in stream_list {
+                        let stream_json = self.log_stream_to_json(&log_group_name, &stream);
+                        log_streams.push(stream_json);
+                    }
+                }
+
+                next_token = response.next_token;
+                if next_token.is_none() {
+                    break;
+                }
+            }
+        }
+
+        Ok(log_streams)
+    }
+
+    /// List CloudWatch Logs metric filters
+    pub async fn list_metric_filters(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = logs::Client::new(&aws_config);
+        let mut filters = Vec::new();
+        let mut next_token = None;
+
+        loop {
+            let mut request = client.describe_metric_filters();
+            if let Some(token) = next_token.take() {
+                request = request.next_token(token);
+            }
+
+            let response = request.send().await?;
+            if let Some(filter_list) = response.metric_filters {
+                for filter in filter_list {
+                    filters.push(self.metric_filter_to_json(&filter));
+                }
+            }
+
+            next_token = response.next_token;
+            if next_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(filters)
+    }
+
+    /// List CloudWatch Logs subscription filters across log groups
+    pub async fn list_subscription_filters(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let log_groups = self.list_log_groups(account_id, region).await?;
+        let log_group_names: Vec<String> = log_groups
+            .into_iter()
+            .filter_map(|group| {
+                group
+                    .get("LogGroupName")
+                    .and_then(|name| name.as_str())
+                    .map(|name| name.to_string())
+            })
+            .collect();
+
+        if log_group_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = logs::Client::new(&aws_config);
+        let mut filters = Vec::new();
+
+        for log_group_name in log_group_names {
+            let mut next_token = None;
+            loop {
+                let mut request = client
+                    .describe_subscription_filters()
+                    .log_group_name(&log_group_name);
+
+                if let Some(token) = next_token.take() {
+                    request = request.next_token(token);
+                }
+
+                let response = match request.send().await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to describe subscription filters for {}: {}",
+                            log_group_name,
+                            error
+                        );
+                        break;
+                    }
+                };
+                if let Some(filter_list) = response.subscription_filters {
+                    for filter in filter_list {
+                        filters.push(self.subscription_filter_to_json(&log_group_name, &filter));
+                    }
+                }
+
+                next_token = response.next_token;
+                if next_token.is_none() {
+                    break;
+                }
+            }
+        }
+
+        Ok(filters)
+    }
+
+    /// List CloudWatch Logs resource policies
+    pub async fn list_resource_policies(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = logs::Client::new(&aws_config);
+        let mut policies = Vec::new();
+        let mut next_token = None;
+
+        loop {
+            let mut request = client.describe_resource_policies();
+            if let Some(token) = next_token.take() {
+                request = request.next_token(token);
+            }
+
+            let response = request.send().await?;
+            if let Some(policy_list) = response.resource_policies {
+                for policy in policy_list {
+                    policies.push(self.resource_policy_to_json(&policy));
+                }
+            }
+
+            next_token = response.next_token;
+            if next_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(policies)
+    }
+
+    /// List CloudWatch Logs query definitions
+    pub async fn list_query_definitions(
+        &self,
+        account_id: &str,
+        region: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, region)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create AWS config for account {} in region {}",
+                    account_id, region
+                )
+            })?;
+
+        let client = logs::Client::new(&aws_config);
+        let mut definitions = Vec::new();
+        let mut next_token = None;
+
+        loop {
+            let mut request = client.describe_query_definitions();
+            if let Some(token) = next_token.take() {
+                request = request.next_token(token);
+            }
+
+            let response = request.send().await?;
+            if let Some(def_list) = response.query_definitions {
+                for definition in def_list {
+                    definitions.push(self.query_definition_to_json(&definition));
+                }
+            }
+
+            next_token = response.next_token;
+            if next_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(definitions)
+    }
+
+    fn log_stream_to_json(
+        &self,
+        log_group_name: &str,
+        stream: &logs::types::LogStream,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(log_stream_name) = &stream.log_stream_name {
+            json.insert(
+                "LogStreamName".to_string(),
+                serde_json::Value::String(log_stream_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(log_stream_name.clone()),
+            );
+        }
+
+        json.insert(
+            "LogGroupName".to_string(),
+            serde_json::Value::String(log_group_name.to_string()),
+        );
+
+        if let Some(arn) = &stream.arn {
+            json.insert("Arn".to_string(), serde_json::Value::String(arn.clone()));
+        }
+
+        if let Some(first_event) = stream.first_event_timestamp {
+            json.insert(
+                "FirstEventTimestamp".to_string(),
+                serde_json::Value::Number(first_event.into()),
+            );
+        }
+
+        if let Some(last_event) = stream.last_event_timestamp {
+            json.insert(
+                "LastEventTimestamp".to_string(),
+                serde_json::Value::Number(last_event.into()),
+            );
+        }
+
+        if let Some(last_ingestion) = stream.last_ingestion_time {
+            json.insert(
+                "LastIngestionTime".to_string(),
+                serde_json::Value::Number(last_ingestion.into()),
+            );
+        }
+
+        if let Some(upload_sequence) = &stream.upload_sequence_token {
+            json.insert(
+                "UploadSequenceToken".to_string(),
+                serde_json::Value::String(upload_sequence.clone()),
+            );
+        }
+
+        json.insert(
+            "Status".to_string(),
+            serde_json::Value::String("ACTIVE".to_string()),
+        );
+
+        serde_json::Value::Object(json)
+    }
+
+    fn metric_filter_to_json(&self, filter: &logs::types::MetricFilter) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(filter_name) = &filter.filter_name {
+            json.insert(
+                "FilterName".to_string(),
+                serde_json::Value::String(filter_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(filter_name.clone()),
+            );
+        }
+
+        if let Some(log_group_name) = &filter.log_group_name {
+            json.insert(
+                "LogGroupName".to_string(),
+                serde_json::Value::String(log_group_name.clone()),
+            );
+        }
+
+        if let Some(filter_pattern) = &filter.filter_pattern {
+            json.insert(
+                "FilterPattern".to_string(),
+                serde_json::Value::String(filter_pattern.clone()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn subscription_filter_to_json(
+        &self,
+        log_group_name: &str,
+        filter: &logs::types::SubscriptionFilter,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(filter_name) = &filter.filter_name {
+            json.insert(
+                "FilterName".to_string(),
+                serde_json::Value::String(filter_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(filter_name.clone()),
+            );
+        }
+
+        json.insert(
+            "LogGroupName".to_string(),
+            serde_json::Value::String(log_group_name.to_string()),
+        );
+
+        if let Some(filter_pattern) = &filter.filter_pattern {
+            json.insert(
+                "FilterPattern".to_string(),
+                serde_json::Value::String(filter_pattern.clone()),
+            );
+        }
+
+        if let Some(destination_arn) = &filter.destination_arn {
+            json.insert(
+                "DestinationArn".to_string(),
+                serde_json::Value::String(destination_arn.clone()),
+            );
+        }
+
+        if let Some(role_arn) = &filter.role_arn {
+            json.insert(
+                "RoleArn".to_string(),
+                serde_json::Value::String(role_arn.clone()),
+            );
+        }
+
+        if let Some(distribution) = &filter.distribution {
+            json.insert(
+                "Distribution".to_string(),
+                serde_json::Value::String(distribution.as_str().to_string()),
+            );
+        }
+
+        if let Some(creation_time) = filter.creation_time {
+            json.insert(
+                "CreationTime".to_string(),
+                serde_json::Value::Number(creation_time.into()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn resource_policy_to_json(
+        &self,
+        policy: &logs::types::ResourcePolicy,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(policy_name) = &policy.policy_name {
+            json.insert(
+                "PolicyName".to_string(),
+                serde_json::Value::String(policy_name.clone()),
+            );
+            json.insert(
+                "Name".to_string(),
+                serde_json::Value::String(policy_name.clone()),
+            );
+        }
+
+        if let Some(policy_document) = &policy.policy_document {
+            json.insert(
+                "PolicyDocument".to_string(),
+                serde_json::Value::String(policy_document.clone()),
+            );
+        }
+
+        if let Some(last_updated_time) = policy.last_updated_time {
+            json.insert(
+                "LastUpdatedTime".to_string(),
+                serde_json::Value::Number(last_updated_time.into()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
+
+    fn query_definition_to_json(
+        &self,
+        definition: &logs::types::QueryDefinition,
+    ) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+
+        if let Some(definition_id) = &definition.query_definition_id {
+            json.insert(
+                "QueryDefinitionId".to_string(),
+                serde_json::Value::String(definition_id.clone()),
+            );
+        }
+
+        if let Some(name) = &definition.name {
+            json.insert("Name".to_string(), serde_json::Value::String(name.clone()));
+        }
+
+        if let Some(query_string) = &definition.query_string {
+            json.insert(
+                "QueryString".to_string(),
+                serde_json::Value::String(query_string.clone()),
+            );
+        }
+
+        if let Some(log_group_names) = &definition.log_group_names {
+            let names_json: Vec<serde_json::Value> = log_group_names
+                .iter()
+                .map(|name| serde_json::Value::String(name.clone()))
+                .collect();
+            json.insert("LogGroupNames".to_string(), serde_json::Value::Array(names_json));
+        }
+
+        if let Some(last_modified) = definition.last_modified {
+            json.insert(
+                "LastModified".to_string(),
+                serde_json::Value::Number(last_modified.into()),
+            );
+        }
+
+        serde_json::Value::Object(json)
+    }
 }

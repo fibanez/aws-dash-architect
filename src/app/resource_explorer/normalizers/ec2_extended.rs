@@ -407,3 +407,496 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
         "AWS::EC2::VolumeAttachment"
     }
 }
+
+async fn normalize_ec2_simple_resource(
+    resource_type: &str,
+    resource_id: String,
+    raw_response: serde_json::Value,
+    account: &str,
+    region: &str,
+    query_timestamp: DateTime<Utc>,
+    aws_client: &AWSResourceClient,
+) -> Result<ResourceEntry> {
+    let display_name = extract_display_name(&raw_response, &resource_id);
+    let status = extract_status(&raw_response);
+
+    let tags = aws_client
+        .fetch_tags_for_resource(resource_type, &resource_id, account, region)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to fetch tags for {} {}: {}",
+                resource_type,
+                resource_id,
+                e
+            );
+
+            Vec::new()
+        });
+
+    let properties = create_normalized_properties(&raw_response);
+
+    Ok(ResourceEntry {
+        resource_type: resource_type.to_string(),
+        account_id: account.to_string(),
+        region: region.to_string(),
+        resource_id,
+        display_name,
+        status,
+        properties,
+        raw_properties: raw_response,
+        detailed_properties: None,
+        detailed_timestamp: None,
+        tags,
+        relationships: Vec::new(),
+        parent_resource_id: None,
+        parent_resource_type: None,
+        is_child_resource: false,
+        account_color: assign_account_color(account),
+        region_color: assign_region_color(region),
+        query_timestamp,
+    })
+}
+
+/// Normalizer for EC2 Elastic IP
+pub struct EC2ElasticIPNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2ElasticIPNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("AllocationId")
+            .and_then(|v| v.as_str())
+            .or_else(|| raw_response.get("PublicIp").and_then(|v| v.as_str()))
+            .unwrap_or("unknown-elastic-ip")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::ElasticIP",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::ElasticIP"
+    }
+}
+
+/// Normalizer for EC2 Launch Template
+pub struct EC2LaunchTemplateNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2LaunchTemplateNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("LaunchTemplateId")
+            .and_then(|v| v.as_str())
+            .or_else(|| raw_response.get("LaunchTemplateName").and_then(|v| v.as_str()))
+            .unwrap_or("unknown-launch-template")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::LaunchTemplate",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::LaunchTemplate"
+    }
+}
+
+/// Normalizer for EC2 Placement Group
+pub struct EC2PlacementGroupNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2PlacementGroupNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("GroupId")
+            .and_then(|v| v.as_str())
+            .or_else(|| raw_response.get("GroupName").and_then(|v| v.as_str()))
+            .unwrap_or("unknown-placement-group")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::PlacementGroup",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::PlacementGroup"
+    }
+}
+
+/// Normalizer for EC2 Reserved Instance
+pub struct EC2ReservedInstanceNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2ReservedInstanceNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("ReservedInstancesId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-reserved-instance")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::ReservedInstance",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::ReservedInstance"
+    }
+}
+
+/// Normalizer for EC2 Spot Instance Request
+pub struct EC2SpotInstanceRequestNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2SpotInstanceRequestNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("SpotInstanceRequestId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-spot-request")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::SpotInstanceRequest",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::SpotInstanceRequest"
+    }
+}
+
+/// Normalizer for EC2 DHCP Options Set
+pub struct EC2DHCPOptionsNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2DHCPOptionsNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("DhcpOptionsId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-dhcp-options")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::DHCPOptions",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::DHCPOptions"
+    }
+}
+
+/// Normalizer for EC2 Egress-Only Internet Gateway
+pub struct EC2EgressOnlyInternetGatewayNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2EgressOnlyInternetGatewayNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("EgressOnlyInternetGatewayId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-egress-only-igw")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::EgressOnlyInternetGateway",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::EgressOnlyInternetGateway"
+    }
+}
+
+/// Normalizer for EC2 VPN Connection
+pub struct EC2VPNConnectionNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VPNConnectionNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("VpnConnectionId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-vpn-connection")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::VPNConnection",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::VPNConnection"
+    }
+}
+
+/// Normalizer for EC2 VPN Gateway
+pub struct EC2VPNGatewayNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2VPNGatewayNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("VpnGatewayId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-vpn-gateway")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::VPNGateway",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::VPNGateway"
+    }
+}
+
+/// Normalizer for EC2 Customer Gateway
+pub struct EC2CustomerGatewayNormalizer;
+
+#[async_trait]
+impl AsyncResourceNormalizer for EC2CustomerGatewayNormalizer {
+    async fn normalize(
+        &self,
+        raw_response: serde_json::Value,
+        account: &str,
+        region: &str,
+        query_timestamp: DateTime<Utc>,
+        aws_client: &AWSResourceClient,
+    ) -> Result<ResourceEntry> {
+        let resource_id = raw_response
+            .get("CustomerGatewayId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown-customer-gateway")
+            .to_string();
+
+        normalize_ec2_simple_resource(
+            "AWS::EC2::CustomerGateway",
+            resource_id,
+            raw_response,
+            account,
+            region,
+            query_timestamp,
+            aws_client,
+        )
+        .await
+    }
+
+    fn extract_relationships(
+        &self,
+        _entry: &ResourceEntry,
+        _all_resources: &[ResourceEntry],
+    ) -> Vec<ResourceRelationship> {
+        Vec::new()
+    }
+
+    fn resource_type(&self) -> &'static str {
+        "AWS::EC2::CustomerGateway"
+    }
+}

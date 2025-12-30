@@ -138,5 +138,4 @@ if let Some(status) = manager.get_deployment_status(environment_name) {
 - Status bar updates only when notifications exist
 
 **References:**
-- [Window Focus System](window-focus-system.md) - Notification detail window integration
 - [UI Testing Framework](ui-testing-framework.md) - Testing notification behavior

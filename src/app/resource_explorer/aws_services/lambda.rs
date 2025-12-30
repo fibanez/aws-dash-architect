@@ -1175,6 +1175,34 @@ impl LambdaService {
             );
         }
 
+        // Version (e.g., "$LATEST")
+        if let Some(version) = &function.version {
+            json.insert(
+                "Version".to_string(),
+                serde_json::Value::String(version.clone()),
+            );
+        }
+
+        // PackageType (e.g., "Zip" or "Image")
+        if let Some(package_type) = &function.package_type {
+            json.insert(
+                "PackageType".to_string(),
+                serde_json::Value::String(package_type.as_str().to_string()),
+            );
+        }
+
+        // Architectures (e.g., ["x86_64"] or ["arm64"])
+        if let Some(architectures) = &function.architectures {
+            let arch_array: Vec<serde_json::Value> = architectures
+                .iter()
+                .map(|a| serde_json::Value::String(a.as_str().to_string()))
+                .collect();
+            json.insert(
+                "Architectures".to_string(),
+                serde_json::Value::Array(arch_array),
+            );
+        }
+
         serde_json::Value::Object(json)
     }
 

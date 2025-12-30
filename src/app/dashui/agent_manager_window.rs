@@ -16,7 +16,8 @@ use super::agent_log_window::AgentLogWindow;
 use super::window_focus::FocusableWindow;
 use crate::app::agent_framework::{
     get_agent_creation_receiver, get_ui_event_receiver, render_agent_chat, AgentCreationRequest,
-    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, StoodLogLevel,
+    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, ProcessingStatusWidget,
+    StoodLogLevel,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
 use eframe::egui;
@@ -137,6 +138,9 @@ pub struct AgentManagerWindow {
 
     // Markdown rendering cache (shared across all agents)
     markdown_cache: CommonMarkCache,
+
+    // Processing status widgets (per-agent for animation state)
+    status_widgets: HashMap<AgentId, ProcessingStatusWidget>,
 }
 
 impl Default for AgentManagerWindow {
@@ -163,6 +167,7 @@ impl AgentManagerWindow {
             ui_event_receiver: get_ui_event_receiver(), // UI event channel
             agent_creation_receiver: get_agent_creation_receiver(), // Agent creation channel
             markdown_cache: CommonMarkCache::default(),
+            status_widgets: HashMap::new(),
         }
     }
 
@@ -824,9 +829,14 @@ impl AgentManagerWindow {
             agent_id
         };
 
+        // Ensure status widget exists for this agent
+        self.status_widgets
+            .entry(display_agent_id)
+            .or_default();
+
         // Render UI and handle message sending/polling in a scope to release borrow
         let (terminate_clicked, log_clicked, _clear_clicked) = {
-            // Get the agent to display
+            // Get the agent and status widget to display
             let agent = match self.agents.get_mut(&display_agent_id) {
                 Some(agent) => agent,
                 None => {
@@ -835,9 +845,18 @@ impl AgentManagerWindow {
                 }
             };
 
-            // Render the chat UI and check if message should be sent, log clicked, clear clicked, or agent terminated
-            let (should_send, log_clicked, clear_clicked, terminate_clicked) =
-                render_agent_chat(ui, agent, &mut self.input_text, &mut self.markdown_cache);
+            // Get status widget (we just ensured it exists)
+            let status_widget = self.status_widgets.get_mut(&display_agent_id).unwrap();
+
+            // Render the chat UI and check if message should be sent, log clicked, clear clicked, terminated, or stopped
+            let (should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked) =
+                render_agent_chat(
+                    ui,
+                    agent,
+                    &mut self.input_text,
+                    &mut self.markdown_cache,
+                    status_widget,
+                );
 
             // Send message if requested
             if should_send {
@@ -847,6 +866,13 @@ impl AgentManagerWindow {
                 // Send message to agent
                 log::info!("Sending message to agent {}: {}", agent_id, message);
                 agent.send_message(message);
+            }
+
+            // Handle stop button click - cancel ongoing execution
+            if stop_clicked {
+                if agent.cancel() {
+                    log::info!("Agent {} execution cancelled by user", agent_id);
+                }
             }
 
             // Handle clear conversation if requested
@@ -1016,6 +1042,11 @@ impl AgentManagerWindow {
                 "Auto-closing worker {} tab after 30 second timeout",
                 worker_id
             );
+
+            // Terminate agent before removing (cancel any pending work, clean up resources)
+            if let Some(agent) = self.agents.get_mut(&worker_id) {
+                agent.terminate();
+            }
 
             // Remove worker agent
             self.agents.remove(&worker_id);

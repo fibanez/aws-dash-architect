@@ -783,6 +783,3 @@ impl TestResultAnalyzer {
 ## Related Documentation
 
 * [UI Component Testing](ui-component-testing.md)
-* [Trait Design Patterns](trait-patterns.md)
-* [Performance Optimization](performance-optimization.md)
-* [System Architecture](system-architecture.md)

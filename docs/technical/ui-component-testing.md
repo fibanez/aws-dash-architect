@@ -550,6 +550,3 @@ cargo test --release --test ui_performance_tests
 ## Related Documentation
 
 * [Testing Strategies](testing-patterns.md)
-* [Window Focus System](window-focus-system.md)
-* [Trait Design Patterns](trait-patterns.md)
-* [Performance Optimization](performance-optimization.md)

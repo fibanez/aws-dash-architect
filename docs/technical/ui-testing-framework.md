@@ -250,21 +250,21 @@ Use `std::panic::catch_unwind` for safe element queries that may fail in test sc
 
 - [Testing Patterns](testing-patterns.md) - Overall testing strategies
 - [UI Component Testing](ui-component-testing.md) - Detailed component testing guide
-- [Trait Patterns](trait-patterns.md) - Common implementation patterns
-- [Parameter Patterns](parameter-patterns.md) - Type-safe parameter handling
 
 ## File Locations
 
-*Core Framework*:
+**Note**: The UI testing framework was temporarily removed. The files below describe the planned structure for when the framework is re-implemented.
+
+*Core Framework (Planned)*:
 - `tests/ui_tests/mod.rs` - UITestHarness wrapper
 - `tests/ui_component_testing_framework.rs` - Component testing framework
 - `tests/ui_test_utilities.rs` - CloudFormation test utilities
 
-*Example Tests*:
+*Example Tests (Planned)*:
 - `tests/ui_basic_test.rs` - Basic functionality validation
 - `tests/ui_framework_working_test.rs` - Framework validation
 - `tests/reference_picker_window_tests.rs` - Component-specific tests
 
-*Test Execution*:
+*Test Execution (Available)*:
 - `scripts/test-chunks.sh` - Chunked test execution
 - Verbosity levels: quiet, smart, detailed, full

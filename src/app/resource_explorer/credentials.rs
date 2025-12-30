@@ -83,38 +83,38 @@ impl CredentialCoordinator {
         &self,
         account_id: &str,
     ) -> Result<AccountCredentials> {
-        info!(
+        debug!(
             "🔑 CREDS: get_credentials_for_account ENTRY for account: {}",
             account_id
         );
         debug!("Getting credentials for account: {}", account_id);
 
         // Check cache first
-        info!("🔑 CREDS: Checking cache for account: {}", account_id);
+        debug!("🔑 CREDS: Checking cache for account: {}", account_id);
         if let Some(cached_creds) = self.get_cached_credentials(account_id).await {
-            info!(
+            debug!(
                 "🔑 CREDS: Found cached credentials for account: {}",
                 account_id
             );
             if !cached_creds.is_expired() {
-                info!(
+                debug!(
                     "🔑 CREDS: Using cached credentials for account: {}",
                     account_id
                 );
                 debug!("Using cached credentials for account: {}", account_id);
                 return Ok(cached_creds);
             } else {
-                info!("🔑 CREDS: Cached credentials for account {} using role {} are expired, requesting fresh credentials", account_id, cached_creds.role_name);
+                debug!("🔑 CREDS: Cached credentials for account {} using role {} are expired, requesting fresh credentials", account_id, cached_creds.role_name);
             }
         } else {
-            info!(
+            debug!(
                 "🔑 CREDS: No cached credentials found for account: {}",
                 account_id
             );
         }
 
         // Request new credentials from AWS Identity Center
-        info!(
+        debug!(
             "🔑 CREDS: Requesting fresh credentials for account: {}",
             account_id
         );
@@ -125,14 +125,14 @@ impl CredentialCoordinator {
                 format!("Failed to get fresh credentials for account {}", account_id)
             })?;
 
-        info!(
+        debug!(
             "🔑 CREDS: Got fresh credentials, now caching for account: {}",
             account_id
         );
         // Cache the credentials
         self.cache_credentials(account_id, &fresh_creds).await;
 
-        info!("🔑 CREDS: get_credentials_for_account EXIT successfully for account: {} using role: {}", account_id, fresh_creds.role_name);
+        debug!("🔑 CREDS: get_credentials_for_account EXIT successfully for account: {} using role: {}", account_id, fresh_creds.role_name);
         Ok(fresh_creds)
     }
 
@@ -154,18 +154,18 @@ impl CredentialCoordinator {
 
     /// Request fresh credentials from AWS Identity Center for specific account
     async fn request_fresh_credentials(&self, account_id: &str) -> Result<AccountCredentials> {
-        info!(
+        debug!(
             "🔑 CREDS: request_fresh_credentials ENTRY for account: {}",
             account_id
         );
-        info!(
+        debug!(
             "Requesting fresh credentials from AWS Identity Center for account: {}",
             account_id
         );
 
         // Get role credentials from AWS Identity Center (via live reference)
         // Clone the identity center to avoid holding the lock across await
-        info!(
+        debug!(
             "🔑 CREDS: Acquiring Identity Center lock for account: {}",
             account_id
         );
@@ -174,22 +174,22 @@ impl CredentialCoordinator {
                 .identity_center
                 .lock()
                 .map_err(|e| anyhow::anyhow!("Failed to acquire lock on Identity Center: {}", e))?;
-            info!(
+            debug!(
                 "🔑 CREDS: Successfully acquired Identity Center lock, cloning for account: {}",
                 account_id
             );
             identity_center.clone()
         };
-        info!(
+        debug!(
             "🔑 CREDS: Released Identity Center lock for account: {}",
             account_id
         );
 
-        info!(
+        debug!(
             "🔑 CREDS: Calling Identity Center get_role_credentials for account {} with role '{}'",
             account_id, self.default_role_name
         );
-        info!(
+        debug!(
             "Requesting credentials for account {} with role '{}'",
             account_id, self.default_role_name
         );
@@ -203,16 +203,16 @@ impl CredentialCoordinator {
                 )
             })?;
 
-        info!(
+        debug!(
             "🔑 CREDS: Identity Center returned credentials for account: {}",
             account_id
         );
-        info!("Successfully received credentials from AWS Identity Center for account: {} using role: {}", account_id, role_credentials.role_name);
-        info!(
+        debug!("Successfully received credentials from AWS Identity Center for account: {} using role: {}", account_id, role_credentials.role_name);
+        debug!(
             "Credential details - Account ID in response: {}, Role in response: {}",
             role_credentials.account_id, role_credentials.role_name
         );
-        info!(
+        debug!(
             "🔑 CREDS: request_fresh_credentials EXIT for account: {}",
             account_id
         );
@@ -225,17 +225,17 @@ impl CredentialCoordinator {
         account_id: &str,
         region: &str,
     ) -> Result<aws_config::SdkConfig> {
-        info!(
+        debug!(
             "🔑 CREDS: create_aws_config_for_account ENTRY for account: {} in region: {}",
             account_id, region
         );
 
-        info!(
+        debug!(
             "🔑 CREDS: Calling get_credentials_for_account for {}",
             account_id
         );
         let creds = self.get_credentials_for_account(account_id).await?;
-        info!("🔑 CREDS: Got credentials for account {}", account_id);
+        debug!("🔑 CREDS: Got credentials for account {}", account_id);
 
         let aws_credentials = creds.to_aws_credentials();
 

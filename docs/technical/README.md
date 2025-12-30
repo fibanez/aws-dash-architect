@@ -9,6 +9,7 @@ This directory contains modular technical documentation for the AWS Dash project
 * [Notifications System](notifications-system.md) - Comprehensive notification management
 * [UI Testing Framework](ui-testing-framework.md) - Automated testing with egui_kittest
 * [Agent Framework](agent-framework-v2.md) - AI agent system using stood library for AWS operations
+* [Agent Feedback Systems](agent-feedback-systems.md) - Status display, message injection, and conversation middleware for agents
 * [Multi-Agent System](multi-agent-system.md) - Task manager and worker agent orchestration for parallel AWS operations
 * [Code Execution Tool](code-execution-tool.md) - V8-based JavaScript execution for AI agents
 
@@ -25,6 +26,8 @@ This directory contains modular technical documentation for the AWS Dash project
 
 * [Adding New Windows](adding-new-windows.md) - How to add focusable windows
 * [UI Component Testing](ui-component-testing.md) - Writing UI tests
+* [AWS Data Plane Integration](aws-data-plane-integration-guide.md) - Integrating AWS data plane services (CloudWatch Logs, Metrics, etc.)
+* [Agent Middleware Guide](agent-middleware-guide.md) - Creating custom middleware layers for agent message processing
 
 ## Extension Patterns
 
@@ -35,5 +38,6 @@ This directory contains modular technical documentation for the AWS Dash project
 ## Reference
 
 * [AWS API Calls Inventory](aws-api-calls-inventory.md) - Complete inventory of AWS SDK calls per resource type (for security/compliance gap analysis)
+* [Agent Injection Patterns Research](agent-injection-patterns-research.md) - Industry research on message injection, context management, and memory patterns for AI agents
 
 For user-facing documentation including troubleshooting guides, see the [User Guide](../userguide/) section.

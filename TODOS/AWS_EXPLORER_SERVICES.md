@@ -4,9 +4,9 @@ This document lists all AWS services currently implemented in the AWS Explorer f
 
 ## Summary
 
-Total implemented services: **172 UI-registered resource types + 5 child resource types = 177 total** across **82 AWS services**
+Total implemented services: **199 UI-registered resource types + 5 child resource types = 204 total** across **83 AWS services**
 
-**Last Updated**: December 2025
+**Last Updated**: March 2025
 
 ### Child Resource Types (auto-queried, not UI-registered)
 - `AWS::Bedrock::DataSource` (child of KnowledgeBase)
@@ -38,6 +38,16 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 - Transit Gateway (`AWS::EC2::TransitGateway`)
 - VPC Peering Connection (`AWS::EC2::VPCPeeringConnection`)
 - VPC Flow Log (`AWS::EC2::FlowLog`)
+- Elastic IP (`AWS::EC2::ElasticIP`)
+- Launch Template (`AWS::EC2::LaunchTemplate`)
+- Placement Group (`AWS::EC2::PlacementGroup`)
+- Reserved Instance (`AWS::EC2::ReservedInstance`)
+- Spot Instance Request (`AWS::EC2::SpotInstanceRequest`)
+- DHCP Options Set (`AWS::EC2::DHCPOptions`)
+- Egress-Only Internet Gateway (`AWS::EC2::EgressOnlyInternetGateway`)
+- VPN Connection (`AWS::EC2::VPNConnection`)
+- VPN Gateway (`AWS::EC2::VPNGateway`)
+- Customer Gateway (`AWS::EC2::CustomerGateway`)
 
 #### Lambda
 - Lambda Function (`AWS::Lambda::Function`)
@@ -51,10 +61,14 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 - ECS Task Definition (`AWS::ECS::TaskDefinition`)
 - ECS Fargate Service (`AWS::ECS::FargateService`)
 - ECS Fargate Task (`AWS::ECS::FargateTask`)
+- ECS Capacity Provider (`AWS::ECS::CapacityProvider`)
+- ECS Task Set (`AWS::ECS::TaskSet`)
 
 #### EKS (Elastic Kubernetes Service)
 - EKS Cluster (`AWS::EKS::Cluster`)
 - EKS Fargate Profile (`AWS::EKS::FargateProfile`)
+- EKS Addon (`AWS::EKS::Addon`)
+- EKS Identity Provider Config (`AWS::EKS::IdentityProviderConfig`)
 
 #### Batch
 - Batch Job Queue (`AWS::Batch::JobQueue`)
@@ -90,6 +104,8 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 - RDS DB Snapshot (`AWS::RDS::DBSnapshot`)
 - RDS DB Parameter Group (`AWS::RDS::DBParameterGroup`)
 - RDS DB Subnet Group (`AWS::RDS::DBSubnetGroup`)
+- RDS DB Cluster Snapshot (`AWS::RDS::DBClusterSnapshot`)
+- RDS Option Group (`AWS::RDS::OptionGroup`)
 
 #### DynamoDB
 - DynamoDB Table (`AWS::DynamoDB::Table`)
@@ -141,6 +157,7 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 - IAM Role (`AWS::IAM::Role`)
 - IAM User (`AWS::IAM::User`)
 - IAM Policy (`AWS::IAM::Policy`)
+- IAM Server Certificate (`AWS::IAM::ServerCertificate`)
 
 #### Certificate Manager
 - SSL/TLS Certificate (`AWS::CertificateManager::Certificate`)
@@ -188,7 +205,16 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 #### CloudWatch
 - CloudWatch Alarm (`AWS::CloudWatch::Alarm`)
 - CloudWatch Dashboard (`AWS::CloudWatch::Dashboard`)
+- CloudWatch Composite Alarm (`AWS::CloudWatch::CompositeAlarm`)
+- CloudWatch Metric (`AWS::CloudWatch::Metric`)
+- CloudWatch Insight Rule (`AWS::CloudWatch::InsightRule`)
+- CloudWatch Anomaly Detector (`AWS::CloudWatch::AnomalyDetector`)
 - CloudWatch Log Group (`AWS::Logs::LogGroup`)
+- CloudWatch Log Stream (`AWS::Logs::LogStream`)
+- CloudWatch Log Metric Filter (`AWS::Logs::MetricFilter`)
+- CloudWatch Log Subscription Filter (`AWS::Logs::SubscriptionFilter`)
+- CloudWatch Logs Resource Policy (`AWS::Logs::ResourcePolicy`)
+- CloudWatch Logs Query Definition (`AWS::Logs::QueryDefinition`)
 
 #### CloudTrail
 - CloudTrail Trail (`AWS::CloudTrail::Trail`)
@@ -252,6 +278,9 @@ Total implemented services: **172 UI-registered resource types + 5 child resourc
 
 #### Glue
 - Glue ETL Job (`AWS::Glue::Job`)
+
+#### EMR
+- EMR Cluster (`AWS::EMR::Cluster`)
 
 #### Lake Formation
 - Lake Formation Data Lake Settings (`AWS::LakeFormation::DataLakeSettings`)

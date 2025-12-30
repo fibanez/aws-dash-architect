@@ -118,6 +118,14 @@ pub mod unified_query;
 pub mod widgets;
 pub mod window;
 
+// Verification modules (DEBUG builds only)
+#[cfg(debug_assertions)]
+pub mod cli_commands;
+#[cfg(debug_assertions)]
+pub mod verification_results;
+#[cfg(debug_assertions)]
+pub mod verification_window;
+
 pub use aws_client::{AWSResourceClient, QueryProgress, QueryStatus};
 pub use child_resources::{ChildQueryMethod, ChildResourceConfig, ChildResourceDef};
 pub use colors::{

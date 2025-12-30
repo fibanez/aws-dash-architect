@@ -449,6 +449,18 @@ impl NormalizerFactory {
             "AWS::EC2::VPCPeeringConnection" => Some(Box::new(EC2VPCPeeringConnectionNormalizer)),
             "AWS::EC2::FlowLog" => Some(Box::new(EC2FlowLogNormalizer)),
             "AWS::EC2::VolumeAttachment" => Some(Box::new(EC2VolumeAttachmentNormalizer)),
+            "AWS::EC2::ElasticIP" => Some(Box::new(EC2ElasticIPNormalizer)),
+            "AWS::EC2::LaunchTemplate" => Some(Box::new(EC2LaunchTemplateNormalizer)),
+            "AWS::EC2::PlacementGroup" => Some(Box::new(EC2PlacementGroupNormalizer)),
+            "AWS::EC2::ReservedInstance" => Some(Box::new(EC2ReservedInstanceNormalizer)),
+            "AWS::EC2::SpotInstanceRequest" => Some(Box::new(EC2SpotInstanceRequestNormalizer)),
+            "AWS::EC2::DHCPOptions" => Some(Box::new(EC2DHCPOptionsNormalizer)),
+            "AWS::EC2::EgressOnlyInternetGateway" => {
+                Some(Box::new(EC2EgressOnlyInternetGatewayNormalizer))
+            }
+            "AWS::EC2::VPNConnection" => Some(Box::new(EC2VPNConnectionNormalizer)),
+            "AWS::EC2::VPNGateway" => Some(Box::new(EC2VPNGatewayNormalizer)),
+            "AWS::EC2::CustomerGateway" => Some(Box::new(EC2CustomerGatewayNormalizer)),
             "AWS::ECS::FargateService" => Some(Box::new(ECSFargateServiceNormalizer)),
             "AWS::ECS::FargateTask" => Some(Box::new(ECSFargateTaskNormalizer)),
             "AWS::EKS::FargateProfile" => Some(Box::new(EKSFargateProfileNormalizer)),
@@ -529,6 +541,12 @@ impl NormalizerFactory {
             "AWS::DynamoDB::Table" => Some(Box::new(DynamoDBTableNormalizer)),
             "AWS::CloudWatch::Alarm" => Some(Box::new(CloudWatchAlarmNormalizer)),
             "AWS::CloudWatch::Dashboard" => Some(Box::new(CloudWatchDashboardNormalizer)),
+            "AWS::CloudWatch::CompositeAlarm" => Some(Box::new(CloudWatchCompositeAlarmNormalizer)),
+            "AWS::CloudWatch::Metric" => Some(Box::new(CloudWatchMetricNormalizer)),
+            "AWS::CloudWatch::InsightRule" => Some(Box::new(CloudWatchInsightRuleNormalizer)),
+            "AWS::CloudWatch::AnomalyDetector" => {
+                Some(Box::new(CloudWatchAnomalyDetectorNormalizer))
+            }
             "AWS::ApiGateway::RestApi" => Some(Box::new(ApiGatewayRestApiNormalizer)),
             "AWS::SNS::Topic" => Some(Box::new(SNSTopicNormalizer)),
             "AWS::SQS::Queue" => Some(Box::new(SQSQueueNormalizer)),
@@ -545,6 +563,11 @@ impl NormalizerFactory {
                 Some(Box::new(ELBv2TargetGroupNormalizer))
             }
             "AWS::Logs::LogGroup" => Some(Box::new(LogsResourceNormalizer)),
+            "AWS::Logs::LogStream" => Some(Box::new(LogsLogStreamNormalizer)),
+            "AWS::Logs::MetricFilter" => Some(Box::new(LogsMetricFilterNormalizer)),
+            "AWS::Logs::SubscriptionFilter" => Some(Box::new(LogsSubscriptionFilterNormalizer)),
+            "AWS::Logs::ResourcePolicy" => Some(Box::new(LogsResourcePolicyNormalizer)),
+            "AWS::Logs::QueryDefinition" => Some(Box::new(LogsQueryDefinitionNormalizer)),
             "AWS::ApiGatewayV2::Api" => Some(Box::new(ApiGatewayV2ResourceNormalizer)),
             "AWS::Kinesis::Stream" => Some(Box::new(KinesisResourceNormalizer)),
             "AWS::SageMaker::Endpoint" => Some(Box::new(SageMakerResourceNormalizer)),
@@ -713,6 +736,10 @@ impl NormalizerFactory {
             "AWS::DynamoDB::Table",
             "AWS::CloudWatch::Alarm",
             "AWS::CloudWatch::Dashboard",
+            "AWS::CloudWatch::CompositeAlarm",
+            "AWS::CloudWatch::Metric",
+            "AWS::CloudWatch::InsightRule",
+            "AWS::CloudWatch::AnomalyDetector",
             "AWS::ApiGateway::RestApi",
             "AWS::SNS::Topic",
             "AWS::SQS::Queue",
@@ -725,6 +752,11 @@ impl NormalizerFactory {
             "AWS::ElasticLoadBalancingV2::LoadBalancer",
             "AWS::ElasticLoadBalancingV2::TargetGroup",
             "AWS::Logs::LogGroup",
+            "AWS::Logs::LogStream",
+            "AWS::Logs::MetricFilter",
+            "AWS::Logs::SubscriptionFilter",
+            "AWS::Logs::ResourcePolicy",
+            "AWS::Logs::QueryDefinition",
             "AWS::ApiGatewayV2::Api",
             "AWS::Kinesis::Stream",
             "AWS::SageMaker::Endpoint",

@@ -20,7 +20,6 @@ path = "src/main.rs"
 [dependencies]
 # AI Agent framework
 stood = { git = "https://github.com/fibanez/stood.git" }
-# stood = { path = "./stood" }  # Local copy with extended tracing for debugging
 async-trait = "0.1"
 
 # JavaScript execution (V8 engine)

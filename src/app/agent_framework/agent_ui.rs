@@ -22,6 +22,7 @@ use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
 use crate::app::agent_framework::agent_instance::AgentInstance;
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationRole};
+use crate::app::agent_framework::status_display::ProcessingStatusWidget;
 
 /// Check if content appears to be markdown
 ///
@@ -55,18 +56,31 @@ fn looks_like_markdown(content: &str) -> bool {
 /// - Maintains per-agent scroll position
 /// - Fixed input area at bottom
 ///
-/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked)` tuple
+/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked)` tuple
 pub fn render_agent_chat(
     ui: &mut Ui,
     agent: &mut AgentInstance,
     input_text: &mut String,
     markdown_cache: &mut CommonMarkCache,
-) -> (bool, bool, bool, bool) {
+    status_widget: &mut ProcessingStatusWidget,
+) -> (bool, bool, bool, bool, bool) {
     // Collect data before rendering to avoid holding locks during UI rendering
     let is_processing = agent.is_processing();
+    let can_cancel = agent.can_cancel();
     let status_message = agent.status_message().map(|s| s.to_string());
     let messages: Vec<ConversationMessage> = agent.messages().iter().cloned().collect();
     let agent_id = agent.id();
+
+    // Update widget from agent's processing phase
+    let phase = agent.processing_phase().clone();
+    status_widget.set_phase(phase);
+
+    // Set detail text from status message
+    if let Some(ref msg) = status_message {
+        status_widget.set_detail(Some(msg.clone()));
+    } else {
+        status_widget.set_detail(None);
+    }
 
     // Calculate max height: reserve space for status + input + buttons + separators
     // Status: ~20px, Input (3 lines): ~70px, Buttons: ~30px, Separators: ~30px = ~150px total
@@ -86,18 +100,9 @@ pub fn render_agent_chat(
             }
         });
 
-    // Status line - ALWAYS reserve space to prevent window growth
-    // When not processing, show empty space to maintain consistent layout
-    if is_processing {
-        if let Some(status) = status_message {
-            ui.label(RichText::new(status).italics().weak());
-        } else {
-            ui.label(RichText::new("Processing...").italics().weak());
-        }
-    } else {
-        // Reserve space even when not processing to prevent layout shift
-        ui.add_space(ui.text_style_height(&egui::TextStyle::Body));
-    }
+    // Status line with animated widget
+    // Widget handles its own space reservation and animation
+    status_widget.show(ui);
 
     // Input area - always at bottom, fixed height
     let mut should_send = false;
@@ -147,8 +152,16 @@ pub fn render_agent_chat(
     ui.add_space(10.0);
 
     // Action buttons
-    let (log_clicked, clear_clicked, terminate_clicked) = ui
+    let (log_clicked, clear_clicked, terminate_clicked, stop_clicked) = ui
         .horizontal(|ui| {
+            // Stop button - only enabled when processing and cancellation is available
+            let stop_enabled = is_processing && can_cancel;
+            let stop_clicked = ui
+                .add_enabled(stop_enabled, egui::Button::new("Stop"))
+                .clicked();
+
+            ui.separator();
+
             // Log button
             let log_clicked = ui.button("Log").clicked();
 
@@ -162,11 +175,11 @@ pub fn render_agent_chat(
             // Terminate button
             let terminate_clicked = ui.button("Terminate Agent").clicked();
 
-            (log_clicked, clear_clicked, terminate_clicked)
+            (log_clicked, clear_clicked, terminate_clicked, stop_clicked)
         })
         .inner;
 
-    (should_send, log_clicked, clear_clicked, terminate_clicked)
+    (should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked)
 }
 
 /// Render a single message
@@ -189,11 +202,15 @@ fn render_message(ui: &mut Ui, message: &ConversationMessage, cache: &mut Common
         }
         ConversationRole::Assistant => {
             // Assistant message - render as markdown if detected, otherwise plain text
-            if looks_like_markdown(&message.content) {
-                CommonMarkViewer::new().show(ui, cache, &message.content);
-            } else {
-                ui.label(&message.content);
-            }
+            // Use message timestamp as unique ID to avoid duplicate widget IDs for tables
+            let message_id = message.timestamp.timestamp_millis();
+            ui.push_id(message_id, |ui| {
+                if looks_like_markdown(&message.content) {
+                    CommonMarkViewer::new().show(ui, cache, &message.content);
+                } else {
+                    ui.label(&message.content);
+                }
+            });
         }
     }
 }

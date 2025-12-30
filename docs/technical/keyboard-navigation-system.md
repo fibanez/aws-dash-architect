@@ -111,6 +111,4 @@ register_clickable!(widget_manager, response, "my_label", "Clickable Label");
 - Viewport bounds checking prevents off-screen hint rendering
 
 **References:**
-- [Window Focus System](window-focus-system.md) - Integration with application focus management
 - [Command Palette System](command-palette-system.md) - Command mode integration
-- [Trait Patterns](trait-patterns.md) - NavigableWindow trait implementation patterns
