@@ -907,6 +907,14 @@ impl EC2Service {
             );
         }
 
+        // OwnerId (AWS account ID that owns the security group)
+        if let Some(owner_id) = &group.owner_id {
+            json.insert(
+                "OwnerId".to_string(),
+                serde_json::Value::String(owner_id.clone()),
+            );
+        }
+
         // Add ingress rules
         if let Some(ref ip_permissions) = group.ip_permissions {
             if !ip_permissions.is_empty() {

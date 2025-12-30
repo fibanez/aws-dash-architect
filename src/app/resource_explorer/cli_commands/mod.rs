@@ -3,12 +3,39 @@
 //! This module provides functionality to execute AWS CLI commands and parse their
 //! output for comparison with Dash's cached resource data.
 //!
+//! # Module Organization
+//!
+//! CLI commands and field mappings are organized by AWS service:
+//! - `ec2` - EC2 resources (Instance, SecurityGroup, VPC, Subnet, Volume)
+//! - `lambda` - Lambda resources (Function)
+//! - `s3` - S3 resources (Bucket)
+//! - `iam` - IAM resources (Role, User)
+//! - `other` - Other services (RDS, DynamoDB, Bedrock)
+//! - `cloudformation` - CloudFormation resources (Stack)
+//! - `ecs` - ECS resources (Cluster)
+//! - `eks` - EKS resources (Cluster)
+//! - `messaging` - SNS/SQS resources (Topic, Queue)
+//! - `monitoring` - CloudWatch/Logs resources (Alarm, LogGroup)
+//! - `security` - Security services (KMS Key)
+//!
 //! # Security
 //!
 //! Credentials are passed to the CLI via environment variables in the spawned
 //! process, never written to files.
 
 #![cfg(debug_assertions)]
+
+mod cloudformation;
+mod ec2;
+mod ecs;
+mod eks;
+mod iam;
+mod lambda;
+mod messaging;
+mod monitoring;
+mod other;
+mod s3;
+mod security;
 
 use super::credentials::AccountCredentials;
 use anyhow::{Context, Result};
@@ -47,69 +74,51 @@ pub struct FieldMapping {
     pub comparison_type: ComparisonType,
 }
 
-/// Get field mappings for a resource type
+/// Get field mappings for a resource type.
+/// Delegates to service-specific modules.
 pub fn get_field_mappings(resource_type: &str) -> Vec<FieldMapping> {
     match resource_type {
-        "AWS::Lambda::Function" => vec![
-            FieldMapping { dash_field: "FunctionName", cli_field: "FunctionName", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "FunctionArn", cli_field: "FunctionArn", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Runtime", cli_field: "Runtime", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Role", cli_field: "Role", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Handler", cli_field: "Handler", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "CodeSize", cli_field: "CodeSize", comparison_type: ComparisonType::Numeric },
-            FieldMapping { dash_field: "Description", cli_field: "Description", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Timeout", cli_field: "Timeout", comparison_type: ComparisonType::Numeric },
-            FieldMapping { dash_field: "MemorySize", cli_field: "MemorySize", comparison_type: ComparisonType::Numeric },
-            FieldMapping { dash_field: "LastModified", cli_field: "LastModified", comparison_type: ComparisonType::Ignore },
-            FieldMapping { dash_field: "Version", cli_field: "Version", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "PackageType", cli_field: "PackageType", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Architectures", cli_field: "Architectures", comparison_type: ComparisonType::Exact },
-        ],
-        "AWS::EC2::VPC" => vec![
-            FieldMapping { dash_field: "VpcId", cli_field: "VpcId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "CidrBlock", cli_field: "CidrBlock", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "State", cli_field: "State", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "IsDefault", cli_field: "IsDefault", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "InstanceTenancy", cli_field: "InstanceTenancy", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "DhcpOptionsId", cli_field: "DhcpOptionsId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "OwnerId", cli_field: "OwnerId", comparison_type: ComparisonType::Exact },
-        ],
-        "AWS::EC2::Instance" => vec![
-            FieldMapping { dash_field: "InstanceId", cli_field: "InstanceId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "InstanceType", cli_field: "InstanceType", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "ImageId", cli_field: "ImageId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "State", cli_field: "State.Name", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "PrivateIpAddress", cli_field: "PrivateIpAddress", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "PublicIpAddress", cli_field: "PublicIpAddress", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "VpcId", cli_field: "VpcId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "SubnetId", cli_field: "SubnetId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Architecture", cli_field: "Architecture", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Platform", cli_field: "Platform", comparison_type: ComparisonType::Exact },
-        ],
-        "AWS::S3::Bucket" => vec![
-            // Basic fields from list-buckets
-            FieldMapping { dash_field: "Name", cli_field: "Name", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "CreationDate", cli_field: "CreationDate", comparison_type: ComparisonType::Ignore },
-            // Versioning (from get-bucket-versioning)
-            FieldMapping { dash_field: "VersioningStatus", cli_field: "Status", comparison_type: ComparisonType::Exact },
-            // Location (from get-bucket-location)
-            FieldMapping { dash_field: "LocationConstraint", cli_field: "LocationConstraint", comparison_type: ComparisonType::Exact },
-            // ACL (from get-bucket-acl)
-            FieldMapping { dash_field: "Owner", cli_field: "Owner", comparison_type: ComparisonType::Exact },
-            // Public Access Block (from get-public-access-block)
-            FieldMapping { dash_field: "BlockPublicAcls", cli_field: "BlockPublicAcls", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "IgnorePublicAcls", cli_field: "IgnorePublicAcls", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "BlockPublicPolicy", cli_field: "BlockPublicPolicy", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "RestrictPublicBuckets", cli_field: "RestrictPublicBuckets", comparison_type: ComparisonType::Exact },
-        ],
-        "AWS::IAM::Role" => vec![
-            FieldMapping { dash_field: "RoleName", cli_field: "RoleName", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "RoleId", cli_field: "RoleId", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Arn", cli_field: "Arn", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "Path", cli_field: "Path", comparison_type: ComparisonType::Exact },
-            FieldMapping { dash_field: "CreateDate", cli_field: "CreateDate", comparison_type: ComparisonType::Ignore },
-            FieldMapping { dash_field: "MaxSessionDuration", cli_field: "MaxSessionDuration", comparison_type: ComparisonType::Numeric },
-        ],
+        // EC2 resources
+        "AWS::EC2::Instance" => ec2::instance_field_mappings(),
+        "AWS::EC2::SecurityGroup" => ec2::security_group_field_mappings(),
+        "AWS::EC2::VPC" => ec2::vpc_field_mappings(),
+        "AWS::EC2::Subnet" => ec2::subnet_field_mappings(),
+        "AWS::EC2::Volume" => ec2::volume_field_mappings(),
+
+        // Lambda resources
+        "AWS::Lambda::Function" => lambda::function_field_mappings(),
+
+        // S3 resources
+        "AWS::S3::Bucket" => s3::bucket_field_mappings(),
+
+        // IAM resources
+        "AWS::IAM::Role" => iam::role_field_mappings(),
+        "AWS::IAM::User" => iam::user_field_mappings(),
+
+        // CloudFormation resources
+        "AWS::CloudFormation::Stack" => cloudformation::stack_field_mappings(),
+
+        // Container services
+        "AWS::ECS::Cluster" => ecs::cluster_field_mappings(),
+        "AWS::EKS::Cluster" => eks::cluster_field_mappings(),
+
+        // Messaging services
+        "AWS::SNS::Topic" => messaging::topic_field_mappings(),
+        "AWS::SQS::Queue" => messaging::queue_field_mappings(),
+
+        // Monitoring services
+        "AWS::Logs::LogGroup" => monitoring::log_group_field_mappings(),
+        "AWS::CloudWatch::Alarm" => monitoring::alarm_field_mappings(),
+
+        // Security services
+        "AWS::KMS::Key" => security::key_field_mappings(),
+        "AWS::WAFv2::WebACL" => security::webacl_field_mappings(),
+
+        // Other services
+        "AWS::RDS::DBInstance" => other::rds_instance_field_mappings(),
+        "AWS::DynamoDB::Table" => other::dynamodb_table_field_mappings(),
+        "AWS::Bedrock::KnowledgeBase" => other::bedrock_knowledge_base_field_mappings(),
+
         _ => vec![], // No mappings defined - will compare all common fields
     }
 }
@@ -131,6 +140,8 @@ pub struct CliCommand {
     pub id_field: &'static str,
     /// Whether this is a global service (doesn't need region)
     pub is_global: bool,
+    /// Extra arguments to pass (e.g., ["--scope", "REGIONAL"] for WAFv2)
+    pub extra_args: &'static [&'static str],
 }
 
 /// Detail command to run per-resource for additional properties
@@ -146,134 +157,70 @@ pub struct DetailCommand {
     pub json_path: &'static str,
     /// Whether this is a global service (doesn't need region)
     pub is_global: bool,
+    /// Extra arguments to pass (e.g., ["--scope", "REGIONAL"] for WAFv2)
+    pub extra_args: &'static [&'static str],
 }
 
 /// Get the CLI command configuration for a resource type.
+/// Delegates to service-specific modules.
 pub fn get_cli_command(resource_type: &str) -> Option<CliCommand> {
     match resource_type {
-        "AWS::EC2::Instance" => Some(CliCommand {
-            service: "ec2",
-            operation: "describe-instances",
-            json_path: "Reservations[].Instances[]",
-            id_field: "InstanceId",
-            is_global: false,
-        }),
-        "AWS::EC2::SecurityGroup" => Some(CliCommand {
-            service: "ec2",
-            operation: "describe-security-groups",
-            json_path: "SecurityGroups",
-            id_field: "GroupId",
-            is_global: false,
-        }),
-        "AWS::EC2::VPC" => Some(CliCommand {
-            service: "ec2",
-            operation: "describe-vpcs",
-            json_path: "Vpcs",
-            id_field: "VpcId",
-            is_global: false,
-        }),
-        "AWS::S3::Bucket" => Some(CliCommand {
-            service: "s3api",
-            operation: "list-buckets",
-            json_path: "Buckets",
-            id_field: "Name",
-            is_global: true,
-        }),
-        "AWS::Lambda::Function" => Some(CliCommand {
-            service: "lambda",
-            operation: "list-functions",
-            json_path: "Functions",
-            id_field: "FunctionName",
-            is_global: false,
-        }),
-        "AWS::IAM::Role" => Some(CliCommand {
-            service: "iam",
-            operation: "list-roles",
-            json_path: "Roles",
-            id_field: "RoleName",
-            is_global: true,
-        }),
-        "AWS::IAM::User" => Some(CliCommand {
-            service: "iam",
-            operation: "list-users",
-            json_path: "Users",
-            id_field: "UserName",
-            is_global: true,
-        }),
-        "AWS::RDS::DBInstance" => Some(CliCommand {
-            service: "rds",
-            operation: "describe-db-instances",
-            json_path: "DBInstances",
-            id_field: "DBInstanceIdentifier",
-            is_global: false,
-        }),
-        "AWS::DynamoDB::Table" => Some(CliCommand {
-            service: "dynamodb",
-            operation: "list-tables",
-            json_path: "TableNames",
-            id_field: "", // TableNames is just a list of strings
-            is_global: false,
-        }),
-        "AWS::Bedrock::KnowledgeBase" => Some(CliCommand {
-            service: "bedrock-agent",
-            operation: "list-knowledge-bases",
-            json_path: "knowledgeBaseSummaries",
-            id_field: "knowledgeBaseId",
-            is_global: false,
-        }),
+        // EC2 resources
+        "AWS::EC2::Instance" => Some(ec2::instance_cli_command()),
+        "AWS::EC2::SecurityGroup" => Some(ec2::security_group_cli_command()),
+        "AWS::EC2::VPC" => Some(ec2::vpc_cli_command()),
+        "AWS::EC2::Subnet" => Some(ec2::subnet_cli_command()),
+        "AWS::EC2::Volume" => Some(ec2::volume_cli_command()),
+
+        // Lambda resources
+        "AWS::Lambda::Function" => Some(lambda::function_cli_command()),
+
+        // S3 resources
+        "AWS::S3::Bucket" => Some(s3::bucket_cli_command()),
+
+        // IAM resources
+        "AWS::IAM::Role" => Some(iam::role_cli_command()),
+        "AWS::IAM::User" => Some(iam::user_cli_command()),
+
+        // CloudFormation resources
+        "AWS::CloudFormation::Stack" => Some(cloudformation::stack_cli_command()),
+
+        // Container services
+        "AWS::ECS::Cluster" => Some(ecs::cluster_cli_command()),
+        "AWS::EKS::Cluster" => Some(eks::cluster_cli_command()),
+
+        // Messaging services
+        "AWS::SNS::Topic" => Some(messaging::topic_cli_command()),
+        "AWS::SQS::Queue" => Some(messaging::queue_cli_command()),
+
+        // Monitoring services
+        "AWS::Logs::LogGroup" => Some(monitoring::log_group_cli_command()),
+        "AWS::CloudWatch::Alarm" => Some(monitoring::alarm_cli_command()),
+
+        // Security services
+        "AWS::KMS::Key" => Some(security::key_cli_command()),
+        "AWS::WAFv2::WebACL" => Some(security::webacl_cli_command()),
+
+        // Other services
+        "AWS::RDS::DBInstance" => Some(other::rds_instance_cli_command()),
+        "AWS::DynamoDB::Table" => Some(other::dynamodb_table_cli_command()),
+        "AWS::Bedrock::KnowledgeBase" => Some(other::bedrock_knowledge_base_cli_command()),
+
         _ => None,
     }
 }
 
-/// Get detail commands for fetching per-resource properties
+/// Get detail commands for fetching per-resource properties.
+/// Delegates to service-specific modules.
 pub fn get_detail_commands(resource_type: &str) -> Vec<DetailCommand> {
     match resource_type {
-        "AWS::S3::Bucket" => vec![
-            DetailCommand {
-                service: "s3api",
-                operation: "get-bucket-versioning",
-                id_arg: "--bucket",
-                json_path: "",
-                is_global: true,
-            },
-            DetailCommand {
-                service: "s3api",
-                operation: "get-bucket-encryption",
-                id_arg: "--bucket",
-                json_path: "ServerSideEncryptionConfiguration",
-                is_global: true,
-            },
-            DetailCommand {
-                service: "s3api",
-                operation: "get-bucket-location",
-                id_arg: "--bucket",
-                json_path: "",
-                is_global: true,
-            },
-            DetailCommand {
-                service: "s3api",
-                operation: "get-bucket-acl",
-                id_arg: "--bucket",
-                json_path: "",
-                is_global: true,
-            },
-            DetailCommand {
-                service: "s3api",
-                operation: "get-public-access-block",
-                id_arg: "--bucket",
-                json_path: "PublicAccessBlockConfiguration",
-                is_global: true,
-            },
-        ],
-        "AWS::Lambda::Function" => vec![
-            DetailCommand {
-                service: "lambda",
-                operation: "get-function",
-                id_arg: "--function-name",
-                json_path: "Configuration",
-                is_global: false,
-            },
-        ],
+        "AWS::S3::Bucket" => s3::bucket_detail_commands(),
+        "AWS::Lambda::Function" => lambda::function_detail_commands(),
+        "AWS::EKS::Cluster" => eks::cluster_detail_commands(),
+        "AWS::SNS::Topic" => messaging::topic_detail_commands(),
+        "AWS::SQS::Queue" => messaging::queue_detail_commands(),
+        "AWS::KMS::Key" => security::key_detail_commands(),
+        "AWS::WAFv2::WebACL" => security::webacl_detail_commands(),
         _ => vec![],
     }
 }
@@ -327,13 +274,23 @@ pub fn execute_cli_command(
 ) -> Result<CliResult> {
     let mut args = vec![cmd.service, cmd.operation, "--output", "json"];
 
+    // Add extra arguments (e.g., --scope REGIONAL for WAFv2)
+    for arg in cmd.extra_args {
+        args.push(arg);
+    }
+
     // Add region for non-global services
     if !cmd.is_global {
         args.push("--region");
         args.push(region);
     }
 
-    let command_str = format!("aws {} {} --region {}", cmd.service, cmd.operation, region);
+    let extra_str = if cmd.extra_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", cmd.extra_args.join(" "))
+    };
+    let command_str = format!("aws {} {}{} --region {}", cmd.service, cmd.operation, extra_str, region);
     info!("[CLI] Executing: {}", command_str);
 
     let start = Instant::now();
@@ -428,6 +385,11 @@ pub fn execute_detail_commands(
     for cmd in detail_commands {
         let mut args = vec![cmd.service, cmd.operation, cmd.id_arg, resource_id, "--output", "json"];
 
+        // Add extra arguments (e.g., --scope REGIONAL for WAFv2)
+        for arg in cmd.extra_args {
+            args.push(arg);
+        }
+
         // Add region for non-global services
         if !cmd.is_global {
             args.push("--region");
@@ -483,6 +445,23 @@ pub fn execute_cli_with_details(
     creds: &AccountCredentials,
     region: &str,
 ) -> Result<CliResult> {
+    // Use the progress version with no callback
+    execute_cli_with_details_progress(cmd, resource_type, creds, region, None)
+}
+
+/// Progress callback type for CLI detail fetching.
+/// Called with (current_index, total_count, resource_id) for each resource.
+pub type DetailProgressCallback = Box<dyn Fn(usize, usize, &str) + Send>;
+
+/// Execute CLI command and fetch detail properties with progress callback.
+/// The callback is invoked after each resource's details are fetched.
+pub fn execute_cli_with_details_progress(
+    cmd: &CliCommand,
+    resource_type: &str,
+    creds: &AccountCredentials,
+    region: &str,
+    progress_callback: Option<DetailProgressCallback>,
+) -> Result<CliResult> {
     // First get the list result
     let mut result = execute_cli_command(cmd, creds, region)?;
     result.resource_type = resource_type.to_string();
@@ -493,17 +472,23 @@ pub fn execute_cli_with_details(
         return Ok(result);
     }
 
-    info!("[CLI] Fetching details for {} {} resources...", result.resources.len(), resource_type);
+    let total = result.resources.len();
+    info!("[CLI] Fetching details for {} {} resources...", total, resource_type);
 
     // For each resource, fetch details and merge
     let mut enriched_resources = Vec::new();
     let mut enriched_by_id = std::collections::HashMap::new();
 
-    for resource in &result.resources {
+    for (index, resource) in result.resources.iter().enumerate() {
         let resource_id = extract_single_id(resource, cmd.id_field).unwrap_or_default();
         if resource_id.is_empty() {
             enriched_resources.push(resource.clone());
             continue;
+        }
+
+        // Report progress before fetching
+        if let Some(ref callback) = progress_callback {
+            callback(index + 1, total, &resource_id);
         }
 
         // Get detail properties
@@ -737,13 +722,33 @@ fn extract_single_id(resource: &Value, id_field: &str) -> Option<String> {
 /// Get list of resource types that have CLI command mappings.
 pub fn supported_resource_types() -> Vec<&'static str> {
     vec![
+        // EC2 resources
         "AWS::EC2::Instance",
         "AWS::EC2::SecurityGroup",
         "AWS::EC2::VPC",
+        "AWS::EC2::Subnet",
+        "AWS::EC2::Volume",
+        // S3 resources
         "AWS::S3::Bucket",
+        // Lambda resources
         "AWS::Lambda::Function",
+        // IAM resources
         "AWS::IAM::Role",
         "AWS::IAM::User",
+        // CloudFormation resources
+        "AWS::CloudFormation::Stack",
+        // Container services
+        "AWS::ECS::Cluster",
+        "AWS::EKS::Cluster",
+        // Messaging services
+        "AWS::SNS::Topic",
+        "AWS::SQS::Queue",
+        // Monitoring services
+        "AWS::Logs::LogGroup",
+        "AWS::CloudWatch::Alarm",
+        // Security services
+        "AWS::KMS::Key",
+        // Other services
         "AWS::RDS::DBInstance",
         "AWS::DynamoDB::Table",
         "AWS::Bedrock::KnowledgeBase",
@@ -827,5 +832,13 @@ mod tests {
         let mappings = get_field_mappings("AWS::Lambda::Function");
         assert!(!mappings.is_empty());
         assert!(mappings.iter().any(|m| m.dash_field == "FunctionName"));
+    }
+
+    #[test]
+    fn test_security_group_field_mappings() {
+        let mappings = get_field_mappings("AWS::EC2::SecurityGroup");
+        assert!(!mappings.is_empty());
+        assert!(mappings.iter().any(|m| m.dash_field == "GroupId"));
+        assert!(mappings.iter().any(|m| m.dash_field == "OwnerId"));
     }
 }

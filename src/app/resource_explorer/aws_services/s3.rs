@@ -2,6 +2,7 @@ use super::super::credentials::CredentialCoordinator;
 use super::super::status::{report_status, report_status_done};
 use anyhow::{Context, Result};
 use aws_sdk_s3 as s3;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct S3Service {
@@ -15,7 +16,90 @@ impl S3Service {
         }
     }
 
+    /// Convert S3 LocationConstraint to standard region code
+    ///
+    /// S3's get_bucket_location returns LocationConstraint which has special cases:
+    /// - None or empty string = us-east-1 (buckets created before regions)
+    /// - "EU" = eu-west-1 (legacy EU region)
+    /// - Otherwise = direct region code (e.g., "us-west-2")
+    fn location_constraint_to_region(constraint: Option<&s3::types::BucketLocationConstraint>) -> String {
+        match constraint {
+            None => "us-east-1".to_string(),
+            Some(loc) => {
+                let loc_str = loc.as_str();
+                if loc_str.is_empty() {
+                    "us-east-1".to_string()
+                } else if loc_str == "EU" {
+                    "eu-west-1".to_string()
+                } else {
+                    loc_str.to_string()
+                }
+            }
+        }
+    }
+
+    /// Get bucket location for a single bucket
+    async fn get_bucket_location_internal(
+        &self,
+        account_id: &str,
+        bucket_name: &str,
+    ) -> Result<String> {
+        // Use us-east-1 for location queries - this works for all buckets regardless of their actual region
+        let aws_config = self
+            .credential_coordinator
+            .create_aws_config_for_account(account_id, "us-east-1")
+            .await?;
+
+        let client = s3::Client::new(&aws_config);
+        let response = client
+            .get_bucket_location()
+            .bucket(bucket_name)
+            .send()
+            .await?;
+
+        Ok(Self::location_constraint_to_region(response.location_constraint.as_ref()))
+    }
+
+    /// Get bucket locations for all buckets in parallel
+    /// Returns HashMap<bucket_name, region_code>
+    async fn get_all_bucket_locations(
+        &self,
+        account_id: &str,
+        bucket_names: &[String],
+    ) -> HashMap<String, String> {
+        use futures::future::join_all;
+
+        let futures: Vec<_> = bucket_names
+            .iter()
+            .map(|name| {
+                let name = name.clone();
+                let account_id = account_id.to_string();
+                async move {
+                    let result = self.get_bucket_location_internal(&account_id, &name).await;
+                    let region = match result {
+                        Ok(loc) => loc,
+                        Err(e) => {
+                            tracing::debug!(
+                                "[S3] Failed to get location for bucket '{}': {}, defaulting to us-east-1",
+                                name, e
+                            );
+                            "us-east-1".to_string()
+                        }
+                    };
+                    (name, region)
+                }
+            })
+            .collect();
+
+        let results = join_all(futures).await;
+        results.into_iter().collect()
+    }
+
     /// List S3 buckets with optional detailed configuration
+    ///
+    /// S3 buckets are listed globally (one query per account), but each bucket
+    /// has an actual region where it was created. This method fetches all bucket
+    /// locations in parallel to provide accurate region information for filtering.
     ///
     /// # Arguments
     /// * `include_details` - If false (Phase 1), returns basic bucket info quickly.
@@ -23,32 +107,57 @@ impl S3Service {
     pub async fn list_buckets(
         &self,
         account_id: &str,
-        region: &str,
+        _region: &str, // Ignored - S3 list_buckets is a global operation
         include_details: bool,
     ) -> Result<Vec<serde_json::Value>> {
         report_status("S3", "list_buckets", Some(account_id));
 
+        // Use us-east-1 for the global list_buckets operation
         let aws_config = self
             .credential_coordinator
-            .create_aws_config_for_account(account_id, region)
+            .create_aws_config_for_account(account_id, "us-east-1")
             .await
             .with_context(|| {
                 format!(
-                    "Failed to create AWS config for account {} in region {}",
-                    account_id, region
+                    "Failed to create AWS config for account {} for S3 global list",
+                    account_id
                 )
             })?;
 
         let client = s3::Client::new(&aws_config);
         let response = client.list_buckets().send().await?;
 
+        // Collect bucket names for location lookup
+        let bucket_names: Vec<String> = response
+            .buckets
+            .as_ref()
+            .map(|buckets| {
+                buckets
+                    .iter()
+                    .filter_map(|b| b.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Get all bucket locations in parallel
+        let locations = self.get_all_bucket_locations(account_id, &bucket_names).await;
+
+        // Build bucket JSON with actual regions
         let mut buckets = Vec::new();
         if let Some(bucket_list) = response.buckets {
             for bucket in bucket_list {
-                let bucket_json = self
-                    .bucket_to_json(&bucket, account_id, region, include_details)
-                    .await?;
-                buckets.push(bucket_json);
+                if let Some(name) = &bucket.name {
+                    // Get the actual region for this bucket
+                    let actual_region = locations
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| "us-east-1".to_string());
+
+                    let bucket_json = self
+                        .bucket_to_json(&bucket, account_id, &actual_region, include_details)
+                        .await?;
+                    buckets.push(bucket_json);
+                }
             }
         }
 
@@ -117,12 +226,18 @@ impl S3Service {
             serde_json::Value::String(account_id.to_string()),
         );
 
-        // Add location
+        // Add location - explicitly store null for us-east-1 to match CLI output
         if let Ok(location) = location_response {
             if let Some(constraint) = location.location_constraint {
                 bucket_details.insert(
                     "LocationConstraint".to_string(),
                     serde_json::Value::String(constraint.as_str().to_string()),
+                );
+            } else {
+                // us-east-1 buckets have no LocationConstraint - store null to match CLI
+                bucket_details.insert(
+                    "LocationConstraint".to_string(),
+                    serde_json::Value::Null,
                 );
             }
         }
@@ -346,17 +461,15 @@ impl S3Service {
 
         match response {
             Ok(versioning_response) => {
+                // Only insert Status if versioning is explicitly set
+                // When versioning is never enabled, AWS returns no status and CLI returns null
                 if let Some(status) = versioning_response.status {
                     versioning_json.insert(
                         "Status".to_string(),
                         serde_json::Value::String(status.as_str().to_string()),
                     );
-                } else {
-                    versioning_json.insert(
-                        "Status".to_string(),
-                        serde_json::Value::String("Disabled".to_string()),
-                    );
                 }
+                // Don't insert "Disabled" - let it be null to match CLI behavior
 
                 if let Some(mfa_delete) = versioning_response.mfa_delete {
                     versioning_json.insert(
@@ -366,10 +479,7 @@ impl S3Service {
                 }
             }
             Err(_) => {
-                versioning_json.insert(
-                    "Status".to_string(),
-                    serde_json::Value::String("Unknown".to_string()),
-                );
+                // Don't insert anything on error - let it be null
             }
         }
 
@@ -506,7 +616,8 @@ impl S3Service {
                 if let Some(owner) = acl_response.owner {
                     let mut owner_json = serde_json::Map::new();
                     if let Some(id) = owner.id {
-                        owner_json.insert("Id".to_string(), serde_json::Value::String(id));
+                        // Use "ID" (uppercase) to match AWS CLI output format
+                        owner_json.insert("ID".to_string(), serde_json::Value::String(id));
                     }
                     if let Some(display_name) = owner.display_name {
                         owner_json.insert(
@@ -1155,8 +1266,15 @@ impl S3Service {
             serde_json::Value::String(account_id.to_string()),
         );
 
-        // S3 buckets are global but we track them by region for UI purposes
-        bucket_map.insert("GlobalResource".to_string(), serde_json::Value::Bool(true));
+        // Store the actual bucket region for proper filtering
+        // The region parameter now contains the actual bucket region from get_bucket_location
+        bucket_map.insert(
+            "BucketRegion".to_string(),
+            serde_json::Value::String(region.to_string()),
+        );
+
+        // Mark as hybrid-global: queried globally but has actual regional location
+        bucket_map.insert("HybridGlobal".to_string(), serde_json::Value::Bool(true));
 
         // Only fetch details if requested (Phase 2)
         if include_details {
@@ -1387,13 +1505,33 @@ impl S3Service {
         report_status("S3", "get_bucket_details", Some(bucket_name));
         let mut details = serde_json::Map::new();
 
-        // Get bucket policy
-        if let Ok(Ok(policy_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+        // Execute all 10 API calls in parallel - AWS SDK handles retry/backoff automatically
+        let (
+            policy_result,
+            encryption_result,
+            versioning_result,
+            lifecycle_result,
+            acl_result,
+            pab_result,
+            replication_result,
+            cors_result,
+            website_result,
+            notification_result,
+        ) = tokio::join!(
             self.get_bucket_policy(account_id, region, bucket_name),
-        )
-        .await
-        {
+            self.get_bucket_encryption(account_id, region, bucket_name),
+            self.get_bucket_versioning(account_id, region, bucket_name),
+            self.get_bucket_lifecycle(account_id, region, bucket_name),
+            self.get_bucket_acl(account_id, region, bucket_name),
+            self.get_public_access_block(account_id, region, bucket_name),
+            self.get_bucket_replication(account_id, region, bucket_name),
+            self.get_bucket_cors(account_id, region, bucket_name),
+            self.get_bucket_website(account_id, region, bucket_name),
+            self.get_bucket_notification(account_id, region, bucket_name),
+        );
+
+        // Process policy result
+        if let Ok(policy_data) = policy_result {
             if let Some(has_policy) = policy_data.get("HasPolicy").and_then(|v| v.as_bool()) {
                 details.insert("HasPolicy".to_string(), serde_json::Value::Bool(has_policy));
             }
@@ -1402,13 +1540,8 @@ impl S3Service {
             }
         }
 
-        // Get encryption
-        if let Ok(Ok(encryption_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_encryption(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process encryption result
+        if let Ok(encryption_data) = encryption_result {
             if let Some(encrypted) = encryption_data
                 .get("EncryptionEnabled")
                 .and_then(|v| v.as_bool())
@@ -1423,13 +1556,8 @@ impl S3Service {
             }
         }
 
-        // Get versioning
-        if let Ok(Ok(versioning_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_versioning(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process versioning result
+        if let Ok(versioning_data) = versioning_result {
             if let Some(status) = versioning_data.get("Status").and_then(|v| v.as_str()) {
                 details.insert(
                     "VersioningStatus".to_string(),
@@ -1438,13 +1566,8 @@ impl S3Service {
             }
         }
 
-        // Get lifecycle
-        if let Ok(Ok(lifecycle_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_lifecycle(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process lifecycle result
+        if let Ok(lifecycle_data) = lifecycle_result {
             if let Some(has_lifecycle) = lifecycle_data
                 .get("HasLifecycleConfiguration")
                 .and_then(|v| v.as_bool())
@@ -1459,13 +1582,8 @@ impl S3Service {
             }
         }
 
-        // Get ACL
-        if let Ok(Ok(acl_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_acl(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process ACL result
+        if let Ok(acl_data) = acl_result {
             if let Some(owner) = acl_data.get("Owner") {
                 details.insert("Owner".to_string(), owner.clone());
             }
@@ -1474,13 +1592,8 @@ impl S3Service {
             }
         }
 
-        // Get Public Access Block
-        if let Ok(Ok(pab_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_public_access_block(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process Public Access Block result
+        if let Ok(pab_data) = pab_result {
             if let Some(has_pab) = pab_data
                 .get("HasPublicAccessBlock")
                 .and_then(|v| v.as_bool())
@@ -1504,13 +1617,8 @@ impl S3Service {
             }
         }
 
-        // Get Replication
-        if let Ok(Ok(replication_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_replication(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process Replication result
+        if let Ok(replication_data) = replication_result {
             if let Some(has_replication) = replication_data
                 .get("HasReplication")
                 .and_then(|v| v.as_bool())
@@ -1528,13 +1636,8 @@ impl S3Service {
             }
         }
 
-        // Get CORS
-        if let Ok(Ok(cors_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_cors(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process CORS result
+        if let Ok(cors_data) = cors_result {
             if let Some(has_cors) = cors_data.get("HasCORS").and_then(|v| v.as_bool()) {
                 details.insert("HasCORS".to_string(), serde_json::Value::Bool(has_cors));
             }
@@ -1543,13 +1646,8 @@ impl S3Service {
             }
         }
 
-        // Get Website
-        if let Ok(Ok(website_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_website(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process Website result
+        if let Ok(website_data) = website_result {
             if let Some(enabled) = website_data.get("WebsiteEnabled").and_then(|v| v.as_bool()) {
                 details.insert(
                     "WebsiteEnabled".to_string(),
@@ -1564,13 +1662,8 @@ impl S3Service {
             }
         }
 
-        // Get Notifications
-        if let Ok(Ok(notification_data)) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.get_bucket_notification(account_id, region, bucket_name),
-        )
-        .await
-        {
+        // Process Notifications result
+        if let Ok(notification_data) = notification_result {
             if let Some(has_notifications) = notification_data
                 .get("HasNotifications")
                 .and_then(|v| v.as_bool())

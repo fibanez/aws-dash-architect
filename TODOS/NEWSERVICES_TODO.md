@@ -1470,6 +1470,391 @@ See `src/app/resource_explorer/child_resources.rs` for complete examples of:
 
 ---
 
+## CLI Verification Implementation (DEBUG builds only)
+
+The application includes a verification system that compares Dash's cached resource data against live AWS CLI output. This is essential for validating that our API implementations correctly capture resource properties.
+
+### When to Add CLI Verification
+
+Add CLI verification when:
+- Implementing a new service or resource type
+- Adding new property extractions to existing resources
+- Troubleshooting data accuracy issues
+
+### Module Structure
+
+CLI commands are organized by AWS service in `src/app/resource_explorer/cli_commands/`:
+
+```
+cli_commands/
+├── mod.rs      # Core types, execution logic, aggregation
+├── ec2.rs      # EC2: Instance, SecurityGroup, VPC
+├── lambda.rs   # Lambda: Function
+├── s3.rs       # S3: Bucket
+├── iam.rs      # IAM: Role, User
+└── other.rs    # RDS, DynamoDB, Bedrock (smaller services)
+```
+
+### Step 1: Add CLI Command Configuration
+
+Define the CLI command that lists resources. Add to the appropriate service file or create a new one.
+
+**In your service file (e.g., `cli_commands/yourservice.rs`):**
+
+```rust
+//! YourService CLI commands and field mappings.
+
+use super::{CliCommand, ComparisonType, FieldMapping};
+
+pub fn resource_cli_command() -> CliCommand {
+    CliCommand {
+        service: "yourservice",              // AWS CLI service name
+        operation: "list-resources",          // CLI operation
+        json_path: "Resources",               // Path to resource array in response
+        id_field: "ResourceId",               // Field that uniquely identifies resource
+        is_global: false,                     // true for IAM, S3, etc.
+    }
+}
+```
+
+**Then register in `cli_commands/mod.rs`:**
+
+```rust
+// Add module declaration
+mod yourservice;
+
+// Add to get_cli_command() match:
+pub fn get_cli_command(resource_type: &str) -> Option<CliCommand> {
+    match resource_type {
+        // ... existing types
+        "AWS::YourService::Resource" => Some(yourservice::resource_cli_command()),
+        _ => None,
+    }
+}
+
+// Add to supported_resource_types():
+pub fn supported_resource_types() -> Vec<&'static str> {
+    vec![
+        // ... existing types
+        "AWS::YourService::Resource",
+    ]
+}
+```
+
+### Step 2: Add Field Mappings
+
+Define which fields to compare between Dash cache and CLI output.
+
+**In your service file:**
+
+```rust
+pub fn resource_field_mappings() -> Vec<FieldMapping> {
+    vec![
+        FieldMapping {
+            dash_field: "ResourceId",      // Field name in Dash cache
+            cli_field: "ResourceId",       // Field name in CLI JSON response
+            comparison_type: ComparisonType::Exact,
+        },
+        FieldMapping {
+            dash_field: "Name",
+            cli_field: "Name",
+            comparison_type: ComparisonType::Exact,
+        },
+        FieldMapping {
+            dash_field: "Status",
+            cli_field: "Status",
+            comparison_type: ComparisonType::CaseInsensitive,
+        },
+        FieldMapping {
+            dash_field: "Size",
+            cli_field: "Size",
+            comparison_type: ComparisonType::Numeric,
+        },
+        FieldMapping {
+            dash_field: "LastModified",
+            cli_field: "LastModified",
+            comparison_type: ComparisonType::Ignore,  // Skip dynamic fields
+        },
+        // For complex nested fields that can't be easily compared:
+        FieldMapping {
+            dash_field: "Configuration",
+            cli_field: "Configuration",
+            comparison_type: ComparisonType::Ignore,
+        },
+    ]
+}
+```
+
+**Register in `cli_commands/mod.rs`:**
+
+```rust
+pub fn get_field_mappings(resource_type: &str) -> Vec<FieldMapping> {
+    match resource_type {
+        // ... existing types
+        "AWS::YourService::Resource" => yourservice::resource_field_mappings(),
+        _ => vec![],
+    }
+}
+```
+
+### Comparison Types
+
+| Type | Use Case |
+|------|----------|
+| `Exact` | Strings, IDs, ARNs - must match exactly |
+| `CaseInsensitive` | Status values, names that may differ in case |
+| `Numeric` | Numbers - parsed and compared numerically |
+| `Ignore` | Dynamic fields (timestamps), complex nested objects |
+
+### Step 3: Add Detail Commands (Optional)
+
+For resources where the list API returns limited data, add per-resource detail commands.
+
+**Example: S3 buckets need separate calls for versioning, encryption, etc.**
+
+```rust
+use super::DetailCommand;
+
+pub fn resource_detail_commands() -> Vec<DetailCommand> {
+    vec![
+        DetailCommand {
+            service: "yourservice",
+            operation: "get-resource-details",
+            id_arg: "--resource-id",      // CLI argument for resource ID
+            json_path: "Details",          // Path in response (empty for root)
+            is_global: false,
+        },
+        DetailCommand {
+            service: "yourservice",
+            operation: "get-resource-configuration",
+            id_arg: "--resource-id",
+            json_path: "Configuration",
+            is_global: false,
+        },
+    ]
+}
+```
+
+**Register in `cli_commands/mod.rs`:**
+
+```rust
+pub fn get_detail_commands(resource_type: &str) -> Vec<DetailCommand> {
+    match resource_type {
+        "AWS::S3::Bucket" => s3::bucket_detail_commands(),
+        "AWS::Lambda::Function" => lambda::function_detail_commands(),
+        "AWS::YourService::Resource" => yourservice::resource_detail_commands(),
+        _ => vec![],
+    }
+}
+```
+
+### Step 4: Add Unit Tests
+
+**In your service file:**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resource_cli_command() {
+        let cmd = resource_cli_command();
+        assert_eq!(cmd.service, "yourservice");
+        assert_eq!(cmd.operation, "list-resources");
+        assert!(!cmd.is_global);
+    }
+
+    #[test]
+    fn test_resource_field_mappings() {
+        let mappings = resource_field_mappings();
+        assert!(!mappings.is_empty());
+        assert!(mappings.iter().any(|m| m.dash_field == "ResourceId"));
+    }
+}
+```
+
+### Verification Output
+
+When verification runs, it produces files in `target/verification/`:
+
+- **`verification_summary.txt`** - Overall results (pass/fail, percentages)
+- **`verification_details.txt`** - Per-resource field-by-field comparison
+
+**Example output:**
+
+```
+=== AWS::YourService::Resource ===
+CLI Command: aws yourservice list-resources --region us-east-1
+Execution Time: 450ms
+Resources Returned: 5
+
+--- Resource: resource-123 ---
+MATCH: ResourceId = resource-123
+MATCH: Name = my-resource
+MATCH: Status = ACTIVE
+MISMATCH: Size - Dash: 100, CLI: 150
+SKIPPED: LastModified (dynamic field)
+Summary: 3 matched, 1 mismatched, 1 skipped
+```
+
+### Debugging Verification Failures
+
+**If fields show as null in Dash but have values in CLI:**
+1. Check your service's `*_to_json()` method in `aws_services/yourservice.rs`
+2. Ensure all fields from the AWS SDK response are being extracted
+3. Add missing field extractions:
+
+```rust
+fn resource_to_json(&self, resource: &yourservice::types::Resource) -> serde_json::Value {
+    let mut json = serde_json::Map::new();
+
+    // Ensure all compared fields are extracted
+    if let Some(size) = &resource.size {
+        json.insert("Size".to_string(), serde_json::Value::Number((*size).into()));
+    }
+
+    // ... other fields
+
+    serde_json::Value::Object(json)
+}
+```
+
+### Common Pitfalls
+
+1. **Field name mismatch**: Dash field names must match exactly what's in your `*_to_json()` method
+2. **CLI field paths**: For nested CLI responses, use dot notation (e.g., `"State.Name"`)
+3. **Missing extractions**: If a field shows null in verification, add it to your service's JSON conversion
+4. **Global services**: Set `is_global: true` for IAM, S3, CloudFront, Route53, etc.
+
+### Complete Example: Adding EC2 Subnet Verification
+
+```rust
+// In cli_commands/ec2.rs, add:
+
+pub fn subnet_cli_command() -> CliCommand {
+    CliCommand {
+        service: "ec2",
+        operation: "describe-subnets",
+        json_path: "Subnets",
+        id_field: "SubnetId",
+        is_global: false,
+    }
+}
+
+pub fn subnet_field_mappings() -> Vec<FieldMapping> {
+    vec![
+        FieldMapping { dash_field: "SubnetId", cli_field: "SubnetId", comparison_type: ComparisonType::Exact },
+        FieldMapping { dash_field: "VpcId", cli_field: "VpcId", comparison_type: ComparisonType::Exact },
+        FieldMapping { dash_field: "CidrBlock", cli_field: "CidrBlock", comparison_type: ComparisonType::Exact },
+        FieldMapping { dash_field: "AvailabilityZone", cli_field: "AvailabilityZone", comparison_type: ComparisonType::Exact },
+        FieldMapping { dash_field: "State", cli_field: "State", comparison_type: ComparisonType::Exact },
+        FieldMapping { dash_field: "AvailableIpAddressCount", cli_field: "AvailableIpAddressCount", comparison_type: ComparisonType::Numeric },
+    ]
+}
+
+// In cli_commands/mod.rs, add to match statements:
+"AWS::EC2::Subnet" => Some(ec2::subnet_cli_command()),
+"AWS::EC2::Subnet" => ec2::subnet_field_mappings(),
+```
+
+---
+
+## CLI Verification Coverage Inventory
+
+Track which resource types have CLI verification implemented. Update this list as new verifications are added.
+
+### Implemented (20 resource types)
+
+| Resource Type | Service File | Fields Compared | Detail Commands |
+|---------------|--------------|-----------------|-----------------|
+| AWS::EC2::Instance | ec2.rs | 10 (InstanceId, InstanceType, ImageId, State, VpcId, SubnetId, etc.) | No |
+| AWS::EC2::SecurityGroup | ec2.rs | 5 compared, 2 ignored (GroupId, GroupName, Description, VpcId, OwnerId) | No |
+| AWS::EC2::VPC | ec2.rs | 7 (VpcId, CidrBlock, State, IsDefault, InstanceTenancy, DhcpOptionsId, OwnerId) | No |
+| AWS::EC2::Subnet | ec2.rs | 9 (SubnetId, VpcId, CidrBlock, AvailabilityZone, State, etc.) | No |
+| AWS::EC2::Volume | ec2.rs | 9 (VolumeId, Size, VolumeType, State, AvailabilityZone, Encrypted, etc.) | No |
+| AWS::Lambda::Function | lambda.rs | 5 (FunctionName, Runtime, Handler, Timeout, MemorySize) | Yes (get-function) |
+| AWS::S3::Bucket | s3.rs | 2 (Name, CreationDate) | Yes (5 commands) |
+| AWS::IAM::Role | iam.rs | 5 (RoleName, RoleId, Arn, CreateDate, MaxSessionDuration) | No |
+| AWS::IAM::User | iam.rs | 4 (UserName, UserId, Arn, CreateDate) | No |
+| AWS::CloudFormation::Stack | cloudformation.rs | 7 (StackName, StackId, StackStatus, Description, RoleARN, etc.) | No |
+| AWS::ECS::Cluster | ecs.rs | 7 (ClusterName, ClusterArn, Status, RunningTasksCount, etc.) | No |
+| AWS::EKS::Cluster | eks.rs | 6 (Name, Arn, Status, Version, PlatformVersion, RoleArn) | Yes (describe-cluster) |
+| AWS::SNS::Topic | messaging.rs | 1 (TopicArn) | Yes (get-topic-attributes) |
+| AWS::SQS::Queue | messaging.rs | 1 (QueueUrl) | Yes (get-queue-attributes) |
+| AWS::Logs::LogGroup | monitoring.rs | 6 (LogGroupName, Arn, StoredBytes, RetentionInDays, etc.) | No |
+| AWS::CloudWatch::Alarm | monitoring.rs | 11 (AlarmName, AlarmArn, StateValue, MetricName, Threshold, etc.) | No |
+| AWS::KMS::Key | security.rs | 10 (KeyId, Arn, KeyState, KeyUsage, KeySpec, Enabled, etc.) | Yes (describe-key) |
+| AWS::RDS::DBInstance | other.rs | 7 (DBInstanceIdentifier, DBInstanceClass, Engine, etc.) | No |
+| AWS::DynamoDB::Table | other.rs | 1 (TableName - list-tables returns names only) | No |
+| AWS::Bedrock::KnowledgeBase | other.rs | 3 (knowledgeBaseId, name, status) | No |
+
+### Not Implemented - Priority 1: High Value
+
+These services are commonly used and would benefit most from verification:
+
+| Resource Type | Suggested CLI Command | Notes |
+|---------------|----------------------|-------|
+| AWS::EC2::NetworkInterface | describe-network-interfaces | Important for networking |
+| AWS::EC2::InternetGateway | describe-internet-gateways | VPC component |
+| AWS::EC2::NatGateway | describe-nat-gateways | VPC component |
+| AWS::EC2::RouteTable | describe-route-tables | VPC component |
+| AWS::ECS::Service | describe-services | Needs cluster context |
+| AWS::ECS::TaskDefinition | describe-task-definition | Container definitions |
+
+### Not Implemented - Priority 2: Medium Value
+
+| Resource Type | Suggested CLI Command | Notes |
+|---------------|----------------------|-------|
+| AWS::EC2::Snapshot | describe-snapshots | Backup management |
+| AWS::EC2::KeyPair | describe-key-pairs | Access management |
+| AWS::EC2::LaunchTemplate | describe-launch-templates | Instance templates |
+| AWS::EC2::ElasticIp | describe-addresses | Networking |
+| AWS::ElasticLoadBalancingV2::LoadBalancer | describe-load-balancers | Application delivery |
+| AWS::ElasticLoadBalancingV2::TargetGroup | describe-target-groups | Load balancer targets |
+| AWS::AutoScaling::AutoScalingGroup | describe-auto-scaling-groups | Scaling |
+| AWS::SecretsManager::Secret | list-secrets | Secrets management |
+| AWS::IAM::Policy | list-policies | Access management |
+| AWS::IAM::Group | list-groups | Access management |
+| AWS::Route53::HostedZone | list-hosted-zones | DNS |
+| AWS::ACM::Certificate | list-certificates | TLS certificates |
+
+### Not Implemented - Priority 3: Specialized Services
+
+| Service Category | Resource Types | Notes |
+|------------------|---------------|-------|
+| **Analytics** | Kinesis Streams, Firehose, Glue Jobs/Crawlers/Databases, Athena, EMR | Data processing |
+| **ML/AI** | SageMaker Endpoints/Models, Bedrock Agents/Flows/DataSources | Machine learning |
+| **Containers** | ECR Repositories, ECS Tasks, App Runner | Container infrastructure |
+| **Serverless** | API Gateway APIs/Stages, Step Functions, EventBridge Rules | Event-driven |
+| **Database** | ElastiCache Clusters, DocumentDB, Neptune, Redshift | Specialized DBs |
+| **Storage** | EFS File Systems, FSx, Backup Plans | File/backup storage |
+| **Security** | WAF WebACLs, SecurityHub, GuardDuty, Inspector | Security services |
+| **Networking** | CloudFront Distributions, VPC Endpoints, Transit Gateways | Advanced networking |
+| **Management** | Config Rules, SSM Parameters, Organizations | AWS management |
+
+### Coverage Summary
+
+```
+Total Resource Types in Dash:    ~130
+CLI Verification Implemented:      20 (~15%)
+Priority 1 (High Value):            6 resources
+Priority 2 (Medium Value):         12 resources
+Priority 3 (Specialized):          ~92 resources
+```
+
+### Adding New Verifications
+
+When adding a new resource type to CLI verification:
+
+1. Check which priority category it's in above
+2. Follow the implementation steps in the "CLI Verification Implementation" section
+3. Move it from "Not Implemented" to "Implemented" in this inventory
+4. Update the coverage counts
+5. Document any special considerations (global service, pagination, etc.)
+
+---
+
 ## Future Enhancements
 
 1. **Detailed Properties**: Implement describe functionality for rich resource details

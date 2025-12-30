@@ -24,12 +24,21 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
             .unwrap_or("unknown-bucket")
             .to_string();
 
+        // S3 buckets have their actual region stored in BucketRegion
+        // (from get_bucket_location during list_buckets)
+        let actual_region = raw_response
+            .get("BucketRegion")
+            .and_then(|v| v.as_str())
+            .unwrap_or(region) // Fallback to passed region if not present
+            .to_string();
+
         let display_name = extract_display_name(&raw_response, &bucket_name);
         let status = extract_status(&raw_response);
 
         // Fetch tags asynchronously from AWS API with caching
+        // Use actual bucket region for tag fetching
         let tags = aws_client
-            .fetch_tags_for_resource("AWS::S3::Bucket", &bucket_name, account, region)
+            .fetch_tags_for_resource("AWS::S3::Bucket", &bucket_name, account, &actual_region)
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!("Failed to fetch tags for S3 bucket {}: {}", bucket_name, e);
@@ -48,7 +57,7 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
         Ok(ResourceEntry {
             resource_type: "AWS::S3::Bucket".to_string(),
             account_id: account.to_string(),
-            region: region.to_string(),
+            region: actual_region.clone(), // Use actual bucket region, not "Global"
             resource_id: bucket_name.clone(),
             display_name,
             status,
@@ -62,7 +71,7 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
             parent_resource_type: None,
             is_child_resource: false,
             account_color: assign_account_color(account),
-            region_color: assign_region_color(region),
+            region_color: assign_region_color(&actual_region), // Use actual region for color
             query_timestamp,
         })
     }

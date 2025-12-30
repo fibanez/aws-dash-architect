@@ -265,8 +265,27 @@ impl AwsLoginWindow {
                         }
                     }
                     Some(aws_identity) => {
-                        // Check login state
-                        let login_state = aws_identity.lock().unwrap().login_state.clone();
+                        // Try to get login state without blocking
+                        // If lock is held by background thread, show spinner
+                        let login_state = match aws_identity.try_lock() {
+                            Ok(guard) => Some(guard.login_state.clone()),
+                            Err(_) => None, // Lock held by background thread
+                        };
+
+                        // If we couldn't get the lock, show spinner and wait
+                        let login_state = match login_state {
+                            Some(state) => state,
+                            None => {
+                                ui.label(
+                                    RichText::new("Gathering credentials...")
+                                        .strong(),
+                                );
+                                ui.add_space(5.0);
+                                ui.spinner();
+                                ctx.request_repaint();
+                                return; // Exit the vertical_centered closure
+                            }
+                        };
 
                         // Handle state transitions
                         match &login_state {

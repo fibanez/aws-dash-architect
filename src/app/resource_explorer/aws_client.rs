@@ -773,12 +773,16 @@ impl AWSResourceClient {
                             .query_resource_type(&account_id, &query_region, &resource_type_str)
                             .await;
 
-                        // Handle the result and transform to Global region
+                        // Handle the result
                         let resources_result = match query_result {
                             Ok(mut resources) => {
-                                // Mark all resources as Global region
-                                for resource in &mut resources {
-                                    resource.region = "Global".to_string();
+                                // For true global services, mark as Global region
+                                // For hybrid-global services (S3), preserve the actual region
+                                // which was already set during the query (e.g., from get_bucket_location)
+                                if resource_type_str != "AWS::S3::Bucket" {
+                                    for resource in &mut resources {
+                                        resource.region = "Global".to_string();
+                                    }
                                 }
 
                                 let resource_count = resources.len();
@@ -4004,13 +4008,34 @@ impl AWSResourceClient {
             }
 
             // Group resources by account/region/type for batch processing
+            // For global services (like S3), use "Global" as the cache key region
+            // because that's how they're stored in the cache, even though the
+            // individual resources may have actual region values.
             let mut grouped: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
             for resource in resources_to_enrich {
+                // Use "Global" for global services to match cache key format
+                let cache_region = if super::global_services::is_global_service(&resource.resource_type) {
+                    "Global".to_string()
+                } else {
+                    resource.region.clone()
+                };
                 let key = format!(
                     "{}:{}:{}",
-                    resource.account_id, resource.region, resource.resource_type
+                    resource.account_id, cache_region, resource.resource_type
                 );
                 grouped.entry(key).or_default().push(resource);
+            }
+
+            // Debug: log cache state at start
+            {
+                let cache_read = cache.read().await;
+                for (key, resources) in cache_read.iter() {
+                    let with_details = resources.iter().filter(|r| r.detailed_properties.is_some()).count();
+                    tracing::info!(
+                        "Phase 2 START: Cache key '{}' has {} resources, {} with detailed_properties",
+                        key, resources.len(), with_details
+                    );
+                }
             }
 
             tracing::info!(
@@ -4020,6 +4045,8 @@ impl AWSResourceClient {
             );
 
             let mut processed = 0;
+            let mut updated_count = 0;
+            let mut failed_count = 0;
 
             for (cache_key_prefix, resources) in grouped {
                 tracing::debug!(
@@ -4065,12 +4092,14 @@ impl AWSResourceClient {
                                         );
                                         cached.detailed_properties = Some(merged);
                                         cached.detailed_timestamp = resource.detailed_timestamp;
+                                        updated_count += 1;
                                         tracing::debug!(
                                             "Phase 2: Updated cache for {} in key {}",
                                             resource.resource_id,
                                             cache_key_prefix
                                         );
                                     } else {
+                                        failed_count += 1;
                                         tracing::warn!(
                                             "Phase 2: Resource {} not found in cache under key {}",
                                             resource.resource_id,
@@ -4078,6 +4107,7 @@ impl AWSResourceClient {
                                         );
                                     }
                                 } else {
+                                    failed_count += 1;
                                     tracing::warn!(
                                         "Phase 2: Cache key {} not found (available keys: {:?})",
                                         cache_key_prefix,
@@ -4087,6 +4117,7 @@ impl AWSResourceClient {
                             }
                         }
                         Err(e) => {
+                            failed_count += 1;
                             tracing::warn!(
                                 "Phase 2: Failed to fetch details for {} ({}): {}",
                                 resource.resource_id,
@@ -4114,6 +4145,23 @@ impl AWSResourceClient {
                     }
                 }
             }
+
+            // Debug: log cache state at end
+            {
+                let cache_read = cache.read().await;
+                for (key, resources) in cache_read.iter() {
+                    let with_details = resources.iter().filter(|r| r.detailed_properties.is_some()).count();
+                    tracing::info!(
+                        "Phase 2 END: Cache key '{}' has {} resources, {} with detailed_properties",
+                        key, resources.len(), with_details
+                    );
+                }
+            }
+
+            tracing::info!(
+                "Phase 2 SUMMARY: processed={}, updated={}, failed={}",
+                processed, updated_count, failed_count
+            );
 
             // Send enrichment completed progress
             if let Some(ref sender) = progress_sender {
@@ -4350,23 +4398,21 @@ impl AWSResourceClient {
         // Start with a clone of raw_properties
         let mut merged = raw_properties.clone();
 
-        // If both are objects, merge the enrichment details into raw_properties
+        // If both are objects, merge the enrichment details directly into raw_properties
+        // Phase 2 fields are added at the top level alongside Phase 1 fields
         if let (Some(merged_obj), Some(details_obj)) =
             (merged.as_object_mut(), enrichment_details.as_object())
         {
-            // Add enrichment details under a "DetailedInfo" key to keep them separate
-            // This preserves the original structure while adding Phase 2 data
-            merged_obj.insert(
-                "DetailedInfo".to_string(),
-                serde_json::Value::Object(details_obj.clone()),
-            );
-        } else {
-            // If structures don't match, just wrap both in a container
-            merged = serde_json::json!({
-                "OriginalProperties": raw_properties,
-                "DetailedInfo": enrichment_details
-            });
+            // Merge Phase 2 fields directly at the top level
+            // This allows verification and display to find fields without nested lookup
+            for (key, value) in details_obj {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        } else if enrichment_details.is_object() {
+            // raw_properties isn't an object but enrichment is - use enrichment as base
+            merged = enrichment_details.clone();
         }
+        // If enrichment isn't an object, just return raw_properties as-is
 
         merged
     }

@@ -5,6 +5,7 @@ This directory contains modular technical documentation for the AWS Dash project
 ## Core Systems
 
 * [Resource Explorer System](resource-explorer-system.md) - Multi-account AWS resource discovery with 80+ resource types
+* [CLI Verification System](cli-verification-system.md) - AWS CLI-based resource data verification
 * [Keyboard Navigation System](keyboard-navigation-system.md) - Vimium-style navigation with hint mode and multi-modal interaction
 * [Notifications System](notifications-system.md) - Comprehensive notification management
 * [UI Testing Framework](ui-testing-framework.md) - Automated testing with egui_kittest

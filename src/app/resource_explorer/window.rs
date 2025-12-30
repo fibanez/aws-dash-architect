@@ -3065,18 +3065,24 @@ impl ResourceExplorerWindow {
                 });
 
             match result {
-                Ok(resources) => {
+                Ok(_query_resources) => {
                     for attempt in 0..3 {
                         if let Ok(mut state) = state_arc.try_write() {
                             let final_cache = runtime.block_on(async { cache.read().await.clone() });
                             state.cached_queries = final_cache;
-                            state.resources = resources;
+
+                            // Filter resources to match current scope before setting state.resources
+                            // This ensures Phase 2 only enriches visible resources (e.g., S3 buckets
+                            // in selected regions only, not all buckets from the global query)
+                            let cached_queries = state.cached_queries.clone();
+                            Self::refresh_resources_from_cache_filtered(&mut state, &cached_queries);
+
                             state.finish_loading_task(&cache_key);
 
                             state.update_tag_popularity();
 
                             tracing::info!(
-                                "✅ Parallel query completed: {} total resources (loading tasks remaining: {})",
+                                "✅ Parallel query completed: {} total resources after filtering (loading tasks remaining: {})",
                                 state.resources.len(),
                                 state.loading_task_count()
                             );
@@ -3385,10 +3391,17 @@ impl ResourceExplorerWindow {
             .iter()
             .any(|a| a.account_id == resource.account_id);
 
-        let region_matches = scope
-            .regions
-            .iter()
-            .any(|r| r.region_code == resource.region);
+        // True global resources (IAM, Route53, etc.) match any region in the scope
+        // Note: S3 buckets are NOT in this list - they now have their actual region
+        // and should be filtered by region like normal regional resources
+        let is_true_global_resource = resource.region == "Global"
+            && resource.resource_type != "AWS::S3::Bucket";
+
+        let region_matches = is_true_global_resource
+            || scope
+                .regions
+                .iter()
+                .any(|r| r.region_code == resource.region);
 
         let resource_type_matches = scope
             .resource_types
@@ -3403,6 +3416,7 @@ impl ResourceExplorerWindow {
         cache: &HashMap<String, Vec<ResourceEntry>>,
     ) {
         let mut refreshed_resources = Vec::new();
+
         for cached_entries in cache.values() {
             for resource in cached_entries {
                 if Self::resource_matches_scope(resource, &state.query_scope) {
@@ -3428,6 +3442,8 @@ impl ResourceExplorerWindow {
         aws_client: Arc<AWSResourceClient>,
     ) {
         let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
+
+        // Only enrich resources that are visible (in state.resources, filtered by selected regions)
         let resources_to_enrich: Vec<_> = state
             .resources
             .iter()
@@ -3454,9 +3470,17 @@ impl ResourceExplorerWindow {
         let phase2_generation = state.phase2_generation;
         let cache_for_phase2 = Arc::new(tokio::sync::RwLock::new(state.cached_queries.clone()));
 
+        // Debug: log cache keys and resources at Phase 2 start
+        let cache_keys: Vec<_> = state.cached_queries.keys().cloned().collect();
+        let s3_resources_with_details: usize = state.resources.iter()
+            .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+            .count();
+
         tracing::info!(
-            "🔄 Starting Phase 2 enrichment for {} resources",
-            resources_to_enrich.len()
+            "🔄 Starting Phase 2 enrichment for {} resources (cache keys: {:?}, S3 with details: {})",
+            resources_to_enrich.len(),
+            cache_keys,
+            s3_resources_with_details
         );
 
         std::thread::spawn(move || {
@@ -3530,10 +3554,32 @@ impl ResourceExplorerWindow {
                         }
 
                         if let Some(cache) = updated_cache {
+                            // Debug: Check cache before sync
+                            let s3_cache_key = cache.keys().find(|k| k.contains("S3::Bucket"));
+                            let s3_with_details_in_cache = s3_cache_key.map(|key| {
+                                cache.get(key).map(|resources| {
+                                    resources.iter().filter(|r| r.detailed_properties.is_some()).count()
+                                }).unwrap_or(0)
+                            }).unwrap_or(0);
+                            tracing::debug!(
+                                "Phase 2 sync: S3 cache key: {:?}, resources with details: {}",
+                                s3_cache_key,
+                                s3_with_details_in_cache
+                            );
+
                             s.cached_queries = cache;
                             let cached_queries = s.cached_queries.clone();
                             Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
                             s.enrichment_version = s.enrichment_version.wrapping_add(1);
+
+                            // Debug: Check state.resources after sync
+                            let s3_with_details_in_state = s.resources.iter()
+                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+                                .count();
+                            tracing::info!(
+                                "✅ Phase 2 enrichment completed: {} S3 buckets with detailed_properties in state.resources",
+                                s3_with_details_in_state
+                            );
 
                             s.phase2_enrichment_in_progress = false;
                             s.phase2_enrichment_completed = true;
