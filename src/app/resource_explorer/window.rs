@@ -1591,7 +1591,24 @@ impl ResourceExplorerWindow {
                 state.show_filter_builder = true;
             }
             if advanced_count > 0 {
-                ui.label(egui::RichText::new(format!("({} active)", advanced_count)).small());
+                let filter_text = if advanced_count == 1 {
+                    "(1 filter active)".to_string()
+                } else {
+                    format!("({} filters active)", advanced_count)
+                };
+                // Bright red text on light yellow background for visibility
+                let label = egui::Label::new(
+                    egui::RichText::new(filter_text)
+                        .color(egui::Color32::from_rgb(200, 40, 40))
+                        .strong()
+                );
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(255, 255, 200))
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .corner_radius(3.0)
+                    .show(ui, |ui| {
+                        ui.add(label);
+                    });
             }
 
             ui.add_space(4.0);
@@ -1601,7 +1618,24 @@ impl ResourceExplorerWindow {
                 state.show_property_filter_builder = true;
             }
             if property_filter_count > 0 {
-                ui.label(egui::RichText::new(format!("({} active)", property_filter_count)).small());
+                let filter_text = if property_filter_count == 1 {
+                    "(1 filter active)".to_string()
+                } else {
+                    format!("({} filters active)", property_filter_count)
+                };
+                // Bright red text on light yellow background for visibility
+                let label = egui::Label::new(
+                    egui::RichText::new(filter_text)
+                        .color(egui::Color32::from_rgb(200, 40, 40))
+                        .strong()
+                );
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(255, 255, 200))
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .corner_radius(3.0)
+                    .show(ui, |ui| {
+                        ui.add(label);
+                    });
             }
 
             ui.add_space(4.0);
@@ -3061,14 +3095,6 @@ impl ResourceExplorerWindow {
                             let resource_type = result.resource_type.clone();
                             match result.resources {
                                 Ok(resources) => {
-                                    tracing::info!(
-                                        "Received {} resources for {}:{}:{}",
-                                        resources.len(),
-                                        result.account_id,
-                                        result.region,
-                                        resource_type
-                                    );
-
                                     {
                                         let mut all_res = all_resources_clone.lock().await;
                                         all_res.extend(resources);
@@ -3154,8 +3180,8 @@ impl ResourceExplorerWindow {
 
                             state.update_tag_popularity();
 
-                            tracing::info!(
-                                "✅ Parallel query completed: {} total resources after filtering (loading tasks remaining: {})",
+                            tracing::debug!(
+                                "Parallel query completed: {} total resources after filtering (loading tasks remaining: {})",
                                 state.resources.len(),
                                 state.loading_task_count()
                             );
@@ -3502,6 +3528,45 @@ impl ResourceExplorerWindow {
         state.resources = refreshed_resources;
     }
 
+    /// Sync detailed_properties from cache to existing resources in-place.
+    /// This does NOT trigger a tree rebuild - only updates property data.
+    /// Used during Phase 2 progress updates to avoid UI disruption.
+    fn sync_detailed_properties_from_cache(
+        state: &mut ResourceExplorerState,
+        cache: &HashMap<String, Vec<ResourceEntry>>,
+    ) {
+        // Build a lookup map from cache for O(1) access
+        let mut cache_lookup: HashMap<(String, String, String, String), &ResourceEntry> =
+            HashMap::new();
+        for entries in cache.values() {
+            for entry in entries {
+                let key = (
+                    entry.account_id.clone(),
+                    entry.region.clone(),
+                    entry.resource_id.clone(),
+                    entry.resource_type.clone(),
+                );
+                cache_lookup.insert(key, entry);
+            }
+        }
+
+        // Update detailed_properties in-place on existing resources
+        for resource in &mut state.resources {
+            let key = (
+                resource.account_id.clone(),
+                resource.region.clone(),
+                resource.resource_id.clone(),
+                resource.resource_type.clone(),
+            );
+            if let Some(cached) = cache_lookup.get(&key) {
+                if cached.detailed_properties.is_some() && resource.detailed_properties.is_none() {
+                    resource.detailed_properties = cached.detailed_properties.clone();
+                    resource.detailed_timestamp = cached.detailed_timestamp;
+                }
+            }
+        }
+    }
+
     fn maybe_start_phase2_enrichment(&self, state: &mut ResourceExplorerState) {
         let Some(aws_client) = self.aws_client.clone() else {
             return;
@@ -3644,7 +3709,17 @@ impl ResourceExplorerWindow {
                             s.cached_queries = cache;
                             let cached_queries = s.cached_queries.clone();
                             Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
-                            s.enrichment_version = s.enrichment_version.wrapping_add(1);
+                            // Force tree rebuild at completion to show final data
+                            s.increment_enrichment_version_force();
+
+                            // Debug: Check state.resources after sync
+                            let s3_with_details_in_state = s.resources.iter()
+                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+                                .count();
+                            tracing::info!(
+                                "✅ Phase 2 enrichment completed: {} S3 buckets with detailed_properties in state.resources",
+                                s3_with_details_in_state
+                            );
 
                             // Debug: Check state.resources after sync
                             let s3_with_details_in_state = s.resources.iter()
@@ -3678,7 +3753,8 @@ impl ResourceExplorerWindow {
                             s.cached_queries = cache;
                             let cached_queries = s.cached_queries.clone();
                             Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
-                            s.enrichment_version = s.enrichment_version.wrapping_add(1);
+                            // NO enrichment_version increment - data syncs but no tree rebuild
+                            // Tree structure is the same, only detailed_properties change
                         }
                     }
                 }
@@ -3703,7 +3779,8 @@ impl ResourceExplorerWindow {
                     s.cached_queries = updated_cache;
                     let cached_queries = s.cached_queries.clone();
                     Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
-                    s.enrichment_version = s.enrichment_version.wrapping_add(1);
+                    // Force tree rebuild at cleanup to show final data
+                    s.increment_enrichment_version_force();
 
                     s.phase2_enrichment_in_progress = false;
                     s.phase2_enrichment_completed = true;

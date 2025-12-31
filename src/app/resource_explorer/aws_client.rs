@@ -463,13 +463,6 @@ impl AWSResourceClient {
             .get(resource_type, resource_id, account, region)
             .await
         {
-            tracing::debug!(
-                "Tag cache hit for {}: {} in {}/{}",
-                resource_type,
-                resource_id,
-                account,
-                region
-            );
             return Ok(cached_tags);
         }
 
@@ -519,10 +512,25 @@ impl AWSResourceClient {
             "AWS::S3::Bucket" => {
                 tagging_service.get_s3_bucket_tags(account, region, resource_id).await?
             }
-            "AWS::Lambda::Function"
-            | "AWS::Lambda::EventSourceMapping"
-            | "AWS::Lambda::LayerVersion" => {
-                tagging_service.get_lambda_tags(account, region, resource_id).await?
+            "AWS::Lambda::Function" => {
+                // Lambda list_tags requires full ARN, not just function name
+                let arn = format!("arn:aws:lambda:{}:{}:function:{}", region, account, resource_id);
+                tagging_service.get_lambda_tags(account, region, &arn).await?
+            }
+            "AWS::Lambda::EventSourceMapping" => {
+                // Event source mapping ARN format
+                let arn = format!("arn:aws:lambda:{}:{}:event-source-mapping:{}", region, account, resource_id);
+                tagging_service.get_lambda_tags(account, region, &arn).await?
+            }
+            "AWS::Lambda::LayerVersion" => {
+                // Layer version - resource_id should already be ARN or we construct it
+                if resource_id.starts_with("arn:") {
+                    tagging_service.get_lambda_tags(account, region, resource_id).await?
+                } else {
+                    // resource_id might be layer:version format
+                    let arn = format!("arn:aws:lambda:{}:{}:layer:{}", region, account, resource_id);
+                    tagging_service.get_lambda_tags(account, region, &arn).await?
+                }
             }
             "AWS::IAM::User" => {
                 tagging_service.get_iam_user_tags(account, region, resource_id).await?
@@ -745,6 +753,49 @@ impl AWSResourceClient {
             // XRay - construct ARN and use universal API
             "AWS::XRay::SamplingRule" => {
                 let arn = format!("arn:aws:xray:{}:{}:sampling-rule/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // CodeBuild - construct ARN from project name
+            "AWS::CodeBuild::Project" => {
+                let arn = format!("arn:aws:codebuild:{}:{}:project/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // SSM Parameter - construct ARN from parameter name
+            "AWS::SSM::Parameter" => {
+                // SSM parameter names can start with / or not, ARN format handles both
+                let param_path = if resource_id.starts_with('/') {
+                    resource_id.to_string()
+                } else {
+                    format!("/{}", resource_id)
+                };
+                let arn = format!("arn:aws:ssm:{}:{}:parameter{}", region, account, param_path);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // SSM Document - construct ARN from document name
+            "AWS::SSM::Document" => {
+                let arn = format!("arn:aws:ssm:{}:{}:document/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // CloudWatch Logs - construct ARN from log group name
+            "AWS::Logs::LogGroup" => {
+                // Log group names can contain / and special characters
+                let arn = format!("arn:aws:logs:{}:{}:log-group:{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // Cognito Identity Pool - construct ARN from pool ID
+            "AWS::Cognito::IdentityPool" => {
+                // Identity pool ID format: region:guid
+                let arn = format!("arn:aws:cognito-identity:{}:{}:identitypool/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // Cognito User Pool - construct ARN from pool ID
+            "AWS::Cognito::UserPool" => {
+                let arn = format!("arn:aws:cognito-idp:{}:{}:userpool/{}", region, account, resource_id);
+                tagging_service.get_tags_for_arn(account, region, &arn).await?
+            }
+            // CodeCommit - construct ARN from repository name
+            "AWS::CodeCommit::Repository" => {
+                let arn = format!("arn:aws:codecommit:{}:{}:{}", region, account, resource_id);
                 tagging_service.get_tags_for_arn(account, region, &arn).await?
             }
             // Resources that explicitly don't support tagging - return empty immediately
@@ -1110,7 +1161,7 @@ impl AWSResourceClient {
                             let resources_result = match query_result {
                                 Ok(resources) => {
                                     let resource_count = resources.len();
-                                    info!(
+                                    tracing::debug!(
                                         "Parallel query completed: {} resources for {}",
                                         resource_count, cache_key_clone
                                     );
@@ -4223,23 +4274,19 @@ impl AWSResourceClient {
                 grouped.entry(key).or_default().push(resource);
             }
 
-            // Debug: log cache state at start
+            // Log summary of cache state at start (detailed per-key logging available at DEBUG level)
             {
                 let cache_read = cache.read().await;
-                for (key, resources) in cache_read.iter() {
-                    let with_details = resources.iter().filter(|r| r.detailed_properties.is_some()).count();
-                    tracing::info!(
-                        "Phase 2 START: Cache key '{}' has {} resources, {} with detailed_properties",
-                        key, resources.len(), with_details
-                    );
-                }
+                let total_resources: usize = cache_read.values().map(|r| r.len()).sum();
+                let total_with_details: usize = cache_read.values()
+                    .flat_map(|r| r.iter())
+                    .filter(|r| r.detailed_properties.is_some())
+                    .count();
+                tracing::info!(
+                    "Phase 2 START: {} cache keys, {} total resources, {} already enriched",
+                    cache_read.len(), total_resources, total_with_details
+                );
             }
-
-            tracing::info!(
-                "Phase 2: Grouped resources into {} cache keys: {:?}",
-                grouped.len(),
-                grouped.keys().collect::<Vec<_>>()
-            );
 
             let mut processed = 0;
             let mut updated_count = 0;
@@ -4343,22 +4390,19 @@ impl AWSResourceClient {
                 }
             }
 
-            // Debug: log cache state at end
+            // Log summary of cache state at end
             {
                 let cache_read = cache.read().await;
-                for (key, resources) in cache_read.iter() {
-                    let with_details = resources.iter().filter(|r| r.detailed_properties.is_some()).count();
-                    tracing::info!(
-                        "Phase 2 END: Cache key '{}' has {} resources, {} with detailed_properties",
-                        key, resources.len(), with_details
-                    );
-                }
+                let total_resources: usize = cache_read.values().map(|r| r.len()).sum();
+                let total_with_details: usize = cache_read.values()
+                    .flat_map(|r| r.iter())
+                    .filter(|r| r.detailed_properties.is_some())
+                    .count();
+                tracing::info!(
+                    "Phase 2 END: {} total resources, {} now enriched (processed={}, updated={}, failed={})",
+                    total_resources, total_with_details, processed, updated_count, failed_count
+                );
             }
-
-            tracing::info!(
-                "Phase 2 SUMMARY: processed={}, updated={}, failed={}",
-                processed, updated_count, failed_count
-            );
 
             // Send enrichment completed progress
             if let Some(ref sender) = progress_sender {

@@ -332,6 +332,11 @@ impl DashApp {
 
     /// Handle the agent manager window
     pub(super) fn handle_agent_manager_window(&mut self, ctx: &egui::Context) {
+        // Sync agent logging setting to agent manager window
+        if let Some(window) = &mut self.agent_manager_window {
+            window.set_agent_logging_enabled(self.agent_logging_enabled);
+        }
+
         // Check if window exists and is open before borrowing
         let is_open = self
             .agent_manager_window

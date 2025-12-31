@@ -10,6 +10,7 @@ pub enum MenuAction {
     None,
     ThemeChanged,
     NavigationStatusBarChanged,
+    AgentLoggingChanged,
     ShowComplianceDetails,
     ValidateCompliance,
     LoginAWS,
@@ -39,6 +40,7 @@ pub fn build_menu(
     ctx: &egui::Context,
     theme: &mut ThemeChoice,
     navigation_status_bar_settings: &mut NavigationStatusBarSettings,
+    agent_logging_enabled: &mut bool,
     project_info: Option<(String, String, String)>,
     log_window_open: &mut bool,
     resource_count: Option<usize>,
@@ -48,9 +50,11 @@ pub fn build_menu(
 ) -> MenuAction {
     let mut theme_changed = false;
     let mut navigation_status_bar_changed = false;
+    let mut agent_logging_changed = false;
     let mut menu_action = MenuAction::None;
     let original_theme = *theme;
     let original_status_bar_setting = *navigation_status_bar_settings;
+    let original_agent_logging = *agent_logging_enabled;
 
     // Dash menu with command palette items
     ui.menu_button("Dash", |ui| {
@@ -99,6 +103,17 @@ pub fn build_menu(
                 "Toggle the Vimium-like navigation status bar showing mode, keys, and hints",
             );
         }
+
+        ui.separator();
+
+        // Agent Logging toggle
+        let logging_response = ui.checkbox(agent_logging_enabled, "Agent Logging");
+        if logging_response.hovered() {
+            logging_response.on_hover_text(
+                "Enable CloudWatch Agent Logging for monitoring and evaluation. \
+                 Requires CloudWatch permissions in your AWS role.",
+            );
+        }
     });
 
     if original_theme != *theme {
@@ -108,6 +123,10 @@ pub fn build_menu(
     if original_status_bar_setting.show_status_bar != navigation_status_bar_settings.show_status_bar
     {
         navigation_status_bar_changed = true;
+    }
+
+    if original_agent_logging != *agent_logging_enabled {
+        agent_logging_changed = true;
     }
 
     // AWS login status indicator
@@ -168,6 +187,8 @@ pub fn build_menu(
         MenuAction::ThemeChanged
     } else if navigation_status_bar_changed {
         MenuAction::NavigationStatusBarChanged
+    } else if agent_logging_changed {
+        MenuAction::AgentLoggingChanged
     } else {
         MenuAction::None
     }

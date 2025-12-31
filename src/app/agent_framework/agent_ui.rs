@@ -19,10 +19,44 @@
 
 use egui::{RichText, ScrollArea, Ui};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::app::agent_framework::agent_instance::AgentInstance;
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationRole};
 use crate::app::agent_framework::status_display::ProcessingStatusWidget;
+
+/// Worker display info for inline rendering in conversation
+#[derive(Debug, Clone)]
+pub struct InlineWorkerDisplay {
+    /// Short description (e.g., "Finding S3 buckets")
+    pub short_description: String,
+    /// Currently running tool (if any)
+    pub current_tool: Option<String>,
+    /// Whether worker is still running
+    pub is_running: bool,
+    /// Whether worker succeeded (only valid when not running)
+    pub success: bool,
+    /// Path to worker's log file
+    pub log_path: Option<PathBuf>,
+    /// Total tokens used by this worker (cumulative across model calls)
+    pub total_tokens: u32,
+}
+
+/// Format token count with K/M suffixes for readability
+///
+/// - Under 1000: "234" (no suffix)
+/// - 1K to 999K: "1.2K", "45.6K" (one decimal)
+/// - 1M+: "1.2M", "0.8M" (one decimal)
+fn format_tokens(tokens: u32) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
+}
 
 /// Check if content appears to be markdown
 ///
@@ -56,14 +90,19 @@ fn looks_like_markdown(content: &str) -> bool {
 /// - Maintains per-agent scroll position
 /// - Fixed input area at bottom
 ///
-/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked)` tuple
+/// Parameters:
+/// - `inline_workers`: Optional map of message_index -> workers to display inline after each message
+///
+/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked, worker_log_clicked)`
+/// where `worker_log_clicked` is the log path if a worker's log button was clicked
 pub fn render_agent_chat(
     ui: &mut Ui,
     agent: &mut AgentInstance,
     input_text: &mut String,
     markdown_cache: &mut CommonMarkCache,
     status_widget: &mut ProcessingStatusWidget,
-) -> (bool, bool, bool, bool, bool) {
+    inline_workers: Option<&HashMap<usize, Vec<InlineWorkerDisplay>>>,
+) -> (bool, bool, bool, bool, bool, Option<PathBuf>) {
     // Collect data before rendering to avoid holding locks during UI rendering
     let is_processing = agent.is_processing();
     let can_cancel = agent.can_cancel();
@@ -86,6 +125,9 @@ pub fn render_agent_chat(
     // Status: ~20px, Input (3 lines): ~70px, Buttons: ~30px, Separators: ~30px = ~150px total
     let conversation_max_height = ui.available_height() - 150.0;
 
+    // Track if a worker log button was clicked
+    let mut worker_log_clicked: Option<PathBuf> = None;
+
     // Scrollable conversation area with critical constraints + auto-scroll
     ScrollArea::vertical()
         .id_salt(("conversation_scroll", agent_id)) // Per-agent scroll position
@@ -94,8 +136,18 @@ pub fn render_agent_chat(
         .stick_to_bottom(true) // Auto-scroll to show latest messages
         .show(ui, |ui| {
             // No placeholder message - just show empty space when no messages
-            for message in &messages {
+            for (index, message) in messages.iter().enumerate() {
                 render_message(ui, message, markdown_cache);
+
+                // Render inline workers that were spawned by this message
+                if let Some(workers_map) = inline_workers {
+                    if let Some(workers) = workers_map.get(&index) {
+                        if let Some(clicked_path) = render_inline_workers(ui, workers) {
+                            worker_log_clicked = Some(clicked_path);
+                        }
+                    }
+                }
+
                 ui.add_space(1.0);
             }
         });
@@ -179,17 +231,77 @@ pub fn render_agent_chat(
         })
         .inner;
 
-    (should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked)
+    (
+        should_send,
+        log_clicked,
+        clear_clicked,
+        terminate_clicked,
+        stop_clicked,
+        worker_log_clicked,
+    )
+}
+
+/// Render inline workers for a specific message
+///
+/// Returns the log path if a worker's Log button was clicked.
+fn render_inline_workers(ui: &mut Ui, workers: &[InlineWorkerDisplay]) -> Option<PathBuf> {
+    let mut log_to_open: Option<PathBuf> = None;
+
+    for worker in workers {
+        ui.horizontal(|ui| {
+            // Format token count for display
+            let token_str = format_tokens(worker.total_tokens);
+
+            // Status indicator and description with token count
+            let status_text = if worker.is_running {
+                if let Some(tool) = &worker.current_tool {
+                    // Running with tool: "Finding S3 buckets > execute_javascript (1.2K)"
+                    format!("  {} > {} ({})", worker.short_description, tool, token_str)
+                } else {
+                    // Running, waiting: "Finding S3 buckets ... (45.6K)"
+                    format!("  {} ... ({})", worker.short_description, token_str)
+                }
+            } else {
+                // Completed: "Finding S3 buckets (done, 0.8M)"
+                let status = if worker.success { "done" } else { "failed" };
+                format!("  {} ({}, {})", worker.short_description, status, token_str)
+            };
+
+            // Use subtle color for workers
+            let color = if worker.is_running {
+                egui::Color32::GRAY
+            } else if worker.success {
+                egui::Color32::from_rgb(100, 160, 100) // Subtle green
+            } else {
+                egui::Color32::from_rgb(180, 100, 100) // Subtle red
+            };
+
+            ui.label(RichText::new(&status_text).color(color).small());
+
+            // Log button
+            if let Some(log_path) = &worker.log_path {
+                if ui.small_button("Log").clicked() {
+                    log_to_open = Some(log_path.clone());
+                }
+            }
+        });
+    }
+
+    log_to_open
 }
 
 /// Render a single message
 ///
-/// User messages are rendered as plain text with a ">" prefix.
+/// User messages are rendered as plain text with a ">" prefix, preceded by an empty line.
 /// Assistant messages are rendered as markdown if they contain markdown patterns,
 /// otherwise as plain text.
 fn render_message(ui: &mut Ui, message: &ConversationMessage, cache: &mut CommonMarkCache) {
     match message.role {
         ConversationRole::User => {
+            // Add empty line before user messages for visual separation
+            ui.add_space(8.0);
+            ui.label("");
+
             // User message - with visual anchor, theme-adaptive color
             // Use ">" as visual anchor (egui has very limited emoji support)
             let strong_color = ui.visuals().strong_text_color();
@@ -227,5 +339,34 @@ mod tests {
 
         let assistant_msg = ConversationMessage::assistant("Hi there!");
         assert_eq!(assistant_msg.role, ConversationRole::Assistant);
+    }
+
+    #[test]
+    fn test_format_tokens_under_thousand() {
+        // Under 1000: no suffix
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(1), "1");
+        assert_eq!(format_tokens(234), "234");
+        assert_eq!(format_tokens(999), "999");
+    }
+
+    #[test]
+    fn test_format_tokens_thousands() {
+        // 1K to 999K: one decimal with K suffix
+        assert_eq!(format_tokens(1000), "1.0K");
+        assert_eq!(format_tokens(1200), "1.2K");
+        assert_eq!(format_tokens(1234), "1.2K"); // rounds down
+        assert_eq!(format_tokens(45600), "45.6K");
+        assert_eq!(format_tokens(100000), "100.0K");
+        assert_eq!(format_tokens(999999), "1000.0K"); // edge case near million
+    }
+
+    #[test]
+    fn test_format_tokens_millions() {
+        // 1M+: one decimal with M suffix
+        assert_eq!(format_tokens(1_000_000), "1.0M");
+        assert_eq!(format_tokens(1_200_000), "1.2M");
+        assert_eq!(format_tokens(45_600_000), "45.6M");
+        assert_eq!(format_tokens(100_000_000), "100.0M");
     }
 }

@@ -565,6 +565,13 @@ pub struct AwsIdentityCenter {
     #[serde(skip)]
     pub default_role_credentials: Option<AwsCredentials>,
 
+    /// Account ID used for the default role credentials.
+    ///
+    /// Tracks which AWS account the default role credentials belong to.
+    /// Used for debugging and telemetry configuration.
+    #[serde(skip)]
+    pub default_role_account_id: Option<String>,
+
     /// Account ID of the AWS Organizations management account.
     ///
     /// When identified, this account is preferred for default role operations
@@ -650,6 +657,7 @@ impl AwsIdentityCenter {
             client_name: format!("awsdash-{}", uuid::Uuid::new_v4()),
             token_expiration: None,
             default_role_credentials: None,
+            default_role_account_id: None,
             sso_management_account_id: None,
             infrastructure_info: None,
             cloudformation_deployment_role_name: None,
@@ -772,6 +780,7 @@ impl AwsIdentityCenter {
         self.last_refresh = None;
         self.token_expiration = None;
         self.default_role_credentials = None;
+        self.default_role_account_id = None;
         self.sso_management_account_id = None;
     }
 
@@ -814,6 +823,7 @@ impl AwsIdentityCenter {
         self.client_id = None;
         self.client_secret = None;
         self.default_role_credentials = None;
+        self.default_role_account_id = None;
         Ok(())
     }
 
@@ -935,13 +945,53 @@ impl AwsIdentityCenter {
                 // Get credentials for this account and the default role
                 let credentials = self.get_account_credentials(&account_id, &default_role)?;
 
-                // Store these credentials as the default
+                // Store these credentials as the default (temporarily)
                 self.default_role_credentials = Some(credentials.clone());
+                self.default_role_account_id = Some(account_id.clone());
 
                 // Now try to identify the SSO management account using Organizations API
                 let _ = self.identify_sso_management_account();
 
-                info!("Successfully obtained default role credentials");
+                // If we identified a different SSO management account that has the default role,
+                // switch to using that account's credentials for consistency (especially for telemetry)
+                if let Some(management_account_id) = self.sso_management_account_id.clone() {
+                    if management_account_id != account_id {
+                        // Check if the management account has the default role
+                        let management_has_role = self
+                            .available_roles
+                            .get(&management_account_id)
+                            .is_some_and(|roles| roles.contains(&self.default_role_name));
+
+                        if management_has_role {
+                            info!(
+                                "Switching from account {} to SSO management account {} for default role",
+                                account_id, management_account_id
+                            );
+                            // Get credentials for the SSO management account instead
+                            let default_role = self.default_role_name.clone();
+                            match self.get_account_credentials(&management_account_id, &default_role) {
+                                Ok(mgmt_credentials) => {
+                                    self.default_role_credentials = Some(mgmt_credentials.clone());
+                                    self.default_role_account_id = Some(management_account_id.clone());
+                                    info!(
+                                        "Successfully obtained default role credentials for SSO management account {}",
+                                        management_account_id
+                                    );
+                                    return Ok(mgmt_credentials);
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to get credentials for SSO management account {}, using original account {}: {}",
+                                        management_account_id, account_id, e
+                                    );
+                                    // Fall through to use original credentials
+                                }
+                            }
+                        }
+                    }
+                }
+
+                info!("Successfully obtained default role credentials for account {}", account_id);
                 Ok(credentials)
             }
             None => {
@@ -953,6 +1003,14 @@ impl AwsIdentityCenter {
                 Err(error_message)
             }
         }
+    }
+
+    /// Get the account ID used for default role credentials.
+    ///
+    /// Returns the AWS account ID that the current default role credentials
+    /// belong to. Useful for debugging and telemetry configuration.
+    pub fn get_selected_account_id(&self) -> Option<String> {
+        self.default_role_account_id.clone()
     }
 
     /// Initiate OAuth 2.0 device authorization flow with AWS SSO OIDC.
@@ -2186,26 +2244,7 @@ impl AwsIdentityCenter {
                 }
             };
 
-            // Log the decoded policy in pretty JSON format for troubleshooting
-            match serde_json::from_str::<serde_json::Value>(&decoded_policy) {
-                Ok(json_value) => {
-                    match serde_json::to_string_pretty(&json_value) {
-                        Ok(pretty_json) => {
-                            info!("Downloaded policy document (pretty JSON):\n{}", pretty_json);
-                        }
-                        Err(e) => {
-                            info!("Failed to pretty print policy JSON: {}", e);
-                            info!("Raw decoded policy: {}", decoded_policy);
-                        }
-                    }
-                }
-                Err(e) => {
-                    info!("Failed to parse policy as JSON: {}", e);
-                    info!("Raw decoded policy: {}", decoded_policy);
-                }
-            }
-
-            info!("Analyzing policy for CloudFormation PassRole statements");
+            tracing::debug!("Analyzing policy for CloudFormation PassRole statements");
 
             // Parse the policy JSON to find CloudFormation deployment role
             let policy_json: serde_json::Value = serde_json::from_str(&decoded_policy)
@@ -2213,9 +2252,8 @@ impl AwsIdentityCenter {
 
             // Look for PassRole statements with CloudFormation condition
             if let Some(statements) = policy_json.get("Statement").and_then(|s| s.as_array()) {
-                info!("Found {} policy statements to analyze", statements.len());
+                tracing::debug!("Found {} policy statements to analyze", statements.len());
                 for (i, statement) in statements.iter().enumerate() {
-                    info!("Analyzing statement {}: {:?}", i, statement);
                     // Check if this is a PassRole statement
                     if let Some(actions) = statement.get("Action") {
                         let is_pass_role = if let Some(action_str) = actions.as_str() {
@@ -2227,7 +2265,7 @@ impl AwsIdentityCenter {
                         };
 
                         if is_pass_role {
-                            info!("Found PassRole action in statement {}", i);
+                            tracing::debug!("Found PassRole action in statement {}", i);
                             // Check for CloudFormation condition
                             if let Some(condition) = statement.get("Condition")
                                 .and_then(|c| c.get("StringEquals"))
@@ -2242,7 +2280,7 @@ impl AwsIdentityCenter {
                                 };
 
                                 if is_cloudformation {
-                                    info!("Found CloudFormation condition in PassRole statement {}", i);
+                                    tracing::debug!("Found CloudFormation condition in PassRole statement {}", i);
                                     // Extract the role ARN from Resource
                                     if let Some(resource) = statement.get("Resource") {
                                         let role_arn = if let Some(resource_str) = resource.as_str() {

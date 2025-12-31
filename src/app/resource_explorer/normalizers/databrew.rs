@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 
 use super::AsyncResourceNormalizer;
 use crate::app::resource_explorer::state::*;
+use crate::app::resource_explorer::{assign_account_color, assign_region_color};
 
 pub struct DataBrewJobNormalizer;
 
@@ -52,8 +53,8 @@ impl AsyncResourceNormalizer for DataBrewJobNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::from_rgb(100, 150, 200),
-            region_color: egui::Color32::from_rgb(200, 150, 100),
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
             query_timestamp,
         };
 
@@ -132,8 +133,8 @@ impl AsyncResourceNormalizer for DataBrewDatasetNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::from_rgb(100, 150, 200),
-            region_color: egui::Color32::from_rgb(200, 150, 100),
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
             query_timestamp,
         };
 

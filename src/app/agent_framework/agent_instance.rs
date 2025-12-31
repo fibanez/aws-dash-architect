@@ -572,9 +572,11 @@ impl AgentInstance {
     fn create_stood_agent(
         &self,
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
+        agent_logging_enabled: bool,
     ) -> Result<stood::agent::Agent, String> {
         use stood::agent::{Agent, EventLoopConfig};
         use stood::llm::Bedrock;
+        use stood::telemetry::{AwsCredentialSource, TelemetryConfig};
 
         // Get AWS credentials
         let creds = aws_identity
@@ -585,6 +587,45 @@ impl AgentInstance {
         let secret_key = creds.secret_access_key;
         let session_token = creds.session_token;
         let region = "us-east-1".to_string();
+
+        // Determine agent naming
+        let (agent_type_name, agent_name) = match &self.agent_type {
+            AgentType::TaskManager => ("manager", "awsdash-manager"),
+            AgentType::TaskWorker { .. } => ("worker", "awsdash-worker"),
+        };
+        let agent_id = format!("awsdash-{}-{}", agent_type_name, self.id);
+
+        // Configure telemetry programmatically (no environment variables)
+        let telemetry_config = if agent_logging_enabled {
+            // Log which account is being used for telemetry
+            if let Some(account_id) = aws_identity.get_selected_account_id() {
+                tracing::info!(
+                    "Agent Logging enabled for account: {}, region: {}",
+                    account_id,
+                    region
+                );
+            }
+            TelemetryConfig::cloudwatch(&region)
+                .with_service_name("awsdash")
+                .with_agent_id(&agent_id)
+                .with_content_capture(true) // Enable content capture for debugging
+                .with_credentials(AwsCredentialSource::Explicit {
+                    access_key_id: access_key.clone(),
+                    secret_access_key: secret_key.clone(),
+                    session_token: session_token.clone(),
+                })
+        } else {
+            TelemetryConfig::disabled()
+        };
+
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!(
+                "Telemetry config: enabled={}, agent_id={}",
+                telemetry_config.is_enabled(),
+                agent_id
+            ),
+        );
 
         // Set global credentials for execute_javascript tool
         crate::app::agent_framework::set_global_aws_credentials(
@@ -633,9 +674,13 @@ impl AgentInstance {
 
         // Build agent with selected model (match on enum to get concrete type)
         // Enable cancellation support for all models
+        // Include agent naming and telemetry for CloudWatch Gen AI Observability
         use crate::app::agent_framework::AgentModel;
         let agent_builder = match self.metadata.model {
             AgentModel::ClaudeSonnet45 => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeSonnet45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
@@ -649,6 +694,9 @@ impl AgentInstance {
                 )
                 .tools(tools),
             AgentModel::ClaudeHaiku45 => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeHaiku45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
@@ -662,6 +710,9 @@ impl AgentInstance {
                 )
                 .tools(self.get_tools_for_type()),
             AgentModel::ClaudeOpus45 => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeOpus45)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
@@ -675,6 +726,9 @@ impl AgentInstance {
                 )
                 .tools(self.get_tools_for_type()),
             AgentModel::NovaPro => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::NovaPro)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
@@ -688,6 +742,9 @@ impl AgentInstance {
                 )
                 .tools(self.get_tools_for_type()),
             AgentModel::NovaLite => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::NovaLite)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
@@ -700,6 +757,19 @@ impl AgentInstance {
                     region.clone(),
                 )
                 .tools(self.get_tools_for_type()),
+        };
+
+        // For TaskWorker agents, add callback handler to capture tool events
+        // and forward them to the UI for inline progress display
+        let agent_builder = if let AgentType::TaskWorker { parent_id } = &self.agent_type {
+            use crate::app::agent_framework::WorkerProgressCallbackHandler;
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Adding worker progress callback handler",
+            );
+            agent_builder.with_callback_handler(WorkerProgressCallbackHandler::new(self.id, *parent_id))
+        } else {
+            agent_builder
         };
 
         let agent = self
@@ -1049,8 +1119,9 @@ Query result presentation:
     pub fn initialize(
         &mut self,
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
+        agent_logging_enabled: bool,
     ) -> Result<(), String> {
-        let agent = self.create_stood_agent(aws_identity)?;
+        let agent = self.create_stood_agent(aws_identity, agent_logging_enabled)?;
 
         // Capture the cancellation token for Stop button support
         self.cancel_token = agent.cancellation_token();

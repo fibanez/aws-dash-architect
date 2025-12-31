@@ -89,6 +89,9 @@ pub struct AgentCreationRequest {
     /// Unique ID for this request (for matching response)
     pub request_id: u64,
 
+    /// Short description for UI display (3-5 words)
+    pub short_description: String,
+
     /// Task description to send to the worker
     pub task_description: String,
 
@@ -115,6 +118,7 @@ pub struct AgentCreationResponse {
 impl AgentCreationRequest {
     /// Create a new agent creation request
     pub fn new(
+        short_description: String,
         task_description: String,
         expected_output_format: Option<String>,
         parent_id: AgentId,
@@ -127,6 +131,7 @@ impl AgentCreationRequest {
 
         let request = Self {
             request_id,
+            short_description,
             task_description,
             expected_output_format,
             parent_id,
@@ -161,12 +166,13 @@ impl AgentCreationResponse {
 /// This is a convenience function that tools can use to request agent creation.
 /// It blocks until the response is received.
 pub fn request_agent_creation(
+    short_description: String,
     task_description: String,
     expected_output_format: Option<String>,
     parent_id: AgentId,
 ) -> Result<AgentId, String> {
     let (request, response_receiver) =
-        AgentCreationRequest::new(task_description, expected_output_format, parent_id);
+        AgentCreationRequest::new(short_description, task_description, expected_output_format, parent_id);
 
     // Send the request
     get_agent_creation_sender()
@@ -195,9 +201,10 @@ mod tests {
     fn test_agent_creation_request_creation() {
         let parent_id = AgentId::new();
         let (request, _receiver) =
-            AgentCreationRequest::new("Test task".to_string(), Some("JSON".to_string()), parent_id);
+            AgentCreationRequest::new("Listing instances".to_string(), "Test task".to_string(), Some("JSON".to_string()), parent_id);
 
         assert!(request.request_id > 0);
+        assert_eq!(request.short_description, "Listing instances");
         assert_eq!(request.task_description, "Test task");
         assert_eq!(request.expected_output_format, Some("JSON".to_string()));
         assert_eq!(request.parent_id, parent_id);
@@ -230,12 +237,13 @@ mod tests {
 
         let parent_id = AgentId::new();
         let (request, _resp_receiver) =
-            AgentCreationRequest::new("Test".to_string(), None, parent_id);
+            AgentCreationRequest::new("Testing".to_string(), "Test".to_string(), None, parent_id);
 
         sender.send(request.clone()).unwrap();
         let received = receiver.lock().unwrap().try_recv().unwrap();
 
         assert_eq!(received.request_id, request.request_id);
+        assert_eq!(received.short_description, request.short_description);
         assert_eq!(received.task_description, request.task_description);
     }
 }

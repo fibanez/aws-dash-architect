@@ -637,6 +637,7 @@ pub struct ResourceExplorerState {
     pub phase2_generation: u64,              // Selection generation for Phase 2 cancellation
     // Tree cache invalidation
     pub enrichment_version: u64,             // Incremented each time resources are enriched (forces tree rebuild)
+    pub last_enrichment_rebuild: std::time::Instant, // Last time enrichment_version was incremented (for debouncing)
 }
 
 impl Default for ResourceExplorerState {
@@ -682,6 +683,7 @@ impl ResourceExplorerState {
             phase2_progress_total: 0,
             phase2_generation: 0,
             enrichment_version: 0,
+            last_enrichment_rebuild: std::time::Instant::now(),
         }
     }
 
@@ -800,6 +802,31 @@ impl ResourceExplorerState {
         self.phase2_current_service = service;
         self.phase2_progress_count = count;
         self.phase2_progress_total = total;
+    }
+
+    /// Debounce interval for tree rebuilds during Phase 2 enrichment (250ms)
+    pub const ENRICHMENT_DEBOUNCE_MS: u64 = 250;
+
+    /// Increment enrichment_version with debouncing to reduce UI flicker.
+    /// Returns true if the version was actually incremented.
+    /// During Phase 2, this limits tree rebuilds to at most once per 250ms.
+    pub fn increment_enrichment_version_debounced(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_enrichment_rebuild);
+        if elapsed.as_millis() >= Self::ENRICHMENT_DEBOUNCE_MS as u128 {
+            self.enrichment_version = self.enrichment_version.wrapping_add(1);
+            self.last_enrichment_rebuild = now;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Force increment enrichment_version (bypasses debounce).
+    /// Use for final updates where we must show the latest data.
+    pub fn increment_enrichment_version_force(&mut self) {
+        self.enrichment_version = self.enrichment_version.wrapping_add(1);
+        self.last_enrichment_rebuild = std::time::Instant::now();
     }
 
     pub fn add_account(&mut self, account: AccountSelection) {

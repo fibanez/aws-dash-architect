@@ -167,9 +167,14 @@ impl TreeBuilder {
         // Group by primary grouping (only parent resources)
         let primary_groups = Self::group_by_mode(&parent_resources, &primary_grouping);
 
-        for (primary_key, primary_resources) in primary_groups {
+        // Sort primary group keys for consistent ordering
+        let mut primary_keys: Vec<String> = primary_groups.keys().cloned().collect();
+        primary_keys.sort();
+
+        for primary_key in primary_keys {
+            let primary_resources = primary_groups.get(&primary_key).unwrap();
             let (primary_display, primary_color) =
-                Self::get_display_info(&primary_key, &primary_grouping, &primary_resources);
+                Self::get_display_info(&primary_key, &primary_grouping, primary_resources);
 
             // Create stable node ID for primary grouping
             let primary_node_id =
@@ -187,13 +192,18 @@ impl TreeBuilder {
             // Group resources by resource type if not already grouped by resource type
             if primary_grouping != GroupingMode::ByResourceType {
                 let resource_type_groups =
-                    Self::group_by_mode(&primary_resources, &GroupingMode::ByResourceType);
+                    Self::group_by_mode(primary_resources, &GroupingMode::ByResourceType);
 
-                for (resource_type_key, type_resources) in resource_type_groups {
+                // Sort resource type keys for consistent ordering
+                let mut type_keys: Vec<String> = resource_type_groups.keys().cloned().collect();
+                type_keys.sort();
+
+                for resource_type_key in type_keys {
+                    let type_resources = resource_type_groups.get(&resource_type_key).unwrap();
                     let (type_display, _) = Self::get_display_info(
                         &resource_type_key,
                         &GroupingMode::ByResourceType,
-                        &type_resources,
+                        type_resources,
                     );
 
                     // Create stable node ID for secondary resource type grouping
@@ -208,8 +218,10 @@ impl TreeBuilder {
                         NodeType::ResourceType,
                     );
 
-                    // Add individual resources
-                    for resource in &type_resources {
+                    // Add individual resources sorted by name
+                    let mut sorted_resources = type_resources.clone();
+                    Self::sort_resources_by_name(&mut sorted_resources);
+                    for resource in &sorted_resources {
                         type_node.add_resource(resource.clone());
                     }
 
@@ -221,9 +233,14 @@ impl TreeBuilder {
             } else {
                 // When grouping by resource type, create sub-nodes for account/region combinations
                 let account_region_groups =
-                    Self::group_resources_by_account_region(&primary_resources);
+                    Self::group_resources_by_account_region(primary_resources);
 
-                for ((account_id, region), account_region_resources) in account_region_groups {
+                // Sort account/region keys for consistent ordering
+                let mut ar_keys: Vec<(String, String)> = account_region_groups.keys().cloned().collect();
+                ar_keys.sort();
+
+                for (account_id, region) in ar_keys {
+                    let account_region_resources = account_region_groups.get(&(account_id.clone(), region.clone())).unwrap();
                     let sub_display = format!(
                         "{} - {} ({})",
                         account_id,
@@ -244,8 +261,10 @@ impl TreeBuilder {
                         sub_node = sub_node.with_color(first_resource.account_color);
                     }
 
-                    // Add individual resources to the sub-node
-                    for resource in &account_region_resources {
+                    // Add individual resources sorted by name
+                    let mut sorted_resources = account_region_resources.clone();
+                    Self::sort_resources_by_name(&mut sorted_resources);
+                    for resource in &sorted_resources {
                         sub_node.add_resource(resource.clone());
                     }
 
@@ -296,8 +315,13 @@ impl TreeBuilder {
                         .push(child.clone());
                 }
 
+                // Sort child group keys for consistent ordering
+                let mut child_type_keys: Vec<String> = child_groups.keys().cloned().collect();
+                child_type_keys.sort();
+
                 // For each child resource type, create a sub-node
-                for (child_type, child_resources) in child_groups {
+                for child_type in child_type_keys {
+                    let child_resources = child_groups.get(&child_type).unwrap();
                     let child_type_display = child_type
                         .strip_prefix("AWS::")
                         .and_then(|s| s.split("::").last())
@@ -314,8 +338,10 @@ impl TreeBuilder {
                         NodeType::ResourceType,
                     );
 
-                    // Add child resources to this node
-                    for child_resource in &child_resources {
+                    // Add child resources sorted by name
+                    let mut sorted_children = child_resources.clone();
+                    Self::sort_resources_by_name(&mut sorted_children);
+                    for child_resource in &sorted_children {
                         child_node.add_resource(child_resource.clone());
                     }
 
@@ -417,7 +443,12 @@ impl TreeBuilder {
                 let resource_type_groups =
                     Self::group_by_mode(group_resources, &GroupingMode::ByResourceType);
 
-                for (resource_type, type_resources) in resource_type_groups {
+                // Sort resource type keys for consistent ordering
+                let mut type_keys: Vec<String> = resource_type_groups.keys().cloned().collect();
+                type_keys.sort();
+
+                for resource_type in type_keys {
+                    let type_resources = resource_type_groups.get(&resource_type).unwrap();
                     let type_display = Self::resource_type_to_display_name(&resource_type);
                     let type_node_id = format!("{}:type:{}", tag_node.id, resource_type);
 
@@ -427,8 +458,10 @@ impl TreeBuilder {
                         NodeType::ResourceType,
                     );
 
-                    // Add individual resources
-                    for resource in &type_resources {
+                    // Add individual resources sorted by name
+                    let mut sorted_resources = type_resources.clone();
+                    Self::sort_resources_by_name(&mut sorted_resources);
+                    for resource in &sorted_resources {
                         type_node.add_resource(resource.clone());
                     }
 
@@ -535,7 +568,12 @@ impl TreeBuilder {
                 let resource_type_groups =
                     Self::group_by_mode(group_resources, &GroupingMode::ByResourceType);
 
-                for (resource_type, type_resources) in resource_type_groups {
+                // Sort resource type keys for consistent ordering
+                let mut type_keys: Vec<String> = resource_type_groups.keys().cloned().collect();
+                type_keys.sort();
+
+                for resource_type in type_keys {
+                    let type_resources = resource_type_groups.get(&resource_type).unwrap();
                     let type_display = Self::resource_type_to_display_name(&resource_type);
                     let type_node_id = format!("{}:type:{}", property_node.id, resource_type);
 
@@ -545,8 +583,10 @@ impl TreeBuilder {
                         NodeType::ResourceType,
                     );
 
-                    // Add resources to the type node
-                    for resource in type_resources {
+                    // Add resources sorted by name
+                    let mut sorted_resources = type_resources.clone();
+                    Self::sort_resources_by_name(&mut sorted_resources);
+                    for resource in &sorted_resources {
                         type_node.add_resource(resource.clone());
                     }
 
@@ -621,6 +661,14 @@ impl TreeBuilder {
         }
 
         groups
+    }
+
+    /// Sort resources by display name (case-insensitive)
+    /// Used within already-grouped resources for consistent ordering
+    fn sort_resources_by_name(resources: &mut [ResourceEntry]) {
+        resources.sort_by(|a, b| {
+            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+        });
     }
 
     fn get_display_info(
@@ -965,9 +1013,9 @@ impl TreeRenderer {
         }
     }
 
-    /// Get the expand level for a resource (default: 3)
+    /// Get the expand level for a resource (default: 1)
     fn get_expand_level(&self, resource_id: &str) -> u8 {
-        *self.json_expand_levels.get(resource_id).unwrap_or(&3)
+        *self.json_expand_levels.get(resource_id).unwrap_or(&1)
     }
 
     /// Get the search term for a resource
@@ -1277,7 +1325,12 @@ impl TreeRenderer {
         }
 
         // Build the resource name and ID for the colored tag
-        let resource_name_id = format!("{} ({})", resource.display_name, resource.resource_id);
+        // Skip duplicate ID in parenthesis when name equals ID
+        let resource_name_id = if resource.display_name == resource.resource_id {
+            resource.display_name.clone()
+        } else {
+            format!("{} ({})", resource.display_name, resource.resource_id)
+        };
 
         // Build status and age info to display separately after the tag
         let mut additional_info = Vec::new();
@@ -1375,10 +1428,10 @@ impl TreeRenderer {
                     }
                 });
 
-                // Render status and age information after the tag
+                // Render status and age information after the tag (20% smaller)
                 if !additional_info.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(additional_info.join(" "));
+                    ui.label(egui::RichText::new(additional_info.join(" ")).small());
                 }
 
                 // Render tag badges
@@ -1493,7 +1546,7 @@ impl TreeRenderer {
             // Expand All button
             if ui.small_button("Expand All").clicked() {
                 self.json_expand_levels
-                    .insert(resource_id_owned.clone(), 99);
+                    .insert(resource_id_owned.clone(), 9);
                 self.json_search_terms.remove(&resource_id_owned);
                 should_reset = true;
             }
@@ -1521,7 +1574,7 @@ impl TreeRenderer {
             ui.label(format!("L{}", current_level));
 
             if ui
-                .add_enabled(current_level < 20, egui::Button::new("+").small())
+                .add_enabled(current_level < 9, egui::Button::new("+").small())
                 .clicked()
             {
                 self.json_expand_levels
@@ -1789,9 +1842,19 @@ impl TreeRenderer {
         resource_type: &str,
         is_expanded: bool,
     ) -> egui::Response {
-        // Generate color based on resource type
-        let bg_color = super::colors::assign_resource_type_color(resource_type);
-        let text_color = get_contrasting_text_color(bg_color);
+        // Use theme-aware greyscale for resource names (reduces visual clutter)
+        // The service type short tag already provides color identification
+        let visuals = ui.visuals();
+        let bg_color = if visuals.dark_mode {
+            egui::Color32::from_gray(50) // Dark theme: dark grey background
+        } else {
+            egui::Color32::from_gray(220) // Light theme: light grey background
+        };
+        let text_color = if visuals.dark_mode {
+            egui::Color32::from_gray(200) // Dark theme: light text
+        } else {
+            egui::Color32::from_gray(40) // Light theme: dark text
+        };
 
         // Truncate display text if not expanded and exceeds max length
         let (display_text, is_truncated) =

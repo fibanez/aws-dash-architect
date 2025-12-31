@@ -24,6 +24,9 @@ pub struct StartTaskTool;
 /// Input schema for start-task tool
 #[derive(Debug, Deserialize, Serialize)]
 struct StartTaskInput {
+    /// Short description for UI display (3-5 words, e.g., "Listing EC2 instances")
+    short_description: String,
+
     /// High-level description of WHAT to accomplish
     task_description: String,
 
@@ -67,8 +70,17 @@ impl StartTaskTool {
     pub fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["task_description"],
+            "required": ["short_description", "task_description"],
             "properties": {
+                "short_description": {
+                    "type": "string",
+                    "description": "Very short description for UI display (3-5 words). This is shown to the user while the task runs.",
+                    "examples": [
+                        "Listing EC2 instances",
+                        "Checking S3 buckets",
+                        "Analyzing RDS databases"
+                    ]
+                },
                 "task_description": {
                     "type": "string",
                     "description": "High-level description of WHAT to accomplish (verb + subject + constraints). Do NOT specify implementation details.",
@@ -127,6 +139,13 @@ impl Tool for StartTaskTool {
                 message: format!("Failed to parse start_task input: {}", e),
             })?;
 
+        // Validate short_description not empty
+        if input.short_description.trim().is_empty() {
+            return Err(ToolError::InvalidParameters {
+                message: "short_description cannot be empty".to_string(),
+            });
+        }
+
         // Validate task description not empty
         if input.task_description.trim().is_empty() {
             return Err(ToolError::InvalidParameters {
@@ -143,13 +162,15 @@ impl Tool for StartTaskTool {
         tracing::info!(
             target: "agent::start_task",
             parent_id = %parent_id,
-            "start_task TOOL CALL:\n  Task Description: {}\n  Expected Output Format: {:?}",
+            "start_task TOOL CALL:\n  Short Description: {}\n  Task Description: {}\n  Expected Output Format: {:?}",
+            input.short_description,
             input.task_description,
             input.expected_output_format
         );
 
         // Request agent creation via channel
         let agent_id = request_agent_creation(
+            input.short_description.clone(),
             input.task_description.clone(),
             input.expected_output_format.clone(),
             parent_id,
@@ -235,7 +256,12 @@ mod tests {
         assert!(schema["required"]
             .as_array()
             .unwrap()
+            .contains(&json!("short_description")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
             .contains(&json!("task_description")));
+        assert!(schema["properties"]["short_description"].is_object());
         assert!(schema["properties"]["task_description"].is_object());
         assert!(schema["properties"]["expected_output_format"].is_object());
     }
@@ -255,6 +281,7 @@ mod tests {
 
         let tool = StartTaskTool::new();
         let input = json!({
+            "short_description": "Listing EC2 instances",
             "task_description": "List all EC2 instances in production"
         });
 
@@ -284,6 +311,7 @@ mod tests {
 
         let tool = StartTaskTool::new();
         let input = json!({
+            "short_description": "Finding S3 buckets",
             "task_description": "Find large S3 buckets",
             "expected_output_format": "JSON array with bucket name and size"
         });
@@ -296,9 +324,23 @@ mod tests {
     #[tokio::test]
     async fn test_start_task_empty_description_rejected() {
         let tool = StartTaskTool::new();
-        let input = json!({ "task_description": "" });
+        let input = json!({ "short_description": "Testing", "task_description": "" });
 
         // Empty description is caught before agent context is checked
+        let result = tool.execute(Some(input), None).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::InvalidParameters { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_start_task_empty_short_description_rejected() {
+        let tool = StartTaskTool::new();
+        let input = json!({ "short_description": "", "task_description": "Some task" });
+
+        // Empty short_description is caught before agent context is checked
         let result = tool.execute(Some(input), None).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -326,6 +368,7 @@ mod tests {
 
         let tool = StartTaskTool::new();
         let input = json!({
+            "short_description": "Test task",
             "task_description": "Test task"
         });
 

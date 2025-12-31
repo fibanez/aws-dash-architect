@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::resource_explorer::{assign_account_color, assign_region_color};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -61,8 +62,8 @@ impl AsyncResourceNormalizer for QuickSightDataSourceNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::GRAY,
-            region_color: egui::Color32::GRAY,
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
         };
 
         // Fetch tags (will be empty for resources that don't support tagging)
@@ -153,8 +154,8 @@ impl AsyncResourceNormalizer for QuickSightDashboardNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::GRAY,
-            region_color: egui::Color32::GRAY,
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
         };
 
         // Fetch tags (will be empty for resources that don't support tagging)
@@ -245,8 +246,8 @@ impl AsyncResourceNormalizer for QuickSightDataSetNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::GRAY,
-            region_color: egui::Color32::GRAY,
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
         };
 
         // Fetch tags (will be empty for resources that don't support tagging)

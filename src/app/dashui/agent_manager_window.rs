@@ -16,8 +16,8 @@ use super::agent_log_window::AgentLogWindow;
 use super::window_focus::FocusableWindow;
 use crate::app::agent_framework::{
     get_agent_creation_receiver, get_ui_event_receiver, render_agent_chat, AgentCreationRequest,
-    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, ProcessingStatusWidget,
-    StoodLogLevel,
+    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, InlineWorkerDisplay,
+    ProcessingStatusWidget, StoodLogLevel,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
 use eframe::egui;
@@ -40,60 +40,52 @@ struct TaskContext {
     _active_task_ids: Vec<AgentId>,
 }
 
-/// Worker tab metadata for auto-close behavior
-#[derive(Debug, Clone)]
-struct WorkerTabMetadata {
-    /// Completion timestamp (None if still running)
-    completed_at: Option<std::time::Instant>,
-    /// Last user interaction timestamp (for timer reset)
-    last_viewed_at: Option<std::time::Instant>,
-    /// Auto-close timer duration in seconds
-    auto_close_seconds: u32,
+/// Status of an inline worker message
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WorkerMessageStatus {
+    /// Worker is running
+    Running,
+    /// Worker completed (success or failure)
+    Completed { success: bool },
 }
 
-impl WorkerTabMetadata {
-    /// Create new metadata for a running worker
-    fn new() -> Self {
+/// Worker inline message for displaying progress in conversation flow
+#[derive(Debug, Clone)]
+struct WorkerInlineMessage {
+    /// Worker agent ID
+    worker_id: AgentId,
+    /// Parent agent ID (manager that spawned this worker)
+    parent_id: AgentId,
+    /// Short description for inline display
+    short_description: String,
+    /// Path to worker's log file
+    log_path: Option<std::path::PathBuf>,
+    /// Currently running tool (if any)
+    current_tool: Option<String>,
+    /// Worker status
+    status: WorkerMessageStatus,
+    /// Cumulative token usage from model calls
+    total_tokens: u32,
+}
+
+impl WorkerInlineMessage {
+    /// Create a new running worker message
+    fn new(worker_id: AgentId, parent_id: AgentId, short_description: String) -> Self {
         Self {
-            completed_at: None,
-            last_viewed_at: None,
-            auto_close_seconds: 30,
+            worker_id,
+            parent_id,
+            short_description,
+            log_path: None,
+            current_tool: None,
+            status: WorkerMessageStatus::Running,
+            total_tokens: 0,
         }
     }
 
-    /// Mark worker as completed
-    fn mark_completed(&mut self) {
-        self.completed_at = Some(std::time::Instant::now());
-    }
-
-    /// Update last viewed timestamp (resets timer)
-    fn mark_viewed(&mut self) {
-        self.last_viewed_at = Some(std::time::Instant::now());
-    }
-
-    /// Check if worker should be auto-closed
-    fn should_auto_close(&self) -> bool {
-        if let Some(completed_at) = self.completed_at {
-            let reference_time = self.last_viewed_at.unwrap_or(completed_at);
-            reference_time.elapsed().as_secs() >= self.auto_close_seconds as u64
-        } else {
-            false
-        }
-    }
-
-    /// Get remaining seconds until auto-close
-    fn remaining_seconds(&self) -> Option<u32> {
-        if let Some(completed_at) = self.completed_at {
-            let reference_time = self.last_viewed_at.unwrap_or(completed_at);
-            let elapsed = reference_time.elapsed().as_secs();
-            if elapsed < self.auto_close_seconds as u64 {
-                Some(self.auto_close_seconds - elapsed as u32)
-            } else {
-                Some(0)
-            }
-        } else {
-            None
-        }
+    /// Mark as completed
+    fn mark_completed(&mut self, success: bool) {
+        self.status = WorkerMessageStatus::Completed { success };
+        self.current_tool = None;
     }
 }
 
@@ -103,6 +95,9 @@ pub struct AgentManagerWindow {
     // AWS Identity for agent execution
     aws_identity: Option<Arc<Mutex<AwsIdentityCenter>>>,
 
+    // CloudWatch Agent Logging toggle (mirrors DashApp setting)
+    agent_logging_enabled: bool,
+
     // Selection state - which agent is displayed in right pane
     selected_agent_id: Option<AgentId>,
 
@@ -110,12 +105,9 @@ pub struct AgentManagerWindow {
     // When viewing a TaskManager, this determines which tab's conversation to display
     selected_tab_agent_id: Option<AgentId>,
 
-    // Worker tab metadata for auto-close timers
-    worker_tabs: HashMap<AgentId, WorkerTabMetadata>,
-
-    // Agent name editing (reserved for future use)
-    _editing_agent_name: Option<AgentId>,
-    _temp_agent_name: String,
+    // Agent name editing state
+    editing_agent_name: Option<AgentId>,
+    temp_agent_name: String,
 
     // Agent log viewer
     agent_log_window: AgentLogWindow,
@@ -141,6 +133,10 @@ pub struct AgentManagerWindow {
 
     // Processing status widgets (per-agent for animation state)
     status_widgets: HashMap<AgentId, ProcessingStatusWidget>,
+
+    // Inline worker messages keyed by conversation message index
+    // Maps message_index -> Vec<WorkerInlineMessage>
+    worker_inline_messages: HashMap<usize, Vec<WorkerInlineMessage>>,
 }
 
 impl Default for AgentManagerWindow {
@@ -154,11 +150,11 @@ impl AgentManagerWindow {
         Self {
             open: false,
             aws_identity: None,
+            agent_logging_enabled: true,
             selected_agent_id: None,
             selected_tab_agent_id: None,
-            worker_tabs: HashMap::new(),
-            _editing_agent_name: None,
-            _temp_agent_name: String::new(),
+            editing_agent_name: None,
+            temp_agent_name: String::new(),
             agent_log_window: AgentLogWindow::new(),
             agents: HashMap::new(),
             input_text: String::new(),
@@ -168,12 +164,18 @@ impl AgentManagerWindow {
             agent_creation_receiver: get_agent_creation_receiver(), // Agent creation channel
             markdown_cache: CommonMarkCache::default(),
             status_widgets: HashMap::new(),
+            worker_inline_messages: HashMap::new(),
         }
     }
 
     /// Set AWS Identity for agent execution
     pub fn set_aws_identity(&mut self, aws_identity: Arc<Mutex<AwsIdentityCenter>>) {
         self.aws_identity = Some(aws_identity);
+    }
+
+    /// Set agent logging enabled state (synced from DashApp)
+    pub fn set_agent_logging_enabled(&mut self, enabled: bool) {
+        self.agent_logging_enabled = enabled;
     }
 
     /// Select an agent to display in the right pane
@@ -191,17 +193,6 @@ impl AgentManagerWindow {
     /// Get the currently selected agent
     pub fn get_selected_agent(&self) -> Option<AgentId> {
         self.selected_agent_id
-    }
-
-    /// Get all worker agents for a given TaskManager parent
-    fn get_workers_for_manager(&self, manager_id: AgentId) -> Vec<AgentId> {
-        self.agents
-            .iter()
-            .filter(|(_, agent)| {
-                matches!(agent.agent_type(), AgentType::TaskWorker { parent_id } if parent_id == manager_id)
-            })
-            .map(|(id, _)| *id)
-            .collect()
     }
 
     pub fn open(&mut self) {
@@ -310,14 +301,18 @@ impl AgentManagerWindow {
                     // Separator after New Agent button
                     ui.separator();
 
-                    // Collect agent info
+                    // Collect agent info (exclude TaskWorker agents - they are shown inline)
                     let agent_list: Vec<(AgentId, String)> = self
                         .agents
                         .iter()
+                        .filter(|(_, agent)| !matches!(agent.agent_type(), AgentType::TaskWorker { .. }))
                         .map(|(agent_id, agent)| (*agent_id, agent.metadata().name.clone()))
                         .collect();
 
                     let mut clicked_agent_id: Option<AgentId> = None;
+                    let mut start_editing_id: Option<AgentId> = None;
+                    let mut finish_editing = false;
+                    let mut cancel_editing = false;
 
                     // Agent list scroll area - takes remaining vertical space
                     ScrollArea::vertical()
@@ -328,16 +323,82 @@ impl AgentManagerWindow {
                             } else {
                                 for (agent_id, name) in agent_list {
                                     let is_selected = self.selected_agent_id == Some(agent_id);
+                                    let is_editing = self.editing_agent_name == Some(agent_id);
 
-                                    // Agent list item - use full width for better clickability
-                                    let response = ui.selectable_label(is_selected, name);
+                                    if is_editing {
+                                        // Show text edit for renaming
+                                        let response = ui.add(
+                                            egui::TextEdit::singleline(&mut self.temp_agent_name)
+                                                .desired_width(100.0),
+                                        );
 
-                                    if response.clicked() {
-                                        clicked_agent_id = Some(agent_id);
+                                        // Request focus on first frame of editing
+                                        response.request_focus();
+
+                                        // Check for Enter key while field has focus
+                                        let enter_pressed =
+                                            ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                        let escape_pressed =
+                                            ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                                        if escape_pressed {
+                                            cancel_editing = true;
+                                        } else if enter_pressed || response.lost_focus() {
+                                            // Enter pressed or clicked elsewhere
+                                            finish_editing = true;
+                                        }
+                                    } else {
+                                        // Agent list item - use full width for better clickability
+                                        let response = ui.selectable_label(is_selected, &name);
+
+                                        if response.clicked() {
+                                            clicked_agent_id = Some(agent_id);
+                                        }
+
+                                        // Double-click to edit name
+                                        if response.double_clicked() {
+                                            start_editing_id = Some(agent_id);
+                                        }
                                     }
                                 }
                             }
                         });
+
+                    // Handle editing state changes after scroll area
+                    if let Some(agent_id) = start_editing_id {
+                        if let Some(agent) = self.agents.get(&agent_id) {
+                            self.temp_agent_name = agent.metadata().name.clone();
+                            self.editing_agent_name = Some(agent_id);
+                        }
+                    }
+
+                    if finish_editing {
+                        if let Some(agent_id) = self.editing_agent_name.take() {
+                            let new_name = self.temp_agent_name.trim().to_string();
+                            if !new_name.is_empty() {
+                                if let Some(agent) = self.agents.get_mut(&agent_id) {
+                                    let old_name = agent.metadata().name.clone();
+                                    agent.metadata_mut().name = new_name.clone();
+                                    // Update logger with new name
+                                    agent
+                                        .logger()
+                                        .update_agent_name(&agent.agent_type(), new_name.clone());
+                                    log::info!(
+                                        "Agent {} renamed from '{}' to '{}'",
+                                        agent_id,
+                                        old_name,
+                                        new_name
+                                    );
+                                }
+                            }
+                        }
+                        self.temp_agent_name.clear();
+                    }
+
+                    if cancel_editing {
+                        self.editing_agent_name = None;
+                        self.temp_agent_name.clear();
+                    }
 
                     // Handle selection after scroll area
                     if let Some(agent_id) = clicked_agent_id {
@@ -390,7 +451,10 @@ impl AgentManagerWindow {
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
             // Extract result first to drop lock before using self
-            let init_result = agent.initialize(&mut aws_identity.lock().unwrap());
+            let init_result = agent.initialize(
+                &mut aws_identity.lock().unwrap(),
+                self.agent_logging_enabled,
+            );
             match init_result {
                 Ok(_) => {
                     log::info!(
@@ -458,6 +522,82 @@ impl AgentManagerWindow {
                     );
                     self.handle_agent_completion(agent_id);
                 }
+                // Worker progress events - inline display implementation pending
+                AgentUIEvent::WorkerStarted {
+                    worker_id,
+                    parent_id,
+                    short_description,
+                    message_index,
+                } => {
+                    tracing::debug!(
+                        target: "agent::ui_events",
+                        worker_id = %worker_id,
+                        parent_id = %parent_id,
+                        short_description = %short_description,
+                        message_index = message_index,
+                        "UI event: Worker started"
+                    );
+                    self.handle_worker_started(worker_id, parent_id, short_description, message_index);
+                }
+                AgentUIEvent::WorkerToolStarted {
+                    worker_id,
+                    parent_id,
+                    tool_name,
+                } => {
+                    tracing::debug!(
+                        target: "agent::ui_events",
+                        worker_id = %worker_id,
+                        parent_id = %parent_id,
+                        tool_name = %tool_name,
+                        "UI event: Worker tool started"
+                    );
+                    self.handle_worker_tool_started(worker_id, tool_name);
+                }
+                AgentUIEvent::WorkerToolCompleted {
+                    worker_id,
+                    parent_id,
+                    tool_name,
+                    success,
+                } => {
+                    tracing::debug!(
+                        target: "agent::ui_events",
+                        worker_id = %worker_id,
+                        parent_id = %parent_id,
+                        tool_name = %tool_name,
+                        success = success,
+                        "UI event: Worker tool completed"
+                    );
+                    self.handle_worker_tool_completed(worker_id, tool_name, success);
+                }
+                AgentUIEvent::WorkerCompleted {
+                    worker_id,
+                    parent_id,
+                    success,
+                } => {
+                    tracing::debug!(
+                        target: "agent::ui_events",
+                        worker_id = %worker_id,
+                        parent_id = %parent_id,
+                        success = success,
+                        "UI event: Worker completed"
+                    );
+                    self.handle_worker_completed(worker_id, success);
+                }
+                AgentUIEvent::WorkerTokensUpdated {
+                    worker_id,
+                    parent_id,
+                    total_tokens,
+                    ..
+                } => {
+                    tracing::debug!(
+                        target: "agent::ui_events",
+                        worker_id = %worker_id,
+                        parent_id = %parent_id,
+                        total_tokens = total_tokens,
+                        "UI event: Worker tokens updated"
+                    );
+                    self.handle_worker_tokens_updated(worker_id, total_tokens);
+                }
             }
         }
     }
@@ -474,6 +614,133 @@ impl AgentManagerWindow {
             agent_id = %agent_id,
             "Agent marked as completed"
         );
+    }
+
+    /// Handle worker started event
+    ///
+    /// Creates an inline worker message entry for display in the conversation.
+    fn handle_worker_started(
+        &mut self,
+        worker_id: AgentId,
+        parent_id: AgentId,
+        short_description: String,
+        message_index: usize,
+    ) {
+        let mut message = WorkerInlineMessage::new(worker_id, parent_id, short_description);
+
+        // Try to get log path from the worker agent's logger
+        if let Some(agent) = self.agents.get(&worker_id) {
+            message.log_path = Some(agent.logger().log_path().clone());
+        }
+
+        // Add to inline messages for this message index
+        self.worker_inline_messages
+            .entry(message_index)
+            .or_default()
+            .push(message);
+
+        tracing::info!(
+            target: "agent::ui_events",
+            worker_id = %worker_id,
+            parent_id = %parent_id,
+            message_index = message_index,
+            "Added inline worker message"
+        );
+    }
+
+    /// Handle worker tool started event
+    ///
+    /// Updates the current tool for the worker's inline message.
+    fn handle_worker_tool_started(&mut self, worker_id: AgentId, tool_name: String) {
+        // Find the worker in any message index and update current_tool
+        for workers in self.worker_inline_messages.values_mut() {
+            if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
+                worker.current_tool = Some(tool_name.clone());
+                return;
+            }
+        }
+    }
+
+    /// Handle worker tool completed event
+    ///
+    /// Clears the current tool for the worker's inline message.
+    fn handle_worker_tool_completed(
+        &mut self,
+        worker_id: AgentId,
+        _tool_name: String,
+        _success: bool,
+    ) {
+        // Find the worker and clear current_tool
+        for workers in self.worker_inline_messages.values_mut() {
+            if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
+                worker.current_tool = None;
+                return;
+            }
+        }
+    }
+
+    /// Handle worker completed event
+    ///
+    /// Marks the worker as completed in its inline message.
+    fn handle_worker_completed(&mut self, worker_id: AgentId, success: bool) {
+        // Find the worker and mark as completed
+        for workers in self.worker_inline_messages.values_mut() {
+            if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
+                worker.mark_completed(success);
+                tracing::info!(
+                    target: "agent::ui_events",
+                    worker_id = %worker_id,
+                    success = success,
+                    "Worker marked as completed"
+                );
+                return;
+            }
+        }
+    }
+
+    /// Handle worker tokens updated event
+    ///
+    /// Updates the cumulative token count for a worker's inline message.
+    fn handle_worker_tokens_updated(&mut self, worker_id: AgentId, total_tokens: u32) {
+        // Find the worker and update token count
+        for workers in self.worker_inline_messages.values_mut() {
+            if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
+                worker.total_tokens = total_tokens;
+                return;
+            }
+        }
+    }
+
+    /// Convert worker inline messages to display format for rendering
+    ///
+    /// Filters workers for the given parent agent and converts them to InlineWorkerDisplay
+    /// format, organized by message index.
+    fn convert_workers_to_display(
+        &self,
+        parent_id: AgentId,
+    ) -> HashMap<usize, Vec<InlineWorkerDisplay>> {
+        let mut result: HashMap<usize, Vec<InlineWorkerDisplay>> = HashMap::new();
+
+        for (message_index, workers) in &self.worker_inline_messages {
+            let filtered: Vec<InlineWorkerDisplay> = workers
+                .iter()
+                .filter(|w| w.parent_id == parent_id)
+                .map(|w| InlineWorkerDisplay {
+                    short_description: w.short_description.clone(),
+                    current_tool: w.current_tool.clone(),
+                    is_running: w.status == WorkerMessageStatus::Running,
+                    success: matches!(w.status, WorkerMessageStatus::Completed { success: true }),
+                    log_path: w.log_path.clone(),
+                    total_tokens: w.total_tokens,
+                })
+                .collect();
+
+            if !filtered.is_empty() {
+                result.insert(*message_index, filtered);
+            }
+        }
+
+        result
     }
 
     /// Process agent creation requests
@@ -596,7 +863,10 @@ impl AgentManagerWindow {
 
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
-            let init_result = agent.initialize(&mut aws_identity.lock().unwrap());
+            let init_result = agent.initialize(
+                &mut aws_identity.lock().unwrap(),
+                self.agent_logging_enabled,
+            );
             if let Err(e) = init_result {
                 return Err(format!("Failed to initialize agent: {}", e));
             }
@@ -615,12 +885,33 @@ impl AgentManagerWindow {
             "Created TaskWorker agent"
         );
 
+        // Determine the message index in parent's conversation where this worker was spawned
+        let message_index = if let Some(parent) = self.agents.get(&request.parent_id) {
+            parent.messages().len().saturating_sub(1)
+        } else {
+            0
+        };
+
         // Insert agent into map
         self.agents.insert(agent_id, agent);
 
-        // Create worker tab metadata (but don't change focus)
-        self.worker_tabs.insert(agent_id, WorkerTabMetadata::new());
-        log::info!("Created worker tab for agent {} (not focused)", agent_id);
+        // Send WorkerStarted event for inline display (replaces tab creation)
+        let _ = crate::app::agent_framework::send_ui_event(
+            crate::app::agent_framework::AgentUIEvent::worker_started(
+                agent_id,
+                request.parent_id,
+                request.short_description.clone(),
+                message_index,
+            ),
+        );
+        tracing::debug!(
+            target: "agent::creation",
+            agent_id = %agent_id,
+            parent_id = %request.parent_id,
+            message_index = message_index,
+            short_description = %request.short_description,
+            "Sent WorkerStarted event for inline display"
+        );
 
         Ok(agent_id)
     }
@@ -747,87 +1038,12 @@ impl AgentManagerWindow {
         // Render task indicator first
         self.render_task_indicator(ui);
 
-        // Build tab list for TaskManager: manager + workers
-        let workers = self.get_workers_for_manager(agent_id);
-        let has_workers = !workers.is_empty();
-        let mut tabs = vec![agent_id]; // Manager first
-        tabs.extend(workers.iter().copied());
+        // Convert worker inline messages to display format for the render function
+        let inline_workers_display = self.convert_workers_to_display(agent_id);
 
-        // Always show tab bar for TaskManager (shows at least Manager tab)
-        // Only hide if manager has no messages AND no workers
-        let agent_has_messages = self
-            .agents
-            .get(&agent_id)
-            .map(|a| !a.messages().is_empty())
-            .unwrap_or(false);
-        let show_tabs = has_workers || agent_has_messages;
-
-        if show_tabs {
-            ui.horizontal(|ui| {
-                ui.label("Conversations:");
-                ui.add_space(5.0);
-
-                // Manager tab
-                let is_manager_tab = self.selected_tab_agent_id.is_none()
-                    || self.selected_tab_agent_id == Some(agent_id);
-                if ui.selectable_label(is_manager_tab, "Manager").clicked() {
-                    self.selected_tab_agent_id = Some(agent_id);
-                }
-
-                // Worker tabs
-                for (idx, worker_id) in workers.iter().enumerate() {
-                    let is_selected = self.selected_tab_agent_id == Some(*worker_id);
-
-                    // Create tab label - show countdown if completed
-                    let label = if let Some(metadata) = self.worker_tabs.get(worker_id) {
-                        if let Some(remaining) = metadata.remaining_seconds() {
-                            format!("Completed - autoclose {}", remaining)
-                        } else {
-                            format!("Worker {}", idx + 1)
-                        }
-                    } else {
-                        format!("Worker {}", idx + 1)
-                    };
-
-                    if ui.selectable_label(is_selected, label).clicked() {
-                        self.selected_tab_agent_id = Some(*worker_id);
-
-                        // Reset auto-close timer if user views a completed tab
-                        if let Some(metadata) = self.worker_tabs.get_mut(worker_id) {
-                            if metadata.completed_at.is_some() {
-                                metadata.mark_viewed();
-                                log::debug!(
-                                    "User viewed completed worker {} tab - reset 30s timer",
-                                    worker_id
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-            ui.add_space(5.0);
-        }
-
-        // Determine which agent's conversation to show
-        let display_agent_id = if has_workers {
-            // TaskManager with workers - show selected tab
-            if let Some(tab_id) = self.selected_tab_agent_id {
-                // Verify tab agent still exists
-                if tabs.contains(&tab_id) {
-                    tab_id
-                } else {
-                    // Tab agent no longer exists, reset to manager
-                    self.selected_tab_agent_id = Some(agent_id);
-                    agent_id
-                }
-            } else {
-                // No tab selected, default to manager
-                agent_id
-            }
-        } else {
-            // No workers, show the selected agent
-            agent_id
-        };
+        // Always show the selected manager agent's conversation
+        // (workers no longer have tabs - they're shown inline within conversation)
+        let display_agent_id = agent_id;
 
         // Ensure status widget exists for this agent
         self.status_widgets
@@ -835,7 +1051,7 @@ impl AgentManagerWindow {
             .or_default();
 
         // Render UI and handle message sending/polling in a scope to release borrow
-        let (terminate_clicked, log_clicked, _clear_clicked) = {
+        let (terminate_clicked, log_clicked, _clear_clicked, worker_log_to_open) = {
             // Get the agent and status widget to display
             let agent = match self.agents.get_mut(&display_agent_id) {
                 Some(agent) => agent,
@@ -848,15 +1064,22 @@ impl AgentManagerWindow {
             // Get status widget (we just ensured it exists)
             let status_widget = self.status_widgets.get_mut(&display_agent_id).unwrap();
 
-            // Render the chat UI and check if message should be sent, log clicked, clear clicked, terminated, or stopped
-            let (should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked) =
-                render_agent_chat(
-                    ui,
-                    agent,
-                    &mut self.input_text,
-                    &mut self.markdown_cache,
-                    status_widget,
-                );
+            // Render the chat UI with inline workers
+            let (
+                should_send,
+                log_clicked,
+                clear_clicked,
+                terminate_clicked,
+                stop_clicked,
+                worker_log_clicked,
+            ) = render_agent_chat(
+                ui,
+                agent,
+                &mut self.input_text,
+                &mut self.markdown_cache,
+                status_widget,
+                Some(&inline_workers_display),
+            );
 
             // Send message if requested
             if should_send {
@@ -881,8 +1104,14 @@ impl AgentManagerWindow {
                 log::info!("Agent {} conversation cleared", agent_id);
             }
 
-            (terminate_clicked, log_clicked, clear_clicked)
+            (terminate_clicked, log_clicked, clear_clicked, worker_log_clicked)
         }; // agent borrow released here
+
+        // Handle worker log button click
+        if let Some(log_path) = worker_log_to_open {
+            self.agent_log_window
+                .show_log_from_path(&log_path, "Worker Log");
+        }
 
         // Handle log button click outside the borrow scope
         if log_clicked {
@@ -998,6 +1227,7 @@ impl AgentManagerWindow {
             };
 
             // Send worker completion to channel (for start_task tool to return as ToolResult)
+            let is_success = result.is_ok();
             let completion = crate::app::agent_framework::WorkerCompletion {
                 worker_id,
                 result, // Raw result (Ok or Err), no wrapper text
@@ -1013,59 +1243,29 @@ impl AgentManagerWindow {
                 execution_time
             );
 
-            // Mark worker tab as completed (starts 30-second auto-close timer)
-            if let Some(worker_tab) = self.worker_tabs.get_mut(&worker_id) {
-                worker_tab.mark_completed();
-                log::info!(
-                    target: "agent::worker_complete",
-                    "Marked worker {} tab as completed - 30 second auto-close timer started",
-                    worker_id
-                );
-            }
-
-            // NOTE: Worker agent and tab are NOT immediately removed
-            // They will be auto-closed after 30 seconds (or when user manually closes)
-            // This allows user to review completed worker's conversation
-        }
-
-        // Auto-close completed worker tabs after timeout
-        let workers_to_close: Vec<AgentId> = self
-            .worker_tabs
-            .iter()
-            .filter(|(_, metadata)| metadata.should_auto_close())
-            .map(|(id, _)| *id)
-            .collect();
-
-        for worker_id in workers_to_close {
-            log::info!(
+            // Send WorkerCompleted UI event for inline display update
+            let _ = crate::app::agent_framework::send_ui_event(
+                crate::app::agent_framework::AgentUIEvent::worker_completed(
+                    worker_id,
+                    parent_id,
+                    is_success,
+                ),
+            );
+            tracing::debug!(
                 target: "agent::worker_complete",
-                "Auto-closing worker {} tab after 30 second timeout",
-                worker_id
+                worker_id = %worker_id,
+                parent_id = %parent_id,
+                success = is_success,
+                "Sent WorkerCompleted event for inline display"
             );
 
-            // Terminate agent before removing (cancel any pending work, clean up resources)
-            if let Some(agent) = self.agents.get_mut(&worker_id) {
-                agent.terminate();
-            }
-
-            // Remove worker agent
+            // Remove worker instance - log path is preserved in WorkerInlineMessage
             self.agents.remove(&worker_id);
-
-            // Remove worker tab metadata
-            self.worker_tabs.remove(&worker_id);
-
-            // Clear tab selection if closed worker was selected
-            if self.selected_tab_agent_id == Some(worker_id) {
-                // Find parent to switch to manager tab
-                // Since we don't have parent_id here, just clear the tab selection
-                // The UI will default to showing the manager
-                self.selected_tab_agent_id = None;
-            }
-
-            // If the removed worker was selected in agent list, clear selection
-            if self.selected_agent_id == Some(worker_id) {
-                self.selected_agent_id = None;
-            }
+            tracing::debug!(
+                target: "agent::worker_complete",
+                worker_id = %worker_id,
+                "Worker agent removed after completion"
+            );
         }
 
         let poll_duration = poll_start.elapsed();

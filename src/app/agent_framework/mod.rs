@@ -23,6 +23,7 @@ pub mod tools_registry;
 pub mod ui_events;
 pub mod v8_bindings;
 pub mod worker_completion;
+pub mod worker_progress_handler;
 
 pub use agent_creation::*;
 pub use agent_instance::*;
@@ -47,3 +48,4 @@ pub use tools_registry::*;
 pub use ui_events::*;
 pub use v8_bindings::*;
 pub use worker_completion::*;
+pub use worker_progress_handler::*;

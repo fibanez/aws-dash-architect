@@ -20,7 +20,7 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - **ResourceExplorerState**: Core state container managing resources, queries, and UI state
 - **AWSResourceClient**: Orchestrates parallel queries across all supported AWS services with two-phase loading
 - **CredentialCoordinator**: Manages AWS credentials for hundreds of accounts via Identity Center
-- **TreeBuilder/TreeRenderer**: Hierarchical visualization system with stable node IDs
+- **TreeBuilder/TreeRenderer**: Hierarchical visualization system with stable node IDs and consistent sorting
 - **NormalizerFactory**: Standardizes AWS API responses into consistent ResourceEntry format
 
 ## Two-Phase Loading Architecture
@@ -94,6 +94,15 @@ Phase 2 enrichment reports progress via `QueryProgress` with dedicated status va
 - `EnrichmentCompleted`: All resources enriched
 
 The UI automatically refreshes when `phase2_enrichment_completed` flag is set in state.
+
+**UI Stability During Enrichment:**
+
+Phase 2 enrichment updates the cache without triggering tree rebuilds during progress updates. This prevents UI disruption such as:
+- Loss of cursor focus
+- CollapsingHeader state changes
+- Window flickering
+
+The tree only rebuilds once when enrichment completes, using `increment_enrichment_version_force()`. During progress updates, data syncs to the cache but the tree structure remains stable. This is controlled by the `enrichment_version` field in state, which serves as a cache key for tree rendering.
 
 ## Global Services
 
@@ -292,6 +301,32 @@ AWS APIs often return policy documents and configurations as URL-encoded or stri
 
 **Integration:**
 Applied automatically during resource normalization for IAM policies, Lambda configurations, and other resources with embedded JSON content.
+
+## Tree Sorting
+
+Resources are sorted alphabetically at every level of the tree hierarchy for consistent, predictable ordering:
+
+**Sorting Order:**
+1. Primary groups (accounts, regions, or resource types) - alphabetically sorted
+2. Secondary groups (resource types or account/region combinations) - alphabetically sorted
+3. Individual resources within groups - case-insensitive sort by display name
+
+**Duplicate Name/ID Handling:**
+
+When a resource's display name equals its resource ID, the tree displays only the name instead of the redundant format "Name (Name)".
+
+**Implementation:**
+
+```rust
+/// Sort resources by display name (case-insensitive)
+fn sort_resources_by_name(resources: &mut [ResourceEntry]) {
+    resources.sort_by(|a, b| {
+        a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+    });
+}
+```
+
+Sorting is applied consistently across all tree views: main groupings, tag hierarchies, and property hierarchies.
 
 **References:**
 - [Credential Management](credential-management.md) - AWS authentication and multi-account access

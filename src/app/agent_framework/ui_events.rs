@@ -89,6 +89,58 @@ pub enum AgentUIEvent {
     /// This allows the UI to update task indicators, remove completed agents
     /// from the active list, etc.
     AgentCompleted(AgentId),
+
+    // ========== Worker Progress Events ==========
+
+    /// A worker agent has started
+    ///
+    /// Sent when a TaskWorker is created by a TaskManager.
+    /// Includes the short description for inline display.
+    WorkerStarted {
+        worker_id: AgentId,
+        parent_id: AgentId,
+        short_description: String,
+        message_index: usize,
+    },
+
+    /// A worker has started executing a tool
+    ///
+    /// Sent when a tool (e.g., execute_javascript) starts running.
+    WorkerToolStarted {
+        worker_id: AgentId,
+        parent_id: AgentId,
+        tool_name: String,
+    },
+
+    /// A worker has finished executing a tool
+    ///
+    /// Sent when a tool completes (success or failure).
+    WorkerToolCompleted {
+        worker_id: AgentId,
+        parent_id: AgentId,
+        tool_name: String,
+        success: bool,
+    },
+
+    /// A worker agent has completed
+    ///
+    /// Sent when a TaskWorker finishes its work.
+    WorkerCompleted {
+        worker_id: AgentId,
+        parent_id: AgentId,
+        success: bool,
+    },
+
+    /// Worker token usage updated
+    ///
+    /// Sent after each model call with cumulative token counts.
+    WorkerTokensUpdated {
+        worker_id: AgentId,
+        parent_id: AgentId,
+        input_tokens: u32,
+        output_tokens: u32,
+        total_tokens: u32,
+    },
 }
 
 impl AgentUIEvent {
@@ -105,6 +157,79 @@ impl AgentUIEvent {
     /// Create a new AgentCompleted event
     pub fn agent_completed(agent_id: AgentId) -> Self {
         Self::AgentCompleted(agent_id)
+    }
+
+    /// Create a new WorkerStarted event
+    pub fn worker_started(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        short_description: String,
+        message_index: usize,
+    ) -> Self {
+        Self::WorkerStarted {
+            worker_id,
+            parent_id,
+            short_description,
+            message_index,
+        }
+    }
+
+    /// Create a new WorkerToolStarted event
+    pub fn worker_tool_started(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        tool_name: String,
+    ) -> Self {
+        Self::WorkerToolStarted {
+            worker_id,
+            parent_id,
+            tool_name,
+        }
+    }
+
+    /// Create a new WorkerToolCompleted event
+    pub fn worker_tool_completed(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        tool_name: String,
+        success: bool,
+    ) -> Self {
+        Self::WorkerToolCompleted {
+            worker_id,
+            parent_id,
+            tool_name,
+            success,
+        }
+    }
+
+    /// Create a new WorkerCompleted event
+    pub fn worker_completed(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        success: bool,
+    ) -> Self {
+        Self::WorkerCompleted {
+            worker_id,
+            parent_id,
+            success,
+        }
+    }
+
+    /// Create a new WorkerTokensUpdated event
+    pub fn worker_tokens_updated(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        input_tokens: u32,
+        output_tokens: u32,
+        total_tokens: u32,
+    ) -> Self {
+        Self::WorkerTokensUpdated {
+            worker_id,
+            parent_id,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        }
     }
 }
 
@@ -186,5 +311,75 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::SwitchToAgent(agent1));
         assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::SwitchToParent(agent2));
         assert_eq!(rx.try_recv().unwrap(), AgentUIEvent::AgentCompleted(agent1));
+    }
+
+    #[test]
+    fn test_worker_progress_events() {
+        let worker_id = AgentId::new();
+        let parent_id = AgentId::new();
+
+        // Test WorkerStarted
+        let started = AgentUIEvent::worker_started(
+            worker_id,
+            parent_id,
+            "Listing instances".to_string(),
+            5,
+        );
+        assert!(matches!(
+            started,
+            AgentUIEvent::WorkerStarted {
+                worker_id: w,
+                parent_id: p,
+                short_description: _,
+                message_index: 5,
+            } if w == worker_id && p == parent_id
+        ));
+
+        // Test WorkerToolStarted
+        let tool_started = AgentUIEvent::worker_tool_started(
+            worker_id,
+            parent_id,
+            "execute_javascript".to_string(),
+        );
+        assert!(matches!(
+            tool_started,
+            AgentUIEvent::WorkerToolStarted {
+                worker_id: w,
+                parent_id: p,
+                tool_name: _,
+            } if w == worker_id && p == parent_id
+        ));
+
+        // Test WorkerToolCompleted
+        let tool_completed = AgentUIEvent::worker_tool_completed(
+            worker_id,
+            parent_id,
+            "execute_javascript".to_string(),
+            true,
+        );
+        assert!(matches!(
+            tool_completed,
+            AgentUIEvent::WorkerToolCompleted {
+                worker_id: w,
+                parent_id: p,
+                tool_name: _,
+                success: true,
+            } if w == worker_id && p == parent_id
+        ));
+
+        // Test WorkerCompleted
+        let worker_completed = AgentUIEvent::worker_completed(
+            worker_id,
+            parent_id,
+            true,
+        );
+        assert!(matches!(
+            worker_completed,
+            AgentUIEvent::WorkerCompleted {
+                worker_id: w,
+                parent_id: p,
+                success: true,
+            } if w == worker_id && p == parent_id
+        ));
     }
 }

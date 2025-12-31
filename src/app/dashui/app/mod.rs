@@ -92,6 +92,7 @@ pub enum FocusedWindow {
 pub struct DashApp {
     pub theme: ThemeChoice,
     pub navigation_status_bar_settings: NavigationStatusBarSettings,
+    pub agent_logging_enabled: bool,
 
     #[serde(skip)]
     pub command_palette: CommandPalette,
@@ -183,6 +184,7 @@ impl Default for DashApp {
         Self {
             theme: ThemeChoice::default(),
             navigation_status_bar_settings: NavigationStatusBarSettings::default(),
+            agent_logging_enabled: true,
             command_palette: CommandPalette::new(),
             show_command_palette: false,
             aws_login_window: AwsLoginWindow::default(),

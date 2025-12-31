@@ -1,5 +1,6 @@
 use super::super::state::{ResourceEntry, ResourceRelationship};
 use super::{utils, AsyncResourceNormalizer};
+use crate::app::resource_explorer::{assign_account_color, assign_region_color};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -50,8 +51,8 @@ impl AsyncResourceNormalizer for BatchJobQueueNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::PLACEHOLDER,
-            region_color: egui::Color32::PLACEHOLDER,
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
             query_timestamp,
         };
 
@@ -128,8 +129,8 @@ impl AsyncResourceNormalizer for BatchComputeEnvironmentNormalizer {
             parent_resource_id: None,
             parent_resource_type: None,
             is_child_resource: false,
-            account_color: egui::Color32::PLACEHOLDER,
-            region_color: egui::Color32::PLACEHOLDER,
+            account_color: assign_account_color(account),
+            region_color: assign_region_color(region),
             query_timestamp,
         };
 

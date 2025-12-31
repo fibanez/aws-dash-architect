@@ -26,6 +26,7 @@ impl DashApp {
                     ctx,
                     &mut self.theme,
                     &mut self.navigation_status_bar_settings,
+                    &mut self.agent_logging_enabled,
                     project_info,
                     &mut self.log_window.open,
                     resource_count,
@@ -37,12 +38,18 @@ impl DashApp {
                 // Handle menu actions
                 match menu_action {
                     menu::MenuAction::ThemeChanged => {
-                        tracing::info!("Theme changed");
+                        tracing::debug!("Theme changed");
                     }
                     menu::MenuAction::NavigationStatusBarChanged => {
                         tracing::info!(
                             "Navigation status bar setting changed to: {}",
                             self.navigation_status_bar_settings.show_status_bar
+                        );
+                    }
+                    menu::MenuAction::AgentLoggingChanged => {
+                        tracing::info!(
+                            "Agent logging setting changed to: {}",
+                            self.agent_logging_enabled
                         );
                     }
                     menu::MenuAction::ShowComplianceDetails => {

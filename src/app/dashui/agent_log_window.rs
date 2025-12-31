@@ -77,10 +77,21 @@ impl AgentLogWindow {
         self.refresh_log_content();
         self.scroll_to_bottom = true;
         tracing::info!(
-            "🔍 Agent log window opened: open={}, agent_name={}",
+            "Agent log window opened: open={}, agent_name={}",
             self.open,
             self.agent_name
         );
+    }
+
+    /// Open the log viewer from a file path (used for inline worker logs)
+    pub fn show_log_from_path(&mut self, log_path: &std::path::Path, title: &str) {
+        tracing::info!("Opening log window from path: {}", log_path.display());
+        self.open = true;
+        self.agent_id = None;
+        self.agent_name = title.to_string();
+        self.log_path = log_path.to_path_buf();
+        self.refresh_log_content();
+        self.scroll_to_bottom = true;
     }
 
     /// Refresh log content from file

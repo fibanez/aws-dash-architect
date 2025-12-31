@@ -211,28 +211,82 @@ Use queryResources() API to call EC2
 ```
 (Too implementation-focused, lacks context)
 
-## Status Updates
+## Worker Progress Display
 
-Infrastructure exists for dynamic status updates:
+The system provides real-time progress tracking for worker agents within the manager's conversation flow.
+
+### Inline Progress Updates
+
+Worker tool execution appears inline in the manager's conversation:
+
+```
+[Worker executing: execute_javascript]
+    Running...
+```
+
+After completion:
+```
+[Worker executing: execute_javascript]
+    Completed (1.2s)
+```
+
+### Token Usage Tracking
+
+Worker agents track and display token consumption:
 
 ```rust
-pub enum ConversationResponse {
-    Success(String),
-    Error(String),
-    StatusUpdate(String),  // For "Starting Task", "Processing", etc.
+// UI event for token updates
+AgentUIEvent::WorkerTokensUpdated {
+    worker_id: AgentId,
+    parent_id: AgentId,
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
 }
 ```
 
-Status updates are handled in `agent_instance.rs`:
+Token counts appear in the worker progress display, helping users understand LLM resource usage across the task tree.
+
+### Callback Handler Architecture
+
+The `WorkerProgressCallbackHandler` forwards tool events from workers to the UI:
+
 ```rust
-ConversationResponse::StatusUpdate(status) => {
-    self.status_message = Some(status);
-    self.processing = true;
-    return false; // Continue polling
+pub struct WorkerProgressCallbackHandler {
+    worker_id: AgentId,
+    parent_id: AgentId,
+}
+
+#[async_trait]
+impl CallbackHandler for WorkerProgressCallbackHandler {
+    async fn on_tool(&self, event: ToolEvent) -> Result<(), CallbackError> {
+        match event {
+            ToolEvent::Started { name, .. } => {
+                send_ui_event(AgentUIEvent::worker_tool_started(
+                    self.worker_id, self.parent_id, name
+                ));
+            }
+            ToolEvent::Completed { name, .. } => {
+                send_ui_event(AgentUIEvent::worker_tool_completed(
+                    self.worker_id, self.parent_id, name, true
+                ));
+            }
+            ToolEvent::Failed { name, error, .. } => {
+                send_ui_event(AgentUIEvent::worker_tool_completed(
+                    self.worker_id, self.parent_id, name, false
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 ```
 
-Currently, the infrastructure is in place but StatusUpdate messages are not actively sent by tools. This requires deeper integration with the stood library's response channel.
+### Key Files
+
+- `src/app/agent_framework/worker_progress_handler.rs` - Callback handler implementation
+- `src/app/agent_framework/ui_events.rs` - UI event definitions and channel management
+- `src/app/dashui/agent_manager_window.rs` - Progress rendering in conversation view
 
 ## Logging and Debugging
 

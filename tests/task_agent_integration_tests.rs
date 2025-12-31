@@ -42,7 +42,7 @@ fn test_agent_creation_channel_initialization() {
     // Send a test request
     let parent_id = AgentId::new();
     let (request, response_receiver) =
-        AgentCreationRequest::new("Test task".to_string(), None, parent_id);
+        AgentCreationRequest::new("Test".to_string(), "Test task".to_string(), None, parent_id);
 
     sender.send(request.clone()).unwrap();
 
@@ -58,7 +58,7 @@ fn test_request_response_matching() {
 
     let parent_id = AgentId::new();
     let (request, response_receiver) =
-        AgentCreationRequest::new("Test task".to_string(), None, parent_id);
+        AgentCreationRequest::new("Test".to_string(), "Test task".to_string(), None, parent_id);
 
     let request_id = request.request_id;
 
@@ -165,6 +165,7 @@ fn test_complete_agent_spawning_flow() {
     let spawner_thread = std::thread::spawn(move || {
         // This simulates the start-task tool calling request_agent_creation
         request_agent_creation(
+            "List EC2".to_string(),
             "List all EC2 instances".to_string(),
             Some("JSON array".to_string()),
             parent_id_clone,
@@ -233,7 +234,7 @@ fn test_multiple_concurrent_worker_spawns() {
     for task in tasks.iter() {
         let task_str = task.to_string();
         let pid = parent_id;
-        let handle = std::thread::spawn(move || request_agent_creation(task_str, None, pid));
+        let handle = std::thread::spawn(move || request_agent_creation("Task".to_string(), task_str, None, pid));
         spawn_threads.push(handle);
     }
 
@@ -282,7 +283,7 @@ fn test_agent_creation_parent_not_found_error() {
 
     // Request creation with non-existent parent
     let spawner_thread = std::thread::spawn(move || {
-        request_agent_creation("Test task".to_string(), None, non_existent_parent)
+        request_agent_creation("Test".to_string(), "Test task".to_string(), None, non_existent_parent)
     });
 
     std::thread::sleep(Duration::from_millis(50));
@@ -313,7 +314,7 @@ fn test_agent_creation_timeout() {
     set_current_agent_id(parent_id);
 
     // Request creation but don't process it (no AgentManagerWindow)
-    let result = request_agent_creation("Test task".to_string(), None, parent_id);
+    let result = request_agent_creation("Test".to_string(), "Test task".to_string(), None, parent_id);
 
     // Should timeout after 5 seconds
     assert!(result.is_err());
@@ -333,7 +334,7 @@ fn test_ui_event_after_agent_creation() {
 
     // Spawn agent creation request
     let spawner_thread = std::thread::spawn(move || {
-        let result = request_agent_creation("Test task".to_string(), None, parent_id);
+        let result = request_agent_creation("Test".to_string(), "Test task".to_string(), None, parent_id);
 
         // After successful creation, send UI event
         if let Ok(agent_id) = result {
