@@ -152,15 +152,15 @@ fn test_complete_agent_spawning_flow() {
     init_agent_creation_channel();
     init_ui_event_channel();
 
-    // Step 1: Create parent TaskManager agent
+    // Create parent TaskManager agent
     let parent_metadata = create_test_metadata("Integration Test Manager");
     let parent_agent = AgentInstance::new(parent_metadata, AgentType::TaskManager);
     let parent_id = parent_agent.id();
 
-    // Step 2: Set parent as current context (simulating tool execution)
+    // Set parent as current context (simulating tool execution)
     set_current_agent_id(parent_id);
 
-    // Step 3: Request agent creation in background thread
+    // Request agent creation in background thread
     let parent_id_clone = parent_id;
     let spawner_thread = std::thread::spawn(move || {
         // This simulates the start-task tool calling request_agent_creation
@@ -172,7 +172,7 @@ fn test_complete_agent_spawning_flow() {
         )
     });
 
-    // Step 4: Process request (simulating AgentManagerWindow)
+    // Process request (simulating AgentManagerWindow)
     std::thread::sleep(Duration::from_millis(50)); // Let request arrive
 
     let receiver = get_agent_creation_receiver();
@@ -201,7 +201,7 @@ fn test_complete_agent_spawning_flow() {
     let response = AgentCreationResponse::success(worker_id);
     response_sender.send(response).unwrap();
 
-    // Step 5: Verify spawner received the worker ID
+    // Verify spawner received the worker ID
     let result = spawner_thread.join().unwrap();
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), worker_id);

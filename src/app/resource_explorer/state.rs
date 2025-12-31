@@ -622,7 +622,7 @@ pub struct ResourceExplorerState {
     // Tag grouping UI state
     pub show_tag_hierarchy_builder: bool, // Show tag hierarchy builder dialog
     pub min_tag_resources_for_grouping: usize, // Minimum resource count for tags to appear in GroupBy dropdown
-    // Property grouping UI state (M6)
+    // Property grouping UI state
     pub show_property_hierarchy_builder: bool, // Show property hierarchy builder dialog
     // Phase 1: Resource listing progress tracking
     pub phase1_pending_services: HashSet<String>, // Services still loading (display names)
