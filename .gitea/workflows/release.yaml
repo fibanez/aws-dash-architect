@@ -1,0 +1,152 @@
+name: Release (Linux)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            wget
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package tarball
+        run: |
+          mkdir -p release
+          cp target/release/awsdash release/
+          cp README.md release/
+          cp LICENSE-APACHE release/
+          cd release
+          tar -czvf ../awsdash-linux-x86_64.tar.gz *
+
+      - name: Create AppImage
+        run: |
+          # Download appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create AppDir structure
+          mkdir -p AWSDash.AppDir/usr/bin
+          mkdir -p AWSDash.AppDir/usr/share/applications
+          mkdir -p AWSDash.AppDir/usr/share/icons/hicolor/256x256/apps
+
+          # Copy binary
+          cp target/release/awsdash AWSDash.AppDir/usr/bin/awsdash
+
+          # Copy icon (use project icon or create placeholder)
+          if [ -f dash-icon.png ]; then
+            cp dash-icon.png AWSDash.AppDir/usr/share/icons/hicolor/256x256/apps/awsdash.png
+            cp dash-icon.png AWSDash.AppDir/awsdash.png
+          else
+            # Create a simple placeholder icon
+            convert -size 256x256 xc:#4a90d9 AWSDash.AppDir/awsdash.png 2>/dev/null || touch AWSDash.AppDir/awsdash.png
+          fi
+
+          # Create .desktop file
+          cat > AWSDash.AppDir/awsdash.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=AWS Dash
+          Exec=awsdash
+          Icon=awsdash
+          Type=Application
+          Categories=Development;Utility;
+          Comment=See all your AWS accounts, all your regions, in one window
+          DESKTOP
+
+          # Copy desktop file to standard location
+          cp AWSDash.AppDir/awsdash.desktop AWSDash.AppDir/usr/share/applications/
+
+          # Create AppRun script
+          cat > AWSDash.AppDir/AppRun << 'APPRUN'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "${HERE}/usr/bin/awsdash" "$@"
+          APPRUN
+          chmod +x AWSDash.AppDir/AppRun
+
+          # Build AppImage (--appimage-extract-and-run avoids FUSE requirement in containers)
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AWSDash.AppDir AWSDash-x86_64.AppImage
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-linux-x86_64
+          path: awsdash-linux-x86_64.tar.gz
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: awsdash-linux-appimage
+          path: AWSDash-x86_64.AppImage
+
+  release:
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifacts
+        run: ls -R artifacts
+
+      - name: Create Gitea Release
+        run: |
+          # Get tag name
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          # Create release using Gitea API
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"Linux release for ${TAG_NAME}\"}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases"
+
+      - name: Upload Release Assets
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          # Get release ID
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/tags/${TAG_NAME}" | jq -r '.id')
+
+          # Upload tarball
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            -F "attachment=@artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets"
+
+          # Upload AppImage
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            -F "attachment=@artifacts/awsdash-linux-appimage/AWSDash-x86_64.AppImage" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets"
