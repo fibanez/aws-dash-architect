@@ -40,7 +40,7 @@ Pre-built binaries for Linux, Windows, and macOS:
 
 **macOS:** Extract the zip, then remove the quarantine attribute before first run:
 ```bash
-xattr -cr AWSDash.app
+xattr -c AWSDash.app
 ```
 Then double-click AWSDash.app or drag it to Applications.
 

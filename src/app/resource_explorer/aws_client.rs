@@ -967,8 +967,14 @@ impl AWSResourceClient {
                     let query_region = query_region.to_string();
 
                     let future = async move {
-                        // Acquire semaphore permit
-                        let _permit = semaphore_clone.acquire().await.unwrap();
+                        // Acquire semaphore permit - handle closed semaphore gracefully
+                        let _permit = match semaphore_clone.acquire().await {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                warn!("Semaphore closed, aborting global query");
+                                return;
+                            }
+                        };
 
                         // THEORY LOGGING: Track global service future lifecycle
                         let query_id = format!("{}:Global:{}", account_id, resource_type_str);
@@ -1123,8 +1129,14 @@ impl AWSResourceClient {
                         let cache_key_clone = cache_key.clone();
 
                         let future = async move {
-                            // Acquire semaphore permit
-                            let _permit = semaphore_clone.acquire().await.unwrap();
+                            // Acquire semaphore permit - handle closed semaphore gracefully
+                            let _permit = match semaphore_clone.acquire().await {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    warn!("Semaphore closed, aborting region query");
+                                    return;
+                                }
+                            };
 
                             // THEORY LOGGING: Track future lifecycle
                             let query_id = format!("{}:{}:{}", account_id, region_code, resource_type_str);
