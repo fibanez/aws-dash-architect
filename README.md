@@ -8,6 +8,10 @@ See all your AWS accounts, all your regions, in one window.
 
 > **Alpha Release**: AWS Dash is in active development. Features may change as we work toward stable release.
 
+[![Release](https://img.shields.io/github/v/release/fibanez/aws-dash?include_prereleases&style=for-the-badge)](https://github.com/fibanez/aws-dash/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge)](/LICENSE-APACHE)
+[![Build](https://img.shields.io/github/actions/workflow/status/fibanez/aws-dash/release.yml?style=for-the-badge)](https://github.com/fibanez/aws-dash/actions/workflows/release.yml)
+
 &nbsp;
 
 AWS environments grow. Accounts multiply. Regions scatter. Finding what you need becomes a hunt across consoles and CLI sessions.
@@ -34,7 +38,7 @@ Describe what you want in plain English. AI agents handle the rest—finding res
 
 Pre-built binaries for Linux, Windows, and macOS:
 
-**[Download Latest Release](https://github.com/fibanez/aws-dash-architect/releases/latest)**
+**[Download Latest Release](https://github.com/fibanez/aws-dash/releases/latest)**
 
 ### Installation
 
@@ -59,8 +63,8 @@ chmod +x AWSDash-x86_64.AppImage
 For the latest development version or to compile yourself. Requires Rust 1.81+.
 
 ```bash
-git clone https://github.com/fibanez/aws-dash-architect.git
-cd aws-dash-architect
+git clone https://github.com/fibanez/aws-dash.git
+cd aws-dash
 cargo build --release
 ./target/release/awsdash
 ```
