@@ -15,7 +15,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-linux:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,8 @@ jobs:
             libgtk-3-dev \
             libwayland-dev \
             libxkbcommon-x11-dev \
-            wget
+            wget \
+            jq
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,13 +64,12 @@ jobs:
           # Copy binary
           cp target/release/awsdash AWSDash.AppDir/usr/bin/awsdash
 
-          # Copy icon (use project icon or create placeholder)
+          # Copy icon or create placeholder
           if [ -f dash-icon.png ]; then
             cp dash-icon.png AWSDash.AppDir/usr/share/icons/hicolor/256x256/apps/awsdash.png
             cp dash-icon.png AWSDash.AppDir/awsdash.png
           else
-            # Create a simple placeholder icon
-            convert -size 256x256 xc:#4a90d9 AWSDash.AppDir/awsdash.png 2>/dev/null || touch AWSDash.AppDir/awsdash.png
+            touch AWSDash.AppDir/awsdash.png
           fi
 
           # Create .desktop file
@@ -83,7 +83,6 @@ jobs:
           Comment=See all your AWS accounts, all your regions, in one window
           DESKTOP
 
-          # Copy desktop file to standard location
           cp AWSDash.AppDir/awsdash.desktop AWSDash.AppDir/usr/share/applications/
 
           # Create AppRun script
@@ -95,64 +94,62 @@ jobs:
           APPRUN
           chmod +x AWSDash.AppDir/AppRun
 
-          # Build AppImage (--appimage-extract-and-run avoids FUSE requirement in containers)
+          # Build AppImage (--appimage-extract-and-run avoids FUSE requirement)
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AWSDash.AppDir AWSDash-x86_64.AppImage
 
-      - name: Upload tarball
-        uses: actions/upload-artifact@v3
-        with:
-          name: awsdash-linux-x86_64
-          path: awsdash-linux-x86_64.tar.gz
-
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v3
-        with:
-          name: awsdash-linux-appimage
-          path: AWSDash-x86_64.AppImage
-
-  release:
-    needs: [build-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: artifacts
-
-      - name: Display artifacts
-        run: ls -R artifacts
-
-      - name: Create Gitea Release
+      - name: Create Release and Upload Assets
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          # Get tag name
-          TAG_NAME=${GITHUB_REF#refs/tags/}
+          # Determine tag name
+          if [ "${{ github.event_name }}" == "push" ]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          else
+            TAG_NAME="${{ github.event.inputs.tag }}"
+            if [ "$TAG_NAME" == "manual" ] || [ -z "$TAG_NAME" ]; then
+              TAG_NAME="v$(date +%Y%m%d-%H%M%S)"
+            fi
+          fi
 
-          # Create release using Gitea API
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+          echo "Creating release for tag: $TAG_NAME"
+
+          # Create release
+          RELEASE_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${RELEASE_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"Linux release for ${TAG_NAME}\"}" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases"
+            -d "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"Linux release for ${TAG_NAME}\", \"draft\": false, \"prerelease\": false}" \
+            "http://gitea:3000/api/v1/repos/${{ github.repository }}/releases")
 
-      - name: Upload Release Assets
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "Release response: $RELEASE_RESPONSE"
 
-          # Get release ID
-          RELEASE_ID=$(curl -s \
-            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/tags/${TAG_NAME}" | jq -r '.id')
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
 
-          # Upload tarball
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-            -F "attachment=@artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets"
+          if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "Failed to create release, trying to get existing..."
+            RELEASE_ID=$(curl -s \
+              -H "Authorization: token ${RELEASE_TOKEN}" \
+              "http://gitea:3000/api/v1/repos/${{ github.repository }}/releases/tags/${TAG_NAME}" | jq -r '.id')
+          fi
 
-          # Upload AppImage
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-            -F "attachment=@artifacts/awsdash-linux-appimage/AWSDash-x86_64.AppImage" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets"
+          echo "Release ID: $RELEASE_ID"
+
+          if [ "$RELEASE_ID" != "null" ] && [ -n "$RELEASE_ID" ]; then
+            # Upload tarball
+            echo "Uploading tarball..."
+            curl -X POST \
+              -H "Authorization: token ${RELEASE_TOKEN}" \
+              -F "attachment=@awsdash-linux-x86_64.tar.gz" \
+              "http://gitea:3000/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=awsdash-linux-x86_64.tar.gz"
+
+            # Upload AppImage
+            echo "Uploading AppImage..."
+            curl -X POST \
+              -H "Authorization: token ${RELEASE_TOKEN}" \
+              -F "attachment=@AWSDash-x86_64.AppImage" \
+              "http://gitea:3000/api/v1/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=AWSDash-x86_64.AppImage"
+
+            echo "Release created successfully!"
+          else
+            echo "Failed to get release ID"
+            exit 1
+          fi
