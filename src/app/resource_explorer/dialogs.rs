@@ -12,6 +12,16 @@ pub struct FuzzySearchDialog {
     pub selected_accounts: HashMap<String, bool>,       // Track checkbox selections by account_id
     pub selected_regions: HashMap<String, bool>,        // Track checkbox selections by region_code
     matcher: SkimMatcherV2,
+    // Unified selection dialog search terms (separate from individual dialogs)
+    pub unified_account_search: String,
+    pub unified_region_search: String,
+    pub unified_resource_search: String,
+    // Unified selection dialog "show only selected" filters
+    pub unified_show_only_selected_accounts: bool,
+    pub unified_show_only_selected_regions: bool,
+    pub unified_show_only_selected_resources: bool,
+    // Track if unified dialog has been initialized with current selections
+    unified_dialog_initialized: bool,
 }
 
 impl FuzzySearchDialog {
@@ -604,6 +614,455 @@ impl FuzzySearchDialog {
         }
 
         result
+    }
+
+    /// Show unified selection dialog with three panels (Account | Region | Resource)
+    /// Pre-populates with current selections from query_scope
+    pub fn show_unified_selection_dialog(
+        &mut self,
+        ctx: &Context,
+        is_open: &mut bool,
+        available_accounts: &[AwsAccount],
+        available_regions: &[String],
+        available_resource_types: &[ResourceTypeSelection],
+        current_accounts: &[AccountSelection],
+        current_regions: &[RegionSelection],
+        current_resources: &[ResourceTypeSelection],
+    ) -> Option<(Vec<AccountSelection>, Vec<RegionSelection>, Vec<ResourceTypeSelection>)> {
+        if !*is_open {
+            return None;
+        }
+
+        // Initialize dialog with current selections on first open
+        if !self.unified_dialog_initialized {
+            // Pre-populate accounts
+            for account in current_accounts {
+                self.selected_accounts.insert(account.account_id.clone(), true);
+            }
+            // Pre-populate regions
+            for region in current_regions {
+                self.selected_regions.insert(region.region_code.clone(), true);
+            }
+            // Pre-populate resource types
+            for resource in current_resources {
+                self.selected_resource_types.insert(resource.resource_type.clone(), true);
+            }
+            self.unified_dialog_initialized = true;
+        }
+
+        let mut result = None;
+        let mut should_close = false;
+
+        Window::new("Select Scope")
+            .default_size([1000.0, 500.0])
+            .resizable(true)
+            .collapsible(false)
+            .open(is_open)
+            .show(ctx, |ui| {
+                // Three-column layout for Account | Region | Resource
+                ui.columns(3, |columns| {
+                    // === ACCOUNTS PANEL ===
+                    columns[0].vertical(|ui| {
+                        ui.heading("Accounts");
+                        ui.separator();
+
+                        // Search input for accounts
+                        ui.horizontal(|ui| {
+                            ui.label("Search:");
+                            ui.text_edit_singleline(&mut self.unified_account_search);
+                        });
+
+                        // Show Only Selected checkbox
+                        ui.checkbox(
+                            &mut self.unified_show_only_selected_accounts,
+                            "Show Only Selected",
+                        );
+
+                        ui.separator();
+
+                        // Selection info and clear button
+                        ui.horizontal(|ui| {
+                            let selected_count = self.selected_accounts_count();
+                            ui.label(format!("Selected: {}", selected_count));
+                            if selected_count > 0 && ui.small_button("Clear").clicked() {
+                                self.clear_all_accounts();
+                            }
+                        });
+
+                        ui.separator();
+
+                        // Filter accounts based on unified search
+                        let mut filtered_accounts = self.filter_accounts_with_term(
+                            available_accounts,
+                            &self.unified_account_search.clone(),
+                        );
+
+                        // Apply "show only selected" filter
+                        if self.unified_show_only_selected_accounts {
+                            filtered_accounts.retain(|a| {
+                                self.selected_accounts
+                                    .get(&a.account_id)
+                                    .copied()
+                                    .unwrap_or(false)
+                            });
+                        }
+
+                        // Scrollable account list
+                        egui::ScrollArea::vertical()
+                            .id_salt("unified_accounts_scroll")
+                            .max_height(280.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if filtered_accounts.is_empty() {
+                                    if self.unified_show_only_selected_accounts {
+                                        ui.label("No selected accounts");
+                                    } else {
+                                        ui.label("No matching accounts");
+                                    }
+                                } else {
+                                    for account in &filtered_accounts {
+                                        let mut is_checked = self
+                                            .selected_accounts
+                                            .get(&account.account_id)
+                                            .copied()
+                                            .unwrap_or(false);
+
+                                        let label = format!(
+                                            "{} ({})",
+                                            account.account_name,
+                                            &account.account_id[..account.account_id.len().min(8)]
+                                        );
+
+                                        if ui.checkbox(&mut is_checked, label).changed() {
+                                            self.selected_accounts
+                                                .insert(account.account_id.clone(), is_checked);
+                                        }
+                                    }
+                                }
+                            });
+                    });
+
+                    // === REGIONS PANEL ===
+                    columns[1].vertical(|ui| {
+                        ui.heading("Regions");
+                        ui.separator();
+
+                        // Search input for regions
+                        ui.horizontal(|ui| {
+                            ui.label("Search:");
+                            ui.text_edit_singleline(&mut self.unified_region_search);
+                        });
+
+                        // Show Only Selected checkbox
+                        ui.checkbox(
+                            &mut self.unified_show_only_selected_regions,
+                            "Show Only Selected",
+                        );
+
+                        ui.separator();
+
+                        // Selection info and clear button
+                        ui.horizontal(|ui| {
+                            let selected_count = self.selected_regions_count();
+                            ui.label(format!("Selected: {}", selected_count));
+                            if selected_count > 0 && ui.small_button("Clear").clicked() {
+                                self.clear_all_regions();
+                            }
+                        });
+
+                        ui.separator();
+
+                        // Filter regions based on unified search
+                        let mut filtered_regions = self.filter_regions_with_term(
+                            available_regions,
+                            &self.unified_region_search.clone(),
+                        );
+
+                        // Apply "show only selected" filter
+                        if self.unified_show_only_selected_regions {
+                            filtered_regions.retain(|r| {
+                                self.selected_regions
+                                    .get(&r.region_code)
+                                    .copied()
+                                    .unwrap_or(false)
+                            });
+                        }
+
+                        // Scrollable region list
+                        egui::ScrollArea::vertical()
+                            .id_salt("unified_regions_scroll")
+                            .max_height(280.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if filtered_regions.is_empty() {
+                                    if self.unified_show_only_selected_regions {
+                                        ui.label("No selected regions");
+                                    } else {
+                                        ui.label("No matching regions");
+                                    }
+                                } else {
+                                    for region in &filtered_regions {
+                                        let mut is_checked = self
+                                            .selected_regions
+                                            .get(&region.region_code)
+                                            .copied()
+                                            .unwrap_or(false);
+
+                                        let label = format!(
+                                            "{} ({})",
+                                            region.display_name, region.region_code
+                                        );
+
+                                        if ui.checkbox(&mut is_checked, label).changed() {
+                                            self.selected_regions
+                                                .insert(region.region_code.clone(), is_checked);
+                                        }
+                                    }
+                                }
+                            });
+                    });
+
+                    // === RESOURCES PANEL ===
+                    columns[2].vertical(|ui| {
+                        ui.heading("Resources");
+                        ui.separator();
+
+                        // Search input for resources
+                        ui.horizontal(|ui| {
+                            ui.label("Search:");
+                            ui.text_edit_singleline(&mut self.unified_resource_search);
+                        });
+
+                        // Show Only Selected checkbox
+                        ui.checkbox(
+                            &mut self.unified_show_only_selected_resources,
+                            "Show Only Selected",
+                        );
+
+                        ui.separator();
+
+                        // Selection info and clear button
+                        ui.horizontal(|ui| {
+                            let selected_count = self.selected_resource_types_count();
+                            ui.label(format!("Selected: {}", selected_count));
+                            if selected_count > 0 && ui.small_button("Clear").clicked() {
+                                self.clear_all_resource_types();
+                            }
+                        });
+
+                        ui.separator();
+
+                        // Filter resource types based on unified search
+                        let mut filtered_types = self.filter_resource_types_with_term(
+                            available_resource_types,
+                            &self.unified_resource_search.clone(),
+                        );
+
+                        // Apply "show only selected" filter
+                        if self.unified_show_only_selected_resources {
+                            filtered_types.retain(|rt| {
+                                self.selected_resource_types
+                                    .get(&rt.resource_type)
+                                    .copied()
+                                    .unwrap_or(false)
+                            });
+                        }
+
+                        // Scrollable resource type list
+                        egui::ScrollArea::vertical()
+                            .id_salt("unified_resources_scroll")
+                            .max_height(280.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if filtered_types.is_empty() {
+                                    if self.unified_show_only_selected_resources {
+                                        ui.label("No selected resources");
+                                    } else {
+                                        ui.label("No matching resources");
+                                    }
+                                } else {
+                                    for resource_type in &filtered_types {
+                                        let mut is_checked = self
+                                            .selected_resource_types
+                                            .get(&resource_type.resource_type)
+                                            .copied()
+                                            .unwrap_or(false);
+
+                                        let label = format!(
+                                            "{}: {}",
+                                            resource_type.service_name, resource_type.display_name
+                                        );
+
+                                        if ui.checkbox(&mut is_checked, label).changed() {
+                                            self.selected_resource_types.insert(
+                                                resource_type.resource_type.clone(),
+                                                is_checked,
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                    });
+                });
+
+                ui.separator();
+
+                // Footer buttons
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        should_close = true;
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let total_selected = self.selected_accounts_count()
+                            + self.selected_regions_count()
+                            + self.selected_resource_types_count();
+
+                        let can_apply = total_selected > 0;
+
+                        let button_text = if total_selected > 0 {
+                            format!("Apply Selection ({})", total_selected)
+                        } else {
+                            "Apply Selection".to_string()
+                        };
+
+                        if ui
+                            .add_enabled(can_apply, egui::Button::new(button_text))
+                            .clicked()
+                        {
+                            let accounts = self.get_selected_accounts(available_accounts);
+                            let regions = self.get_selected_regions(available_regions);
+                            let resources =
+                                self.get_selected_resource_types(available_resource_types);
+
+                            result = Some((accounts, regions, resources));
+                            should_close = true;
+                        }
+                    });
+                });
+
+                // Handle keyboard navigation
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    should_close = true;
+                }
+            });
+
+        if should_close {
+            *is_open = false;
+            self.reset_unified();
+        }
+
+        result
+    }
+
+    /// Reset unified dialog state (separate from individual dialogs)
+    fn reset_unified(&mut self) {
+        self.unified_account_search.clear();
+        self.unified_region_search.clear();
+        self.unified_resource_search.clear();
+        self.unified_show_only_selected_accounts = false;
+        self.unified_show_only_selected_regions = false;
+        self.unified_show_only_selected_resources = false;
+        self.unified_dialog_initialized = false;
+        self.selected_accounts.clear();
+        self.selected_regions.clear();
+        self.selected_resource_types.clear();
+    }
+
+    /// Filter accounts with a specific search term
+    fn filter_accounts_with_term(
+        &self,
+        accounts: &[AwsAccount],
+        search_term: &str,
+    ) -> Vec<AwsAccount> {
+        if search_term.is_empty() {
+            let mut sorted_accounts = accounts.to_vec();
+            sorted_accounts.sort_by(|a, b| a.account_name.cmp(&b.account_name));
+            return sorted_accounts;
+        }
+
+        let mut scored_accounts: Vec<(AwsAccount, i64)> = accounts
+            .iter()
+            .filter_map(|account| {
+                let searchable_string = self.create_searchable_account_string(account);
+                self.matcher
+                    .fuzzy_match(&searchable_string, search_term)
+                    .map(|score| (account.clone(), score))
+            })
+            .collect();
+
+        scored_accounts.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_accounts
+            .into_iter()
+            .map(|(account, _)| account)
+            .collect()
+    }
+
+    /// Filter regions with a specific search term
+    fn filter_regions_with_term(
+        &self,
+        regions: &[String],
+        search_term: &str,
+    ) -> Vec<RegionSelection> {
+        let region_selections: Vec<RegionSelection> = regions
+            .iter()
+            .map(|region| {
+                RegionSelection::new(region.clone(), self.format_region_display_name(region))
+            })
+            .collect();
+
+        if search_term.is_empty() {
+            return region_selections;
+        }
+
+        let mut scored_regions: Vec<(RegionSelection, i64)> = region_selections
+            .into_iter()
+            .filter_map(|region| {
+                let search_text = format!("{} {}", region.display_name, region.region_code);
+                self.matcher
+                    .fuzzy_match(&search_text, search_term)
+                    .map(|score| (region, score))
+            })
+            .collect();
+
+        scored_regions.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_regions
+            .into_iter()
+            .map(|(region, _)| region)
+            .collect()
+    }
+
+    /// Filter resource types with a specific search term
+    fn filter_resource_types_with_term(
+        &self,
+        resource_types: &[ResourceTypeSelection],
+        search_term: &str,
+    ) -> Vec<ResourceTypeSelection> {
+        if search_term.is_empty() {
+            let mut sorted_types = resource_types.to_vec();
+            sorted_types.sort_by(|a, b| {
+                a.service_name
+                    .cmp(&b.service_name)
+                    .then_with(|| a.display_name.cmp(&b.display_name))
+            });
+            return sorted_types;
+        }
+
+        let mut scored_types: Vec<(ResourceTypeSelection, i64)> = resource_types
+            .iter()
+            .filter_map(|rt| {
+                let search_text = format!(
+                    "{} {} {}",
+                    rt.display_name, rt.resource_type, rt.service_name
+                );
+                self.matcher
+                    .fuzzy_match(&search_text, search_term)
+                    .map(|score| (rt.clone(), score))
+            })
+            .collect();
+
+        scored_types.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_types.into_iter().map(|(rt, _)| rt).collect()
     }
 
     fn filter_accounts(&self, accounts: &[AwsAccount]) -> Vec<AwsAccount> {

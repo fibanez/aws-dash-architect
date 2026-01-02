@@ -2,6 +2,9 @@
 
 ## [Unreleased] - 0.1.3
 
+### January 2026
+- **Resource Explorer UI**: Added unified three-panel selection dialog and collapsible active selection tags
+
 ### December 2025
 - **Agent Middleware System**: Extensible conversation middleware with logging, token tracking, and auto-analysis layers plus cancellation support
 - **AWS Resource Expansion**: Added 27 new resource types for CloudWatch, CloudWatch Logs, EC2, and Lambda services

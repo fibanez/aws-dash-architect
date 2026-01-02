@@ -683,6 +683,99 @@ impl ResourceExplorerWindow {
                     self.trigger_query_if_ready(&state, ctx);
                 }
             }
+
+            // Unified selection dialog (3-panel: Account | Region | Resource)
+            if state.show_unified_selection_dialog {
+                let available_accounts = self.get_available_accounts();
+
+                // Get current selections to pre-populate the dialog
+                let current_accounts = state.query_scope.accounts.clone();
+                let current_regions = state.query_scope.regions.clone();
+                let current_resources = state.query_scope.resource_types.clone();
+
+                // Merge default regions with currently selected regions (from bookmarks)
+                let mut available_regions = get_default_regions();
+                for region in &current_regions {
+                    if !available_regions.contains(&region.region_code) {
+                        available_regions.push(region.region_code.clone());
+                    }
+                }
+
+                // Merge default resource types with currently selected ones (from bookmarks)
+                let mut available_resource_types = get_default_resource_types();
+                for resource in &current_resources {
+                    if !available_resource_types
+                        .iter()
+                        .any(|rt| rt.resource_type == resource.resource_type)
+                    {
+                        available_resource_types.push(resource.clone());
+                    }
+                }
+
+                if let Some((accounts, regions, resources)) =
+                    self.fuzzy_dialog.show_unified_selection_dialog(
+                        ctx,
+                        &mut state.show_unified_selection_dialog,
+                        &available_accounts,
+                        &available_regions,
+                        &available_resource_types,
+                        &current_accounts,
+                        &current_regions,
+                        &current_resources,
+                    )
+                {
+                    // Replace current selections with new ones from dialog
+                    // This allows users to both add and remove items
+
+                    // Update accounts
+                    state.query_scope.accounts.clear();
+                    for account in accounts {
+                        tracing::info!(
+                            "Setting account: {} ({})",
+                            account.display_name,
+                            account.account_id
+                        );
+                        state.add_account(account);
+                    }
+
+                    // Update regions
+                    state.query_scope.regions.clear();
+                    for region in regions {
+                        tracing::info!(
+                            "Setting region: {} ({})",
+                            region.display_name,
+                            region.region_code
+                        );
+                        state.add_region(region);
+                    }
+
+                    // Update resource types
+                    state.query_scope.resource_types.clear();
+                    for resource in resources {
+                        tracing::info!(
+                            "Setting resource type: {} ({})",
+                            resource.display_name,
+                            resource.resource_type
+                        );
+                        state.add_resource_type(resource);
+                    }
+
+                    // Log current scope after update
+                    tracing::info!(
+                        "Current scope after unified selection: {} accounts, {} regions, {} resource types",
+                        state.query_scope.accounts.len(),
+                        state.query_scope.regions.len(),
+                        state.query_scope.resource_types.len()
+                    );
+
+                    if state.phase2_enrichment_in_progress {
+                        state.cancel_phase2_enrichment();
+                    }
+
+                    // Trigger query if we have all required scope elements
+                    self.trigger_query_if_ready(&state, ctx);
+                }
+            }
         }
 
         // Sync refresh dialog state and handle dialog
@@ -749,56 +842,87 @@ impl ResourceExplorerWindow {
     }
 
     fn render_active_tags_static(&self, ui: &mut Ui, state: &mut ResourceExplorerState) {
-        ui.label("Active Selection:");
+        // Count total tags
+        let total_accounts = state.query_scope.accounts.len();
+        let total_regions = state.query_scope.regions.len();
+        let total_resource_types = state.query_scope.resource_types.len();
+        let total_tags = total_accounts + total_regions + total_resource_types;
+
+        // Number of tags to show when collapsed (first "line")
+        const COLLAPSED_TAG_LIMIT: usize = 5;
+        let hidden_count = if total_tags > COLLAPSED_TAG_LIMIT {
+            total_tags - COLLAPSED_TAG_LIMIT
+        } else {
+            0
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Selection:")
+                    .small()
+            );
+
+            // Show expand/collapse button if there are hidden tags
+            if hidden_count > 0 {
+                let button_text = if state.active_selection_expanded {
+                    "[-]".to_string()
+                } else {
+                    format!("[+{}]", hidden_count)
+                };
+                if ui.small_button(&button_text).clicked() {
+                    state.active_selection_expanded = !state.active_selection_expanded;
+                }
+            }
+        });
 
         ui.horizontal_wrapped(|ui| {
-            // Account tags with new colored tag rendering
+            let mut tags_shown = 0;
+            let show_all = state.active_selection_expanded || hidden_count == 0;
+
+            // Account tags with colored tag rendering
             let mut accounts_to_remove = Vec::new();
             for account in &state.query_scope.accounts {
+                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
+                    break;
+                }
                 if Self::render_closeable_account_tag(ui, &account.account_id, &account.display_name, account.color) {
                     accounts_to_remove.push(account.account_id.clone());
                 }
-                ui.add_space(4.0);
+                ui.add_space(2.0);
+                tags_shown += 1;
             }
             for account_id in accounts_to_remove {
-                tracing::info!("❌ Removing account: {}", account_id);
+                tracing::info!("Removing account: {}", account_id);
                 let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_account(&account_id);
-
-                // Log current scope after removal
-                tracing::info!("📊 Current scope after removing account: {} accounts, {} regions, {} resource types",
-                    state.query_scope.accounts.len(),
-                    state.query_scope.regions.len(),
-                    state.query_scope.resource_types.len());
-
                 self.handle_active_selection_reduction(state, was_phase2_running);
             }
 
-            // Region tags with new colored tag rendering
+            // Region tags with colored tag rendering
             let mut regions_to_remove = Vec::new();
             for region in &state.query_scope.regions {
+                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
+                    break;
+                }
                 if Self::render_closeable_region_tag(ui, &region.region_code, &region.display_name, region.color) {
                     regions_to_remove.push(region.region_code.clone());
                 }
-                ui.add_space(4.0);
+                ui.add_space(2.0);
+                tags_shown += 1;
             }
             for region_code in regions_to_remove {
-                tracing::info!("❌ Removing region: {}", region_code);
+                tracing::info!("Removing region: {}", region_code);
                 let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_region(&region_code);
-
-                // Log current scope after removal
-                tracing::info!("📊 Current scope after removing region: {} accounts, {} regions, {} resource types",
-                    state.query_scope.accounts.len(),
-                    state.query_scope.regions.len(),
-                    state.query_scope.resource_types.len());
-
                 self.handle_active_selection_reduction(state, was_phase2_running);
             }
 
-            // Resource type tags with improved styling
+            // Resource type tags with count
             let mut resource_types_to_remove = Vec::new();
             for resource_type in &state.query_scope.resource_types {
+                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
+                    break;
+                }
                 // Count resources for this resource type
                 let resource_count = state.resources.iter()
                     .filter(|r| r.resource_type == resource_type.resource_type)
@@ -807,19 +931,13 @@ impl ResourceExplorerWindow {
                 if Self::render_closeable_resource_type_tag_with_count(ui, &resource_type.resource_type, &resource_type.display_name, resource_count) {
                     resource_types_to_remove.push(resource_type.resource_type.clone());
                 }
-                ui.add_space(4.0);
+                ui.add_space(2.0);
+                tags_shown += 1;
             }
             for resource_type in resource_types_to_remove {
-                tracing::info!("❌ Removing resource type: {}", resource_type);
+                tracing::info!("Removing resource type: {}", resource_type);
                 let was_phase2_running = state.phase2_enrichment_in_progress;
                 state.remove_resource_type(&resource_type);
-
-                // Log current scope after removal
-                tracing::info!("📊 Current scope after removing resource type: {} accounts, {} regions, {} resource types",
-                    state.query_scope.accounts.len(),
-                    state.query_scope.regions.len(),
-                    state.query_scope.resource_types.len());
-
                 self.handle_active_selection_reduction(state, was_phase2_running);
             }
         });
@@ -1698,17 +1816,26 @@ impl ResourceExplorerWindow {
 
             // Toolbar buttons (need mutable state access for dialog flags)
             if let Ok(mut state) = self.state.try_write() {
-                if ui.button("Add Account").clicked() {
-                    state.show_account_dialog = true;
+                // Main "Select" button opens unified selection dialog
+                if ui.button("Select").clicked() {
+                    state.show_unified_selection_dialog = true;
                 }
 
-                if ui.button("Add Region").clicked() {
-                    state.show_region_dialog = true;
-                }
-
-                if ui.button("Add Resource").clicked() {
-                    state.show_resource_type_dialog = true;
-                }
+                // Dropdown menu for individual selection dialogs (power user shortcuts)
+                ui.menu_button("v", |ui| {
+                    if ui.button("Add Account").clicked() {
+                        state.show_account_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Add Region").clicked() {
+                        state.show_region_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Add Resource").clicked() {
+                        state.show_resource_type_dialog = true;
+                        ui.close();
+                    }
+                });
 
                 ui.separator();
 
@@ -3855,10 +3982,10 @@ impl ResourceExplorerWindow {
         };
 
         // Create tag content with close button
-        let tag_text = format!("{} ×", clean_display_name);
+        let tag_text = format!("{} x", clean_display_name);
 
-        // Calculate text size
-        let font_size = 11.0;
+        // Calculate text size (smaller for compact display)
+        let font_size = 9.0;
         let text_galley = ui.fonts(|fonts| {
             fonts.layout_no_wrap(
                 tag_text.clone(),
@@ -3867,8 +3994,8 @@ impl ResourceExplorerWindow {
             )
         });
 
-        // Add padding to the text size
-        let padding = egui::vec2(8.0, 4.0);
+        // Add padding to the text size (smaller padding)
+        let padding = egui::vec2(5.0, 2.0);
         let desired_size = text_galley.size() + 2.0 * padding;
 
         // Allocate space for the tag
@@ -3877,7 +4004,7 @@ impl ResourceExplorerWindow {
         if ui.is_rect_visible(rect) {
             // Draw rounded rectangle background
             ui.painter().rect_filled(
-                rect, 4.0, // corner radius
+                rect, 3.0, // corner radius
                 tag_color,
             );
 
@@ -3903,10 +4030,10 @@ impl ResourceExplorerWindow {
         let text_color = get_contrasting_text_color(tag_color);
 
         // Create tag content with close button
-        let tag_text = format!("{} ×", display_name);
+        let tag_text = format!("{} x", display_name);
 
-        // Calculate text size
-        let font_size = 11.0;
+        // Calculate text size (smaller for compact display)
+        let font_size = 9.0;
         let text_galley = ui.fonts(|fonts| {
             fonts.layout_no_wrap(
                 tag_text.clone(),
@@ -3915,8 +4042,8 @@ impl ResourceExplorerWindow {
             )
         });
 
-        // Add padding to the text size
-        let padding = egui::vec2(8.0, 4.0);
+        // Add padding to the text size (smaller padding)
+        let padding = egui::vec2(5.0, 2.0);
         let desired_size = text_galley.size() + 2.0 * padding;
 
         // Allocate space for the tag
@@ -3925,7 +4052,7 @@ impl ResourceExplorerWindow {
         if ui.is_rect_visible(rect) {
             // Draw rounded rectangle background
             ui.painter().rect_filled(
-                rect, 4.0, // corner radius
+                rect, 3.0, // corner radius
                 tag_color,
             );
 
@@ -3953,13 +4080,13 @@ impl ResourceExplorerWindow {
 
         // Create tag content with close button and count
         let tag_text = if count == 0 {
-            format!("{} (0 Found) ×", display_name)
+            format!("{} (0) x", display_name)
         } else {
-            format!("{} ({}) ×", display_name, count)
+            format!("{} ({}) x", display_name, count)
         };
 
-        // Calculate text size
-        let font_size = 11.0;
+        // Calculate text size (smaller for compact display)
+        let font_size = 9.0;
         let text_galley = ui.fonts(|fonts| {
             fonts.layout_no_wrap(
                 tag_text.clone(),
@@ -3968,8 +4095,8 @@ impl ResourceExplorerWindow {
             )
         });
 
-        // Add padding to the text size
-        let padding = egui::vec2(8.0, 4.0);
+        // Add padding to the text size (smaller padding)
+        let padding = egui::vec2(5.0, 2.0);
         let desired_size = text_galley.size() + 2.0 * padding;
 
         // Allocate space for the tag
@@ -3978,7 +4105,7 @@ impl ResourceExplorerWindow {
         if ui.is_rect_visible(rect) {
             // Draw rounded rectangle background
             ui.painter().rect_filled(
-                rect, 4.0, // corner radius
+                rect, 3.0, // corner radius
                 tag_color,
             );
 

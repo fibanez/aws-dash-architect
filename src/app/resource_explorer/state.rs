@@ -613,12 +613,15 @@ pub struct ResourceExplorerState {
     pub show_account_dialog: bool,
     pub show_region_dialog: bool,
     pub show_resource_type_dialog: bool,
+    pub show_unified_selection_dialog: bool, // Unified selection dialog (3-panel)
     pub stale_data_threshold_minutes: i64, // Data older than this is considered stale
     // Tag filtering UI state
     pub show_only_tagged: bool,    // Filter to only resources with tags
     pub show_only_untagged: bool,  // Filter to only resources without tags
     pub show_filter_builder: bool, // Show advanced filter builder dialog
     pub show_property_filter_builder: bool, // Show property filter builder dialog
+    // Active selection UI state
+    pub active_selection_expanded: bool, // Whether the active selection tags are expanded
     // Tag grouping UI state
     pub show_tag_hierarchy_builder: bool, // Show tag hierarchy builder dialog
     pub min_tag_resources_for_grouping: usize, // Minimum resource count for tags to appear in GroupBy dropdown
@@ -665,11 +668,13 @@ impl ResourceExplorerState {
             show_account_dialog: false,
             show_region_dialog: false,
             show_resource_type_dialog: false,
+            show_unified_selection_dialog: false,
             stale_data_threshold_minutes: 15, // Consider data stale after 15 minutes
             show_only_tagged: false,
             show_only_untagged: false,
             show_filter_builder: false,
             show_property_filter_builder: false,
+            active_selection_expanded: false,
             show_tag_hierarchy_builder: false,
             min_tag_resources_for_grouping: 1, // Default: show all tags with at least 1 resource
             show_property_hierarchy_builder: false,
