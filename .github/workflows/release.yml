@@ -26,7 +26,10 @@ jobs:
             libgtk-3-dev \
             libwayland-dev \
             libxkbcommon-x11-dev \
-            libfuse2
+            libfuse2 \
+            libjavascriptcoregtk-4.1-dev \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
