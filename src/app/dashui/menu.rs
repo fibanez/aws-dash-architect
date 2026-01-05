@@ -1,6 +1,5 @@
 use crate::app::aws_identity::LoginState;
 use crate::app::dashui::app::{NavigationStatusBarSettings, ThemeChoice};
-use crate::log_debug;
 use eframe::egui;
 use egui::{Color32, RichText};
 use std::sync::{Arc, Mutex};
@@ -200,34 +199,45 @@ fn show_aws_login_status(
     aws_identity_center: Option<&Arc<Mutex<crate::app::aws_identity::AwsIdentityCenter>>>,
 ) {
     // Get the LoginState as the single source of truth
-    let login_state = if let Some(aws_identity) = aws_identity_center {
-        if let Ok(identity) = aws_identity.lock() {
-            Some(identity.login_state.clone())
-        } else {
-            None
+    // Use try_lock() to avoid blocking UI when login thread holds the mutex
+    let (login_state, lock_busy) = if let Some(aws_identity) = aws_identity_center {
+        match aws_identity.try_lock() {
+            Ok(identity) => (Some(identity.login_state.clone()), false),
+            Err(_) => {
+                // Lock is held by login thread - indicate busy state
+                (None, true)
+            }
         }
     } else {
-        None
+        (None, false)
     };
 
-    // Display the indicator based solely on LoginState
-    let tooltip_text = match &login_state {
-        Some(LoginState::LoggedIn) => "AWS: Logged in and connected",
-        Some(LoginState::DeviceAuthorization(_)) => "AWS: Authorization in progress",
-        Some(LoginState::Error(_)) => "AWS: Login error",
-        _ => "AWS: Not logged in",
+    // Display the indicator based on LoginState (or busy state if lock contended)
+    let tooltip_text = if lock_busy {
+        "AWS: Authorizing... (please wait)"
+    } else {
+        match &login_state {
+            Some(LoginState::LoggedIn) => "AWS: Logged in and connected",
+            Some(LoginState::DeviceAuthorization(_)) => "AWS: Authorization in progress",
+            Some(LoginState::Error(_)) => "AWS: Login error",
+            _ => "AWS: Not logged in",
+        }
     };
 
     // Simple AWS text indicator
     let click_response = ui.horizontal(|ui| {
-        // Login status text and color based solely on LoginState
-        let (status_text, text_color) = match &login_state {
-            Some(LoginState::LoggedIn) => ("Logged In", Color32::from_rgb(50, 200, 80)),
-            Some(LoginState::DeviceAuthorization(_)) => {
-                ("Logging In", Color32::from_rgb(220, 180, 50))
+        // Login status text and color (handle lock_busy as "authorizing")
+        let (status_text, text_color) = if lock_busy {
+            ("Authorizing...", Color32::from_rgb(220, 180, 50))
+        } else {
+            match &login_state {
+                Some(LoginState::LoggedIn) => ("Logged In", Color32::from_rgb(50, 200, 80)),
+                Some(LoginState::DeviceAuthorization(_)) => {
+                    ("Logging In", Color32::from_rgb(220, 180, 50))
+                }
+                Some(LoginState::Error(_)) => ("Login Error", Color32::from_rgb(200, 50, 50)),
+                _ => ("Not Logged In", Color32::from_rgb(180, 180, 180)),
             }
-            Some(LoginState::Error(_)) => ("Login Error", Color32::from_rgb(200, 50, 50)),
-            _ => ("Not Logged In", Color32::from_rgb(180, 180, 180)),
         };
 
         let status_label = RichText::new(status_text)

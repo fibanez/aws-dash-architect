@@ -83,9 +83,6 @@ pub fn get_api_documentation() -> String {
     docs.push_str("\n## Region Management\n\n");
     docs.push_str(&regions::get_documentation());
 
-    docs.push_str("\n## Resource Queries\n\n");
-    docs.push_str(&resources::get_documentation());
-
     docs.push_str("\n## CloudWatch Logs\n\n");
     docs.push_str(&cloudwatch_logs::get_documentation());
 

@@ -1,6 +1,7 @@
 use super::{
-    aws_client::*, bookmarks::*, colors::*, dialogs::*, state::*, status::global_status, tree::*,
-    widgets::*,
+    aws_client::*, bookmarks::*, dialogs::*, instances::pane_renderer::PaneAction,
+    instances::pane_renderer::PaneRenderer, retry_tracker::retry_tracker,
+    sdk_errors::ErrorCategory, state::*, status::global_status, tree::*, widgets::*,
 };
 #[cfg(debug_assertions)]
 use super::verification_window::VerificationWindow;
@@ -26,10 +27,24 @@ enum DragData {
     },
 }
 
+/// Action requested by the Explorer window
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowAction {
+    /// No action, window continues normally
+    #[default]
+    None,
+    /// Minimize - hide window but keep state (can be restored)
+    Minimize,
+    /// Terminate - destroy window and clear state (cache preserved)
+    Terminate,
+}
+
 pub struct ResourceExplorerWindow {
     state: Arc<RwLock<ResourceExplorerState>>,
     is_open: bool,
     is_focused: bool,
+    /// Track if minimize was requested (to distinguish from X button terminate)
+    minimize_requested: bool,
     fuzzy_dialog: FuzzySearchDialog,
     tree_renderer: TreeRenderer,
     aws_client: Option<Arc<AWSResourceClient>>,
@@ -75,6 +90,12 @@ pub struct ResourceExplorerWindow {
 
     // Pending actions to communicate with main app
     pending_actions: Arc<Mutex<Vec<super::ResourceExplorerAction>>>,
+    console_role_menu_updates: Arc<Mutex<Vec<super::ConsoleRoleMenuUpdate>>>,
+
+    // Service availability dialog (shows failed queries with error categories)
+    show_service_availability_dialog: bool,
+    last_failed_queries: std::collections::HashMap<String, ErrorCategory>, // Snapshot of failed queries with error categories for dialog
+    last_failed_queries_snapshotted: bool, // Track if we've already snapshotted to prevent per-frame execution
 
     // Verification window (DEBUG builds only)
     #[cfg(debug_assertions)]
@@ -85,11 +106,13 @@ impl ResourceExplorerWindow {
     pub fn new(
         state: Arc<RwLock<ResourceExplorerState>>,
         pending_actions: Arc<Mutex<Vec<super::ResourceExplorerAction>>>,
+        console_role_menu_updates: Arc<Mutex<Vec<super::ConsoleRoleMenuUpdate>>>,
     ) -> Self {
         Self {
             state,
             is_open: false,
             is_focused: false,
+            minimize_requested: false,
             fuzzy_dialog: FuzzySearchDialog::new(),
             tree_renderer: TreeRenderer::new(),
             aws_client: None,
@@ -127,6 +150,10 @@ impl ResourceExplorerWindow {
             bookmark_clipboard: None,
             bookmark_clipboard_is_cut: false,
             pending_actions,
+            show_service_availability_dialog: false,
+            last_failed_queries: std::collections::HashMap::new(),
+            last_failed_queries_snapshotted: false,
+            console_role_menu_updates,
             #[cfg(debug_assertions)]
             verification_window: VerificationWindow::new(),
         }
@@ -142,6 +169,88 @@ impl ResourceExplorerWindow {
         self.bookmark_manager.clone()
     }
 
+    /// Get user-friendly error category label for display
+    fn error_category_label(category: &ErrorCategory) -> String {
+        match category {
+            ErrorCategory::NetworkError { message } => {
+                if message.is_empty() {
+                    "Network Error".to_string()
+                } else {
+                    format!("Network Error: {}", message)
+                }
+            }
+            ErrorCategory::Throttled { service, .. } => {
+                format!("Rate Limited: {}", service)
+            }
+            ErrorCategory::Timeout { .. } => "Timeout".to_string(),
+            ErrorCategory::ServiceUnavailable { service, .. } => {
+                format!("Service Unavailable: {}", service)
+            }
+            ErrorCategory::NonRetryable { code, message, is_permission_error } => {
+                if *is_permission_error {
+                    format!("Permission Denied: {}", code)
+                } else if code == "Error" && !message.is_empty() {
+                    // Show the actual error message when code is generic
+                    message.clone()
+                } else {
+                    code.clone()
+                }
+            }
+        }
+    }
+
+    /// Get color for error category display
+    fn error_category_color(category: &ErrorCategory) -> Color32 {
+        match category {
+            ErrorCategory::NetworkError { .. } => Color32::from_rgb(255, 150, 50),
+            ErrorCategory::Throttled { .. } => Color32::from_rgb(255, 200, 100),
+            ErrorCategory::Timeout { .. } => Color32::from_rgb(255, 180, 80),
+            ErrorCategory::ServiceUnavailable { .. } => Color32::from_rgb(255, 160, 60),
+            ErrorCategory::NonRetryable { is_permission_error, .. } => {
+                if *is_permission_error {
+                    Color32::from_rgb(255, 100, 100) // Red for permissions
+                } else {
+                    Color32::from_rgb(255, 120, 120)
+                }
+            }
+        }
+    }
+
+    /// Reset the explorer state (called on Terminate action)
+    /// Clears: resources, query scope, filters, tree state
+    /// Preserves: cache (shared Moka cache is global), bookmarks (global)
+    pub fn reset_state(&mut self) {
+        if let Ok(mut state) = self.state.try_write() {
+            // Clear resources and query results
+            state.resources.clear();
+            state.cached_queries.clear();
+
+            // Reset query scope to empty
+            state.query_scope = QueryScope::default();
+
+            // Clear filters
+            state.tag_filter_group = TagFilterGroup::new();
+            state.property_filter_group =
+                crate::app::resource_explorer::PropertyFilterGroup::new();
+            state.search_filter.clear();
+
+            // Reset loading state
+            state.loading_tasks.clear();
+            state.phase1_failed_queries.clear();
+            state.phase1_tag_fetching = false;
+            state.phase2_enrichment_in_progress = false;
+            state.phase2_enrichment_completed = false;
+
+            // Reset grouping to default
+            state.primary_grouping = GroupingMode::ByAccount;
+
+            tracing::info!("Explorer state reset (Terminate action)");
+        }
+
+        // Reset tree renderer state
+        self.tree_renderer = TreeRenderer::new();
+    }
+
     /// Set the AWS Identity Center reference to access real account data
     pub fn set_aws_identity_center(
         &mut self,
@@ -155,6 +264,9 @@ impl ResourceExplorerWindow {
                 // Extract the default role name from identity center
                 let default_role = identity_center_guard.default_role_name.clone();
                 drop(identity_center_guard); // Release the lock early
+
+                self.tree_renderer
+                    .set_default_role_name(Some(default_role.clone()));
 
                 // Create credential coordinator with live reference to identity center
                 let credential_coordinator = Arc::new(
@@ -179,6 +291,7 @@ impl ResourceExplorerWindow {
                 }
             }
         } else {
+            self.tree_renderer.set_default_role_name(None);
             // Clear AWS client if identity center is removed
             self.aws_client = None;
 
@@ -197,9 +310,28 @@ impl ResourceExplorerWindow {
         self.aws_client.clone()
     }
 
-    pub fn show(&mut self, ctx: &Context) -> bool {
+    pub fn show(&mut self, ctx: &Context) -> WindowAction {
         if !self.is_open {
-            return false;
+            return WindowAction::None;
+        }
+
+        // Reset minimize_requested flag at the start of each frame
+        self.minimize_requested = false;
+
+        // Poll V8 JavaScript action queue for showInExplorer() calls
+        let v8_actions = super::drain_explorer_actions();
+        for action in v8_actions {
+            match action {
+                super::ExplorerAction::OpenWithConfig(config) => {
+                    self.apply_ephemeral_config(config);
+                }
+            }
+        }
+
+        if let Ok(mut updates) = self.console_role_menu_updates.lock() {
+            for update in updates.drain(..) {
+                self.tree_renderer.apply_console_role_menu_update(update);
+            }
         }
 
         // Increment frame counter for debouncing
@@ -269,20 +401,44 @@ impl ResourceExplorerWindow {
             }
         }
 
-        let mut is_open = self.is_open;
-
         // Calculate window size based on screen dimensions
         let screen_rect = ctx.screen_rect();
         let top_bar_height = 60.0; // Approximate height of the top menu bar
         let window_width = 800.0;
         let window_height = screen_rect.height() - top_bar_height - 40.0; // Leave some margin
 
-        let response = Window::new("AWS Explorer")
-            .open(&mut is_open)
+        // Track close button click
+        let mut close_clicked = false;
+
+        // Configure window with custom title bar for minimize/close buttons
+        let _response = Window::new("AWS Explorer")
+            .title_bar(false) // Custom title bar
             .default_size([window_width, window_height])
-            .min_size([600.0, 400.0]) // Set minimum size to prevent window from getting too small
+            .min_size([600.0, 400.0])
             .resizable(true)
+            .movable(true)
+            .collapsible(true)
+            .constrain(true)
             .show(ctx, |ui| {
+            // ================================================================
+            // CUSTOM TITLE BAR - minimize and close buttons
+            // ================================================================
+            ui.horizontal(|ui| {
+                ui.heading("AWS Explorer");
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // X (close) button - rightmost
+                    if ui.button("X").on_hover_text("Close window").clicked() {
+                        close_clicked = true;
+                    }
+
+                    // Minimize button - next to X
+                    if ui.button("_").on_hover_text("Minimize - Hide window (keep state)").clicked() {
+                        self.minimize_requested = true;
+                    }
+                });
+            });
+            ui.separator();
                 // Check if this window has focus
                 self.is_focused = ui
                     .ctx()
@@ -297,11 +453,92 @@ impl ResourceExplorerWindow {
                         let is_active = status_line != "Ready";
 
                         ui.horizontal(|ui| {
+                            // Use horizontal scroll to prevent long messages from expanding window width
+                            // The scroll bar is invisible (no bar style) but allows content to overflow
+                            egui::ScrollArea::horizontal()
+                                .id_salt("status_bar_scroll")
+                                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                                .show(ui, |ui| {
+
                             // Check for Phase 1 (resource listing) progress
                             let phase1_status = if let Ok(state) = self.state.try_read() {
                                 if state.is_phase1_in_progress() {
-                                    let (pending, total, services) = state.get_phase1_progress();
-                                    Some((pending, total, services, state.phase1_failed_services.len()))
+                                    // Phase 1 in progress - clear old failed queries indicator and reset snapshot flag
+                                    if !self.last_failed_queries.is_empty() {
+                                        self.last_failed_queries.clear();
+                                    }
+                                    self.last_failed_queries_snapshotted = false; // Reset flag for next Phase 1 completion
+                                    let (pending, total, failed, queries) = state.get_phase1_progress();
+                                    Some((pending, total, queries, failed))
+                                } else {
+                                    // Phase 1 complete - snapshot failed queries with error categories ONCE
+                                    // Only run this expensive operation once using the snapshotted flag
+                                    if !state.phase1_failed_queries.is_empty() && !self.last_failed_queries_snapshotted {
+                                        self.last_failed_queries.clear();
+
+                                        for query_key in &state.phase1_failed_queries {
+                                            // Query retry_tracker for error category
+                                            if let Some(retry_state) = retry_tracker().get_query_state(query_key) {
+                                                if let Some(error_category) = retry_state.last_error {
+                                                    self.last_failed_queries.insert(
+                                                        query_key.clone(),
+                                                        error_category
+                                                    );
+                                                } else {
+                                                    // Fallback: Query failed but no error category (shouldn't happen)
+                                                    self.last_failed_queries.insert(
+                                                        query_key.clone(),
+                                                        ErrorCategory::NonRetryable {
+                                                            code: "Unknown".to_string(),
+                                                            message: "Query failed".to_string(),
+                                                            is_permission_error: false,
+                                                        }
+                                                    );
+                                                }
+                                            } else {
+                                                // Fallback: retry_tracker doesn't have this query
+                                                self.last_failed_queries.insert(
+                                                    query_key.clone(),
+                                                    ErrorCategory::NonRetryable {
+                                                        code: "Unknown".to_string(),
+                                                        message: "Query failed".to_string(),
+                                                        is_permission_error: false,
+                                                    }
+                                                );
+                                            }
+                                        }
+
+                                        self.last_failed_queries_snapshotted = true; // Mark as snapshotted to prevent re-execution
+                                    }
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            // Check for Phase 1 tag fetching progress (during normalization)
+                            let phase1_tag_status = if let Ok(state) = self.state.try_read() {
+                                if state.phase1_tag_fetching {
+                                    Some((
+                                        state.phase1_tag_resource_type.clone().unwrap_or_else(|| "resources".to_string()),
+                                        state.phase1_tag_progress_count,
+                                        state.phase1_tag_progress_total,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            // Check for Phase 1.5 (tag analysis) progress
+                            let phase1_5_status = if let Ok(state) = self.state.try_read() {
+                                if state.phase1_5_in_progress {
+                                    Some((
+                                        state.phase1_5_stage.clone().unwrap_or_else(|| "Analyzing".to_string()),
+                                        state.phase1_5_progress_count,
+                                        state.phase1_5_progress_total,
+                                    ))
                                 } else {
                                     None
                                 }
@@ -326,6 +563,9 @@ impl ResourceExplorerWindow {
                                 None
                             };
 
+                            // Get retry summary for status display
+                            let retry_summary = retry_tracker().get_summary();
+
                             // Show Phase 1 progress if active (takes priority over Phase 2)
                             if let Some((pending, total, services, failed)) = phase1_status {
                                 ui.spinner();
@@ -335,30 +575,121 @@ impl ResourceExplorerWindow {
                                 let short_names: Vec<String> = services
                                     .iter()
                                     .map(|s| {
-                                        s.strip_prefix("AWS::")
-                                            .unwrap_or(s)
+                                        // Extract just the service name from full query key
+                                        // "account:region:AWS::Lambda::Function" -> "Lambda"
+                                        let resource_type = s.split(':').last().unwrap_or(s);
+                                        resource_type
+                                            .strip_prefix("AWS::")
+                                            .unwrap_or(resource_type)
                                             .split("::")
                                             .next()
-                                            .unwrap_or(s)
+                                            .unwrap_or(resource_type)
                                             .to_string()
                                     })
                                     .collect();
+                                // Deduplicate service names (same service across regions)
+                                let unique_names: std::collections::HashSet<_> = short_names.iter().cloned().collect();
+                                let mut unique_list: Vec<_> = unique_names.into_iter().collect();
+                                unique_list.sort();
+
                                 // Show up to 3 pending services
-                                let service_list = if short_names.len() <= 3 {
-                                    short_names.join(", ")
+                                let service_list = if unique_list.len() <= 3 {
+                                    unique_list.join(", ")
                                 } else {
-                                    format!("{}, +{} more", short_names[..3].join(", "), short_names.len() - 3)
+                                    format!("{}, +{} more", unique_list[..3].join(", "), unique_list.len() - 3)
                                 };
-                                let mut message = format!(
+                                let message = format!(
                                     "Loading resources ({}/{})... {}",
                                     completed, total, service_list
                                 );
-                                if failed > 0 {
-                                    message.push_str(&format!(" [{} failed]", failed));
-                                }
+
                                 ui.label(
                                     egui::RichText::new(&message)
                                         .color(Color32::from_rgb(255, 200, 100)) // Orange for Phase 1
+                                        .small(),
+                                );
+
+                                // Show failed count as clickable indicator with tooltip
+                                if failed > 0 {
+                                    let failed_response = ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(format!("[{} unavailable]", failed))
+                                                .color(Color32::from_rgb(255, 150, 50))
+                                                .small()
+                                        ).sense(egui::Sense::click())
+                                    );
+
+                                    if failed_response.clicked() {
+                                        self.show_service_availability_dialog = true;
+                                    }
+
+                                    failed_response.on_hover_ui(|ui| {
+                                        ui.label(egui::RichText::new("Service Availability").strong());
+                                        ui.label("Some services are not available in all AWS regions.");
+                                        ui.label("Click to see details.");
+                                    });
+                                }
+
+                                // Add retry/throttle status if any
+                                if retry_summary.active_retries > 0 || retry_summary.throttled_count > 0 {
+                                    let retry_info = if retry_summary.throttled_count > 0 {
+                                        format!("[{} throttled]", retry_summary.throttled_count)
+                                    } else if retry_summary.timeout_count > 0 {
+                                        format!("[{} timeout]", retry_summary.timeout_count)
+                                    } else if retry_summary.network_error_count > 0 {
+                                        format!("[{} network]", retry_summary.network_error_count)
+                                    } else {
+                                        format!("[{} retrying]", retry_summary.active_retries)
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(&retry_info)
+                                            .color(Color32::from_rgb(255, 150, 50))
+                                            .small(),
+                                    );
+                                }
+
+                                // Show additional retry indicator if throttling is occurring
+                                if retry_summary.throttled_count > 0 {
+                                    ui.label(
+                                        egui::RichText::new("(SDK retrying)")
+                                            .color(Color32::from_rgb(255, 150, 50)) // Darker orange
+                                            .small(),
+                                    );
+                                }
+
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(100));
+                            }
+                            // Show Phase 1 tag fetching progress (during normalization)
+                            else if let Some((resource_type, count, total)) = phase1_tag_status {
+                                ui.spinner();
+                                // Shorten resource type: "AWS::IAM::Role" -> "IAM Role"
+                                let short_type = resource_type
+                                    .strip_prefix("AWS::")
+                                    .unwrap_or(&resource_type)
+                                    .replace("::", " ");
+                                let message = format!(
+                                    "Fetching {} tags ({}/{})",
+                                    short_type, count, total
+                                );
+                                ui.label(
+                                    egui::RichText::new(&message)
+                                        .color(Color32::from_rgb(255, 220, 150)) // Light orange for tag fetching
+                                        .small(),
+                                );
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_millis(100));
+                            }
+                            // Show Phase 1.5 progress if active (tag analysis between Phase 1 and Phase 2)
+                            else if let Some((stage, count, total)) = phase1_5_status {
+                                ui.spinner();
+                                let message = format!(
+                                    "{}... ({}/{})",
+                                    stage, count, total
+                                );
+                                ui.label(
+                                    egui::RichText::new(&message)
+                                        .color(Color32::from_rgb(180, 255, 180)) // Light green for Phase 1.5
                                         .small(),
                                 );
                                 ui.ctx()
@@ -368,9 +699,16 @@ impl ResourceExplorerWindow {
                             else if let Some((service, count, total)) = phase2_status {
                                 // Animated spinner indicator
                                 ui.spinner();
+
+                                // Format service name for display (e.g., "AWS::S3::Bucket" -> "S3 Bucket")
+                                let display_name = service
+                                    .strip_prefix("AWS::")
+                                    .unwrap_or(&service)
+                                    .replace("::", " ");
+
                                 let message = format!(
-                                    "Loading {} details... ({}/{})",
-                                    service, count, total
+                                    "Enriching {} properties... ({}/{})",
+                                    display_name, count, total
                                 );
                                 ui.label(
                                     egui::RichText::new(&message)
@@ -402,6 +740,7 @@ impl ResourceExplorerWindow {
                                 ui.ctx()
                                     .request_repaint_after(std::time::Duration::from_millis(50));
                             } else {
+                                // Show the standard status line (Ready, etc.)
                                 ui.label(
                                     egui::RichText::new(&status_line)
                                         .color(Color32::GRAY)
@@ -409,32 +748,83 @@ impl ResourceExplorerWindow {
                                 );
                             }
 
+                            // Always show availability indicator when there are failures (after any status)
+                            // Use self.last_failed_queries which persists across frames after Phase 1 completes
+                            // This shows alongside "Ready" or other status messages
+                            let persistent_failed_count = self.last_failed_queries.len();
+                            if persistent_failed_count > 0 {
+                                let indicator_response = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(format!("[{} queries failed]", persistent_failed_count))
+                                            .color(Color32::from_rgb(255, 150, 50))
+                                            .small()
+                                    ).sense(egui::Sense::click())
+                                );
+
+                                if indicator_response.clicked() {
+                                    self.show_service_availability_dialog = true;
+                                }
+
+                                indicator_response.on_hover_ui(|ui| {
+                                    ui.label(egui::RichText::new("Failed Queries").strong());
+                                    ui.separator();
+                                    ui.label("Some queries failed due to errors or regional unavailability.");
+                                    ui.label("This may be due to permissions, service availability, or network issues.");
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Click to see details and error categories.").weak());
+                                });
+                            }
+
+                            }); // End ScrollArea
+
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    // Get shared cache stats (Moka-based)
+                                    let shared_cache = super::cache::shared_cache();
+                                    shared_cache.run_pending_tasks(); // Ensure stats are up-to-date
+                                    let cache_stats = shared_cache.memory_stats();
+
                                     if let Ok(state) = self.state.try_read() {
-                                        let cache_count = state.get_cache_resource_count();
                                         let active_count = state.resources.len();
 
                                         // Get actual process memory usage
                                         if let Some(usage) = memory_stats::memory_stats() {
                                             let physical_mb =
                                                 usage.physical_mem as f64 / (1024.0 * 1024.0);
+                                            let cache_mb =
+                                                cache_stats.total_size() as f64 / (1024.0 * 1024.0);
+                                            let ratio = cache_stats.compression_ratio();
+
+                                            // Show cache stats with compression info
+                                            let cache_info = if cache_stats.resource_entry_count > 0 {
+                                                format!(
+                                                    "{:.1}MB cache ({:.1}x) | {} active, {} queries",
+                                                    cache_mb,
+                                                    ratio,
+                                                    active_count,
+                                                    cache_stats.resource_entry_count
+                                                )
+                                            } else {
+                                                format!("{} active", active_count)
+                                            };
 
                                             ui.label(
                                                 egui::RichText::new(format!(
-                                                    "{:.0}MB | {} active, {} cached",
-                                                    physical_mb, active_count, cache_count
+                                                    "{:.0}MB | {}",
+                                                    physical_mb, cache_info
                                                 ))
                                                 .small()
                                                 .color(Color32::GRAY),
                                             );
                                         } else {
                                             // Fallback if memory stats unavailable
+                                            let cache_mb =
+                                                cache_stats.total_size() as f64 / (1024.0 * 1024.0);
                                             ui.label(
                                                 egui::RichText::new(format!(
-                                                    "{} active, {} cached",
-                                                    active_count, cache_count
+                                                    "{} active, {:.1}MB cached",
+                                                    active_count, cache_mb
                                                 ))
                                                 .small()
                                                 .color(Color32::GRAY),
@@ -453,7 +843,28 @@ impl ResourceExplorerWindow {
                     .resizable(true)
                     .show_inside(ui, |ui| {
                         if let Ok(mut state) = self.state.try_write() {
-                            self.render_sidebar(ui, &mut state);
+                            let actions = PaneRenderer::render_sidebar(ui, &mut state);
+                            // Process sidebar actions (dialog triggers)
+                            for action in actions {
+                                match action {
+                                    PaneAction::ShowTagFilterBuilder => {
+                                        state.show_filter_builder = true;
+                                    }
+                                    PaneAction::ShowPropertyFilterBuilder => {
+                                        state.show_property_filter_builder = true;
+                                    }
+                                    PaneAction::ShowTagHierarchyBuilder => {
+                                        state.show_tag_hierarchy_builder = true;
+                                    }
+                                    PaneAction::ShowPropertyHierarchyBuilder => {
+                                        state.show_property_hierarchy_builder = true;
+                                    }
+                                    // These actions are not expected from sidebar
+                                    PaneAction::RemoveAccount(_)
+                                    | PaneAction::RemoveRegion(_)
+                                    | PaneAction::RemoveResourceType(_) => {}
+                                }
+                            }
                         }
                     });
 
@@ -516,19 +927,66 @@ impl ResourceExplorerWindow {
                     ui.separator();
 
                     if let Ok(mut state) = self.state.try_write() {
-                        self.render_active_tags_static(ui, &mut state);
+                        // Render active selection tags using PaneRenderer
+                        let actions = PaneRenderer::render_active_tags(ui, &mut state);
+                        // Process any removal actions
+                        for action in actions {
+                            match action {
+                                PaneAction::RemoveAccount(id) => {
+                                    tracing::info!("Removing account: {}", id);
+                                    let was_phase2_running = state.phase2_enrichment_in_progress;
+                                    state.remove_account(&id);
+                                    self.handle_active_selection_reduction(&mut state, was_phase2_running);
+                                }
+                                PaneAction::RemoveRegion(code) => {
+                                    tracing::info!("Removing region: {}", code);
+                                    let was_phase2_running = state.phase2_enrichment_in_progress;
+                                    state.remove_region(&code);
+                                    self.handle_active_selection_reduction(&mut state, was_phase2_running);
+                                }
+                                PaneAction::RemoveResourceType(rt) => {
+                                    tracing::info!("Removing resource type: {}", rt);
+                                    let was_phase2_running = state.phase2_enrichment_in_progress;
+                                    state.remove_resource_type(&rt);
+                                    self.handle_active_selection_reduction(&mut state, was_phase2_running);
+                                }
+                                PaneAction::ShowTagFilterBuilder => {
+                                    state.show_filter_builder = true;
+                                }
+                                PaneAction::ShowPropertyFilterBuilder => {
+                                    state.show_property_filter_builder = true;
+                                }
+                                PaneAction::ShowTagHierarchyBuilder => {
+                                    state.show_tag_hierarchy_builder = true;
+                                }
+                                PaneAction::ShowPropertyHierarchyBuilder => {
+                                    state.show_property_hierarchy_builder = true;
+                                }
+                            }
+                        }
                         ui.add_space(10.0);
-                        Self::render_search_bar_static(ui, &mut state);
+                        PaneRenderer::render_search_bar(ui, &mut state);
                         ui.separator();
-                        Self::render_tree_view_static(ui, &state, &mut self.tree_renderer);
+                        PaneRenderer::render_tree_view(ui, &state, &mut self.tree_renderer);
                     } else {
                         ui.label("Loading...");
                     }
                 });
             });
 
-        // Update is_open from the window response
-        self.is_open = is_open;
+        // Determine what action to take based on button clicks
+        let action = if self.minimize_requested {
+            // Minimize button was clicked - hide window but keep state
+            self.is_open = false;
+            WindowAction::Minimize
+        } else if close_clicked {
+            // X button was clicked - close and terminate (clear state)
+            self.is_open = false;
+            WindowAction::Terminate
+        } else {
+            // Window is still open, no action needed
+            WindowAction::None
+        };
 
         // Sync failed requests from window to tree renderer
         if let Ok(failed_set) = self.failed_detail_requests.try_read() {
@@ -546,7 +1004,16 @@ impl ResourceExplorerWindow {
             self.tree_renderer.pending_detail_requests.clear();
 
             if let Ok(state) = self.state.try_read() {
-                self.process_pending_detail_requests(&state, ctx, requests);
+                if let Some(ref aws_client) = self.aws_client {
+                    PaneRenderer::process_pending_detail_requests(
+                        &state,
+                        ctx,
+                        requests,
+                        aws_client,
+                        &self.state,
+                        &self.failed_detail_requests,
+                    );
+                }
             }
         }
 
@@ -561,7 +1028,7 @@ impl ResourceExplorerWindow {
             self.tree_renderer.pending_tag_clicks.clear();
 
             if let Ok(mut state) = self.state.try_write() {
-                self.process_tag_badge_clicks(&mut state, clicks);
+                PaneRenderer::process_tag_badge_clicks(&mut state, clicks);
             }
         }
 
@@ -692,6 +1159,14 @@ impl ResourceExplorerWindow {
                 let current_accounts = state.query_scope.accounts.clone();
                 let current_regions = state.query_scope.regions.clone();
                 let current_resources = state.query_scope.resource_types.clone();
+
+                // Debug: log what we're passing to the dialog
+                tracing::debug!(
+                    "Opening unified selection dialog with: {} accounts, {} regions, {} resources",
+                    current_accounts.len(),
+                    current_regions.len(),
+                    current_resources.len()
+                );
 
                 // Merge default regions with currently selected regions (from bookmarks)
                 let mut available_regions = get_default_regions();
@@ -830,6 +1305,11 @@ impl ResourceExplorerWindow {
             self.render_bookmark_edit_dialog(ctx);
         }
 
+        // Service availability dialog (shows failed queries due to regional availability)
+        if self.show_service_availability_dialog {
+            self.render_service_availability_dialog(ctx);
+        }
+
         // Verification window (DEBUG builds only)
         #[cfg(debug_assertions)]
         {
@@ -838,244 +1318,7 @@ impl ResourceExplorerWindow {
             self.verification_window.show(ctx, &self.state, credential_coordinator.as_ref());
         }
 
-        response.is_some()
-    }
-
-    fn render_active_tags_static(&self, ui: &mut Ui, state: &mut ResourceExplorerState) {
-        // Count total tags
-        let total_accounts = state.query_scope.accounts.len();
-        let total_regions = state.query_scope.regions.len();
-        let total_resource_types = state.query_scope.resource_types.len();
-        let total_tags = total_accounts + total_regions + total_resource_types;
-
-        // Number of tags to show when collapsed (first "line")
-        const COLLAPSED_TAG_LIMIT: usize = 5;
-        let hidden_count = if total_tags > COLLAPSED_TAG_LIMIT {
-            total_tags - COLLAPSED_TAG_LIMIT
-        } else {
-            0
-        };
-
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Selection:")
-                    .small()
-            );
-
-            // Show expand/collapse button if there are hidden tags
-            if hidden_count > 0 {
-                let button_text = if state.active_selection_expanded {
-                    "[-]".to_string()
-                } else {
-                    format!("[+{}]", hidden_count)
-                };
-                if ui.small_button(&button_text).clicked() {
-                    state.active_selection_expanded = !state.active_selection_expanded;
-                }
-            }
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            let mut tags_shown = 0;
-            let show_all = state.active_selection_expanded || hidden_count == 0;
-
-            // Account tags with colored tag rendering
-            let mut accounts_to_remove = Vec::new();
-            for account in &state.query_scope.accounts {
-                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
-                    break;
-                }
-                if Self::render_closeable_account_tag(ui, &account.account_id, &account.display_name, account.color) {
-                    accounts_to_remove.push(account.account_id.clone());
-                }
-                ui.add_space(2.0);
-                tags_shown += 1;
-            }
-            for account_id in accounts_to_remove {
-                tracing::info!("Removing account: {}", account_id);
-                let was_phase2_running = state.phase2_enrichment_in_progress;
-                state.remove_account(&account_id);
-                self.handle_active_selection_reduction(state, was_phase2_running);
-            }
-
-            // Region tags with colored tag rendering
-            let mut regions_to_remove = Vec::new();
-            for region in &state.query_scope.regions {
-                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
-                    break;
-                }
-                if Self::render_closeable_region_tag(ui, &region.region_code, &region.display_name, region.color) {
-                    regions_to_remove.push(region.region_code.clone());
-                }
-                ui.add_space(2.0);
-                tags_shown += 1;
-            }
-            for region_code in regions_to_remove {
-                tracing::info!("Removing region: {}", region_code);
-                let was_phase2_running = state.phase2_enrichment_in_progress;
-                state.remove_region(&region_code);
-                self.handle_active_selection_reduction(state, was_phase2_running);
-            }
-
-            // Resource type tags with count
-            let mut resource_types_to_remove = Vec::new();
-            for resource_type in &state.query_scope.resource_types {
-                if !show_all && tags_shown >= COLLAPSED_TAG_LIMIT {
-                    break;
-                }
-                // Count resources for this resource type
-                let resource_count = state.resources.iter()
-                    .filter(|r| r.resource_type == resource_type.resource_type)
-                    .count();
-
-                if Self::render_closeable_resource_type_tag_with_count(ui, &resource_type.resource_type, &resource_type.display_name, resource_count) {
-                    resource_types_to_remove.push(resource_type.resource_type.clone());
-                }
-                ui.add_space(2.0);
-                tags_shown += 1;
-            }
-            for resource_type in resource_types_to_remove {
-                tracing::info!("Removing resource type: {}", resource_type);
-                let was_phase2_running = state.phase2_enrichment_in_progress;
-                state.remove_resource_type(&resource_type);
-                self.handle_active_selection_reduction(state, was_phase2_running);
-            }
-        });
-    }
-
-    fn render_search_bar_static(ui: &mut Ui, state: &mut ResourceExplorerState) {
-        ui.horizontal(|ui| {
-            ui.label("Search:");
-            ui.text_edit_singleline(&mut state.search_filter);
-            if ui.button("Clear").clicked() {
-                state.search_filter.clear();
-            }
-            ui.label("🔍");
-        });
-    }
-
-    /// Apply all tag filters to a resource (presence/absence + advanced filters)
-    fn apply_tag_filters(resource: &ResourceEntry, state: &ResourceExplorerState) -> bool {
-        // First, apply presence/absence filters
-        let presence_filter_active = state.show_only_tagged || state.show_only_untagged;
-
-        if presence_filter_active {
-            let has_tags = !resource.tags.is_empty();
-
-            // Show only tagged: pass resources with tags
-            if state.show_only_tagged && !has_tags {
-                return false;
-            }
-
-            // Show only untagged: pass resources without tags
-            if state.show_only_untagged && has_tags {
-                return false;
-            }
-        }
-
-        // Then, apply advanced filter group
-        // Empty filter groups match everything (no filtering)
-        if !state.tag_filter_group.is_empty() && !state.tag_filter_group.matches(resource) {
-            return false;
-        }
-
-        true
-    }
-
-    /// Apply property filters to a resource
-    fn apply_property_filters(resource: &ResourceEntry, state: &ResourceExplorerState) -> bool {
-        // Empty filter groups match everything (no filtering)
-        if state.property_filter_group.is_empty() {
-            return true;
-        }
-
-        // Apply the property filter group
-        let matches = state
-            .property_filter_group
-            .matches(&resource.resource_id, &state.property_catalog);
-
-        tracing::debug!(
-            "Property filter for resource {}: matches={}",
-            resource.resource_id,
-            matches
-        );
-
-        matches
-    }
-
-    fn render_tree_view_static(
-        ui: &mut Ui,
-        state: &ResourceExplorerState,
-        tree_renderer: &mut TreeRenderer,
-    ) {
-        // Update Phase 2 status for tree renderer
-        tree_renderer.phase2_in_progress = state.phase2_enrichment_in_progress;
-
-        // Use remaining available space for the tree view with scrolling
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false]) // Don't shrink the scroll area based on content
-            .show(ui, |ui| {
-                if state.query_scope.is_empty() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("Select accounts, regions, and resource types to begin exploring");
-                    });
-                } else if state.resources.is_empty() && !state.is_loading() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("No resources found for the current selection");
-                    });
-                } else if !state.resources.is_empty() {
-                    // Apply all filters (tag + property) before rendering
-                    let filtered_resources: Vec<_> = state
-                        .resources
-                        .iter()
-                        .filter(|resource| {
-                            Self::apply_tag_filters(resource, state)
-                                && Self::apply_property_filters(resource, state)
-                        })
-                        .cloned()
-                        .collect();
-
-                    // Show filter stats if filters are active
-                    let tag_filter_count =
-                        state.tag_presence_filter_count() + state.tag_filter_group.filter_count();
-                    let property_filter_count = state.property_filter_group.total_filter_count();
-                    let total_filter_count = tag_filter_count + property_filter_count;
-                    if total_filter_count > 0 {
-                        ui.horizontal(|ui| {
-                            ui.label(format!(
-                                "Showing {} of {} resources ({}  filter{})",
-                                filtered_resources.len(),
-                                state.resources.len(),
-                                total_filter_count,
-                                if total_filter_count == 1 { "" } else { "s" }
-                            ));
-                        });
-                        ui.separator();
-                    }
-
-                    if filtered_resources.is_empty() {
-                        ui.centered_and_justified(|ui| {
-                            ui.label("No resources match the active tag filters");
-                        });
-                    } else {
-                        // Use cached tree rendering to prevent unnecessary rebuilds
-                        tree_renderer.render_tree_cached(
-                            ui,
-                            &filtered_resources,
-                            state.primary_grouping.clone(),
-                            &state.search_filter,
-                            &state.badge_selector,
-                            &state.tag_popularity,
-                            state.enrichment_version,
-                        );
-                    }
-                } else if state.is_loading() {
-                    ui.centered_and_justified(|ui| {
-                        ui.spinner();
-                        ui.label("Loading resources...");
-                    });
-                }
-            });
+        action
     }
 
     fn render_refresh_dialog_standalone(&mut self, ctx: &Context) {
@@ -1560,221 +1803,6 @@ impl ResourceExplorerWindow {
         }
     }
 
-    /// Render left sidebar with grouping and filter controls
-    fn render_sidebar(&self, ui: &mut Ui, state: &mut ResourceExplorerState) {
-        ui.vertical(|ui| {
-            // Group By section
-            ui.label("Group by:");
-            ui.add_space(4.0);
-
-            // Primary grouping dropdown with tag-based options
-            egui::ComboBox::from_label("")
-                .selected_text(state.primary_grouping.display_name())
-                .show_ui(ui, |ui| {
-                    // Section 1: Built-in groupings
-                    ui.label(egui::RichText::new("Built-in").small().weak());
-                    for mode in GroupingMode::default_modes() {
-                        ui.selectable_value(
-                            &mut state.primary_grouping,
-                            mode.clone(),
-                            mode.display_name(),
-                        );
-                    }
-
-                    // Separator
-                    ui.separator();
-
-                    // Section 2: Tag-based groupings (dynamic)
-                    let tag_keys = state.tag_discovery.get_tag_keys_by_popularity();
-                    if !tag_keys.is_empty() {
-                        ui.label(egui::RichText::new("Tag Groupings").small().weak());
-
-                        for (tag_key, resource_count) in tag_keys.iter().take(20) {
-                            // Only show tags with multiple values (can meaningfully group)
-                            if let Some(metadata) = state.tag_discovery.get_tag_metadata(tag_key) {
-                                if !metadata.has_multiple_values() {
-                                    continue; // Skip tags with only 1 value
-                                }
-
-                                // Apply minimum resource count filter
-                                if *resource_count < state.min_tag_resources_for_grouping {
-                                    continue;
-                                }
-
-                                let value_count = metadata.value_count();
-                                let label = format!("Tag: {} ({} resources, {} values)",
-                                    tag_key, resource_count, value_count);
-
-                                let mode = GroupingMode::ByTag(tag_key.clone());
-                                let response = ui.selectable_value(
-                                    &mut state.primary_grouping,
-                                    mode,
-                                    label,
-                                );
-
-                                // Add tooltip with value distribution preview
-                                if response.hovered() {
-                                    let values = metadata.get_sorted_values();
-                                    let preview = values.iter()
-                                        .take(5)
-                                        .map(|v| v.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let more = if values.len() > 5 {
-                                        format!(" ...and {} more", values.len() - 5)
-                                    } else {
-                                        String::new()
-                                    };
-                                    response.on_hover_text(format!("Values: {}{}", preview, more));
-                                }
-                            }
-                        }
-
-                        ui.separator();
-                    }
-
-                    // Section 3: Tag Hierarchy option
-                    ui.label(egui::RichText::new("Advanced").small().weak());
-                    if ui.button("Tag Hierarchy...").clicked() {
-                        tracing::info!("Tag Hierarchy builder clicked");
-                        state.show_tag_hierarchy_builder = true;
-                    }
-                    if ui.button("Property Hierarchy...").clicked() {
-                        tracing::info!("Property Hierarchy builder clicked");
-                        state.show_property_hierarchy_builder = true;
-                    }
-                });
-
-            ui.add_space(8.0);
-
-            // Min Resources control (below Group By dropdown)
-            ui.label("Min res:");
-            let drag_response = ui.add(
-                egui::DragValue::new(&mut state.min_tag_resources_for_grouping)
-                    .speed(1.0)
-                    .range(1..=100)
-            );
-            drag_response.on_hover_text(
-                "Minimum number of resources for tags to appear in GroupBy dropdown. Drag to adjust or click to type."
-            );
-
-            ui.separator();
-            ui.add_space(8.0);
-
-            // Tag presence checkboxes
-            let mut show_tagged = state.show_only_tagged;
-            if ui
-                .checkbox(&mut show_tagged, "Show only tagged")
-                .on_hover_text("Show only resources with any tags")
-                .changed()
-            {
-                state.show_only_tagged = show_tagged;
-                // Ensure mutual exclusivity
-                if show_tagged {
-                    state.show_only_untagged = false;
-                }
-                tracing::info!(
-                    "Tag filter changed: show_only_tagged={}",
-                    state.show_only_tagged
-                );
-            }
-
-            let mut show_untagged = state.show_only_untagged;
-            if ui
-                .checkbox(&mut show_untagged, "Show only untagged")
-                .on_hover_text("Show only resources with no tags")
-                .changed()
-            {
-                state.show_only_untagged = show_untagged;
-                // Ensure mutual exclusivity
-                if show_untagged {
-                    state.show_only_tagged = false;
-                }
-                tracing::info!(
-                    "Tag filter changed: show_only_untagged={}",
-                    state.show_only_untagged
-                );
-            }
-
-            ui.add_space(8.0);
-
-            // Filter buttons stacked vertically
-            let advanced_count = state.tag_filter_group.filter_count();
-            let property_filter_count = state.property_filter_group.total_filter_count();
-            let presence_count = state.tag_presence_filter_count();
-            let total_filter_count = presence_count + advanced_count + property_filter_count;
-
-            // Tag Filters button
-            if ui.button("Tag Filters...").on_hover_text("Open advanced tag filter builder").clicked() {
-                state.show_filter_builder = true;
-            }
-            if advanced_count > 0 {
-                let filter_text = if advanced_count == 1 {
-                    "(1 filter active)".to_string()
-                } else {
-                    format!("({} filters active)", advanced_count)
-                };
-                // Bright red text on light yellow background for visibility
-                let label = egui::Label::new(
-                    egui::RichText::new(filter_text)
-                        .color(egui::Color32::from_rgb(200, 40, 40))
-                        .strong()
-                );
-                egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(255, 255, 200))
-                    .inner_margin(egui::Margin::symmetric(6, 2))
-                    .corner_radius(3.0)
-                    .show(ui, |ui| {
-                        ui.add(label);
-                    });
-            }
-
-            ui.add_space(4.0);
-
-            // Property Filters button
-            if ui.button("Property Filters...").on_hover_text("Open property filter builder").clicked() {
-                state.show_property_filter_builder = true;
-            }
-            if property_filter_count > 0 {
-                let filter_text = if property_filter_count == 1 {
-                    "(1 filter active)".to_string()
-                } else {
-                    format!("({} filters active)", property_filter_count)
-                };
-                // Bright red text on light yellow background for visibility
-                let label = egui::Label::new(
-                    egui::RichText::new(filter_text)
-                        .color(egui::Color32::from_rgb(200, 40, 40))
-                        .strong()
-                );
-                egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(255, 255, 200))
-                    .inner_margin(egui::Margin::symmetric(6, 2))
-                    .corner_radius(3.0)
-                    .show(ui, |ui| {
-                        ui.add(label);
-                    });
-            }
-
-            ui.add_space(4.0);
-
-            // Clear Filters button (only show if filters are active)
-            if total_filter_count > 0
-                && ui.button("Clear Filters").on_hover_text("Clear all tag and property filters").clicked() {
-                    // Clear all tag filters
-                    state.show_only_tagged = false;
-                    state.show_only_untagged = false;
-                    state.tag_filter_group = TagFilterGroup::new();
-
-                    // Clear all property filters
-                    state.property_filter_group =
-                        crate::app::resource_explorer::PropertyFilterGroup::new();
-
-                    tracing::info!("Cleared all filters (tags and properties)");
-                }
-        });
-    }
-
     /// Render unified toolbar combining bookmarks menu and control buttons
     /// Returns: (clicked_bookmark_id, show_add_dialog, show_manage_dialog, clear_clicked)
     fn render_unified_toolbar(&mut self, ui: &mut Ui) -> (Option<String>, bool, bool, bool) {
@@ -1864,6 +1892,33 @@ impl ResourceExplorerWindow {
                     }
                 }
 
+                // Cache menu with memory info and clear option
+                ui.separator();
+                ui.menu_button("Cache", |ui| {
+                    let shared_cache = super::cache::shared_cache();
+                    shared_cache.run_pending_tasks();
+                    let stats = shared_cache.memory_stats();
+
+                    // Memory stats display
+                    let compressed_mb = stats.total_size() as f64 / (1024.0 * 1024.0);
+                    let uncompressed_mb = stats.total_uncompressed_size as f64 / (1024.0 * 1024.0);
+                    let ratio = stats.compression_ratio();
+
+                    ui.label(format!("Resource queries: {}", stats.resource_entry_count));
+                    ui.label(format!("Detailed entries: {}", stats.detailed_entry_count));
+                    ui.separator();
+                    ui.label(format!("Compressed: {:.1} MB", compressed_mb));
+                    ui.label(format!("Uncompressed: {:.1} MB", uncompressed_mb));
+                    ui.label(format!("Compression: {:.1}x", ratio));
+                    ui.separator();
+
+                    if ui.button("Clear Cache").clicked() {
+                        shared_cache.clear();
+                        tracing::info!("User cleared resource cache");
+                        ui.close();
+                    }
+                });
+
                 // Show loading indicator if queries are active
                 if state.is_loading() {
                     ui.separator();
@@ -1874,6 +1929,8 @@ impl ResourceExplorerWindow {
                     ));
                 }
             }
+
+            // Minimize button moved to custom title bar
         });
 
         (
@@ -2200,6 +2257,135 @@ impl ResourceExplorerWindow {
             self.editing_bookmark_id = None;
             self.bookmark_edit_name.clear();
             self.bookmark_edit_description.clear();
+        }
+    }
+
+    /// Render the failed queries dialog showing which queries failed and their error categories
+    fn render_service_availability_dialog(&mut self, ctx: &Context) {
+        let response = Window::new("Failed Queries")
+            .default_size([450.0, 350.0])
+            .collapsible(false)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    // Header with explanation
+                    ui.label(
+                        egui::RichText::new("The following queries failed to complete")
+                            .strong()
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        "Queries may fail due to various reasons including service unavailability \
+                         in a region, permissions issues, network errors, or rate limiting."
+                    );
+                    ui.add_space(8.0);
+
+                    ui.separator();
+
+                    // Group failed queries by service type for clarity
+                    let mut by_service: std::collections::HashMap<String, Vec<(String, String, ErrorCategory)>> =
+                        std::collections::HashMap::new();
+
+                    for (query_key, error_category) in &self.last_failed_queries {
+                        let parts: Vec<&str> = query_key.split(':').collect();
+                        if parts.len() >= 3 {
+                            let account = parts[0].to_string();
+                            let region = parts[1].to_string();
+                            let resource_type = parts[2..].join(":");
+
+                            // Shorten resource type: "AWS::BedrockAgentCore::AgentRuntime" -> "BedrockAgentCore AgentRuntime"
+                            let short_name = resource_type
+                                .strip_prefix("AWS::")
+                                .unwrap_or(&resource_type)
+                                .replace("::", " ");
+
+                            by_service
+                                .entry(short_name)
+                                .or_default()
+                                .push((account, region, error_category.clone()));
+                        }
+                    }
+
+                    // Sort services alphabetically
+                    let mut services: Vec<_> = by_service.keys().cloned().collect();
+                    services.sort();
+
+                    // Display grouped by service
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            for service in &services {
+                                if let Some(locations) = by_service.get(service) {
+                                    egui::CollapsingHeader::new(
+                                        egui::RichText::new(format!("{} ({} regions)", service, locations.len()))
+                                            .color(Color32::from_rgb(255, 180, 100))
+                                    )
+                                    .default_open(services.len() == 1) // Auto-expand if only one service
+                                    .show(ui, |ui| {
+                                        for (account, region, error_category) in locations {
+                                            let error_label = Self::error_category_label(error_category);
+                                            let error_color = Self::error_category_color(error_category);
+
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("  {} (Account: {})", region, account));
+                                                ui.label(
+                                                    egui::RichText::new(format!("[{}]", error_label))
+                                                        .color(error_color)
+                                                        .small()
+                                                );
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                        });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // Common causes and troubleshooting tips
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Common Causes:").strong());
+                        });
+                        ui.label("  dispatch failure - Service endpoint not available in region");
+                        ui.label("  failed to construct request - Invalid service configuration");
+                        ui.label("  Permission Denied - IAM policy missing required permissions");
+                        ui.label("  Rate Limited - Too many API requests");
+                        ui.label("  Timeout - Request exceeded time limit");
+                        ui.label("  Service Unavailable - Temporary AWS service disruption");
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Tip:").strong());
+                            ui.label("Check AWS Regional Services list and IAM policies.");
+                        });
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Close button
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Close").clicked() {
+                                self.show_service_availability_dialog = false;
+                            }
+                            if ui.button("Dismiss (hide indicator)").clicked() {
+                                self.show_service_availability_dialog = false;
+                                self.last_failed_queries.clear(); // Clear to hide the indicator
+                                self.last_failed_queries_snapshotted = false; // Reset snapshot flag
+                                // Also clear state's failed queries to prevent re-snapshot
+                                if let Ok(mut state) = self.state.try_write() {
+                                    state.phase1_failed_queries.clear();
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+
+        // Handle window close via X button
+        if response.is_none() {
+            self.show_service_availability_dialog = false;
         }
     }
 
@@ -3120,6 +3306,129 @@ impl ResourceExplorerWindow {
         false
     }
 
+    /// Apply ephemeral configuration from V8 showInExplorer() call
+    /// Opens the Explorer window and applies the specified configuration
+    fn apply_ephemeral_config(
+        &mut self,
+        config: crate::app::agent_framework::v8_bindings::bindings::resources::ShowInExplorerArgs,
+    ) {
+        use crate::app::resource_explorer::colors::{assign_account_color, assign_region_color};
+        use crate::app::resource_explorer::state::*;
+
+        // Open the window if not already open
+        self.is_open = true;
+
+        // Get write lock on state to apply configuration
+        let state_arc = self.state.clone();
+        let mut attempts = 0;
+        while attempts < 10 {
+            if let Ok(mut state) = state_arc.try_write() {
+                // Apply account selection if provided
+                if let Some(account_ids) = config.accounts {
+                    // Match account IDs to AccountSelection from identity center
+                    if let Some(ref identity) = self.aws_identity_center {
+                        if let Ok(identity_guard) = identity.lock() {
+                            let accounts: Vec<AccountSelection> = account_ids
+                                .iter()
+                                .filter_map(|id| {
+                                    identity_guard
+                                        .accounts
+                                        .iter()
+                                        .find(|acc| &acc.account_id == id)
+                                        .map(|acc| AccountSelection {
+                                            account_id: acc.account_id.clone(),
+                                            display_name: acc.account_name.clone(),
+                                            color: assign_account_color(&acc.account_id),
+                                        })
+                                })
+                                .collect();
+                            if !accounts.is_empty() {
+                                state.query_scope.accounts = accounts;
+                            }
+                        }
+                    }
+                }
+
+                // Apply region selection if provided
+                if let Some(region_codes) = config.regions {
+                    let regions: Vec<RegionSelection> = region_codes
+                        .iter()
+                        .map(|code| RegionSelection {
+                            region_code: code.clone(),
+                            display_name: code.clone(), // V8 provides codes only
+                            color: assign_region_color(code),
+                        })
+                        .collect();
+                    if !regions.is_empty() {
+                        state.query_scope.regions = regions;
+                    }
+                }
+
+                // Apply resource type selection if provided
+                if let Some(resource_types) = config.resource_types {
+                    let types: Vec<ResourceTypeSelection> = resource_types
+                        .iter()
+                        .map(|rt| {
+                            // Extract service name from CloudFormation type (AWS::EC2::Instance -> EC2)
+                            let service_name = rt
+                                .split("::")
+                                .nth(1)
+                                .unwrap_or("Unknown")
+                                .to_string();
+
+                            ResourceTypeSelection {
+                                resource_type: rt.clone(),
+                                display_name: rt.clone(), // V8 provides CloudFormation types
+                                service_name,
+                            }
+                        })
+                        .collect();
+                    if !types.is_empty() {
+                        state.query_scope.resource_types = types;
+                    }
+                }
+
+                // Apply grouping if provided
+                if let Some(grouping) = config.grouping {
+                    // Convert from V8 GroupingMode to state GroupingMode via serde
+                    if let Ok(json) = serde_json::to_value(&grouping) {
+                        if let Ok(converted) = serde_json::from_value(json) {
+                            state.primary_grouping = converted;
+                        }
+                    }
+                }
+
+                // Apply tag filters if provided
+                if let Some(tag_filters) = config.tag_filters {
+                    // Convert from V8 TagFilterGroup to state TagFilterGroup via serde
+                    if let Ok(json) = serde_json::to_value(&tag_filters) {
+                        if let Ok(converted) = serde_json::from_value(json) {
+                            state.tag_filter_group = converted;
+                        }
+                    }
+                }
+
+                // Apply search filter if provided
+                if let Some(search) = config.search_filter {
+                    state.search_filter = search;
+                }
+
+                tracing::info!(
+                    "Applied ephemeral config from V8: {} accounts, {} regions, {} types",
+                    state.query_scope.accounts.len(),
+                    state.query_scope.regions.len(),
+                    state.query_scope.resource_types.len()
+                );
+
+                return;
+            }
+            attempts += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        warn!("Failed to acquire write lock for apply_ephemeral_config after 10 attempts");
+    }
+
     /// Trigger AWS resource query if all required scope elements are present
     /// Uses parallel querying for real-time results
     fn trigger_query_if_ready(&self, state: &ResourceExplorerState, ctx: &Context) {
@@ -3134,7 +3443,8 @@ impl ResourceExplorerWindow {
             // Clone state for async operation
             let state_arc = self.state.clone();
             let scope = state.query_scope.clone();
-            let cache = Arc::new(tokio::sync::RwLock::new(state.cached_queries.clone()));
+            // Use shared Moka cache instead of wrapping state.cached_queries
+            let cache = super::cache::shared_cache();
 
             // Clone AWS client for thread
             let aws_client = match &self.aws_client {
@@ -3166,21 +3476,62 @@ impl ResourceExplorerWindow {
     fn spawn_parallel_query(
         state_arc: Arc<RwLock<ResourceExplorerState>>,
         scope: QueryScope,
-        cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
+        cache: Arc<super::cache::SharedResourceCache>,
         aws_client: Arc<AWSResourceClient>,
         cache_key: String,
     ) {
-        // Build list of services to track for Phase 1 progress (by resource_type)
-        let services_to_track: Vec<String> = scope
-            .resource_types
-            .iter()
-            .map(|rt| rt.resource_type.clone())
-            .collect();
+        // Build list of query keys to track for Phase 1 progress
+        // Each key is "account_id:region:resource_type" to match actual query granularity
+        // This prevents race conditions where one region completing marks the entire service as done
+        let global_registry = super::GlobalServiceRegistry::new();
+        let mut queries_to_track: Vec<String> = Vec::new();
 
-        // Initialize Phase 1 tracking
-        if let Ok(mut state) = state_arc.try_write() {
-            state.start_phase1_tracking(services_to_track);
+        for account in &scope.accounts {
+            for resource_type in &scope.resource_types {
+                if global_registry.is_global(&resource_type.resource_type) {
+                    // Global services: one query per account with region "Global"
+                    let query_key = ResourceExplorerState::make_query_key(
+                        &account.account_id,
+                        "Global",
+                        &resource_type.resource_type,
+                    );
+                    if !queries_to_track.contains(&query_key) {
+                        queries_to_track.push(query_key);
+                    }
+                } else {
+                    // Regional services: one query per account × region
+                    for region in &scope.regions {
+                        let query_key = ResourceExplorerState::make_query_key(
+                            &account.account_id,
+                            &region.region_code,
+                            &resource_type.resource_type,
+                        );
+                        queries_to_track.push(query_key);
+                    }
+                }
+            }
         }
+
+        // Initialize Phase 1 tracking - this is critical for progress tracking
+        // Try a few times on the main thread, but the thread will retry more aggressively
+        for attempt in 0..5 {
+            if let Ok(mut state) = state_arc.try_write() {
+                state.start_phase1_tracking(queries_to_track.clone());
+                if attempt > 0 {
+                    tracing::debug!(
+                        "Phase 1 tracking initialized on main thread after {} retries",
+                        attempt
+                    );
+                }
+                break;
+            }
+            // Brief yield
+            std::thread::yield_now();
+        }
+        // If main thread couldn't initialize, the spawned thread will handle it
+
+        // Clone queries for use in spawned thread (for retry initialization if needed)
+        let queries_for_thread = queries_to_track;
 
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Runtime::new() {
@@ -3194,6 +3545,36 @@ impl ResourceExplorerWindow {
                     return;
                 }
             };
+
+            // Initialize Phase 1 tracking inside thread - this MUST succeed before queries start
+            // The thread can afford to wait since it's not the UI thread
+            let mut tracking_init_success = false;
+            for attempt in 0..100 {
+                if let Ok(mut state) = state_arc.try_write() {
+                    // Check if tracking was already initialized by main thread
+                    if state.phase1_total_queries == 0 && !queries_for_thread.is_empty() {
+                        tracing::info!(
+                            "📋 Phase 1: Initializing tracking inside thread for {} queries (attempt {})",
+                            queries_for_thread.len(),
+                            attempt
+                        );
+                        state.start_phase1_tracking(queries_for_thread.clone());
+                    }
+                    tracking_init_success = true;
+                    break;
+                }
+                // Wait longer between retries - UI frame is ~16ms, so wait 5ms each
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+
+            if !tracking_init_success {
+                tracing::error!(
+                    "!!! CRITICAL: Failed to initialize Phase 1 tracking after 100 retries (500ms)"
+                );
+                super::query_timing::log_query_event(
+                    "!!! PHASE1 TRACKING: try_write() failed after 100 retries in thread - tracking not initialized"
+                );
+            }
 
             let result: Result<Vec<super::state::ResourceEntry>, anyhow::Error> = runtime
                 .block_on(async {
@@ -3219,31 +3600,81 @@ impl ResourceExplorerWindow {
 
                     let result_processing = async {
                         while let Some(result) = result_receiver.recv().await {
-                            let resource_type = result.resource_type.clone();
+                            // Build full query key for Phase 1 tracking
+                            let query_key = ResourceExplorerState::make_query_key(
+                                &result.account_id,
+                                &result.region,
+                                &result.resource_type,
+                            );
                             match result.resources {
                                 Ok(resources) => {
                                     {
                                         let mut all_res = all_resources_clone.lock().await;
                                         all_res.extend(resources);
 
-                                        if let Ok(mut state) = state_arc_clone.try_write() {
-                                            state.resources = all_res.clone();
-                                            // Mark service as completed in Phase 1 tracking
-                                            state.mark_phase1_service_completed(&resource_type);
+                                        // Retry loop for lock contention - critical for status bar updates
+                                        let max_retries = 10;
+                                        let mut success = false;
+                                        for attempt in 0..max_retries {
+                                            if let Ok(mut state) = state_arc_clone.try_write() {
+                                                state.resources = all_res.clone();
+                                                state.mark_phase1_query_completed(&query_key);
+                                                success = true;
+                                                if attempt > 0 {
+                                                    tracing::debug!(
+                                                        "Lock acquired after {} retries for {}",
+                                                        attempt, query_key
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                            // Small yield to let UI thread release the lock
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+                                        }
+                                        if !success {
+                                            tracing::error!(
+                                                "!!! LOCK CONTENTION: Failed to mark {} as completed after {} retries!",
+                                                query_key, max_retries
+                                            );
+                                            super::query_timing::log_query_event(&format!(
+                                                "!!! LOCK CONTENTION: try_write() failed after {} retries for mark_phase1_query_completed({})",
+                                                max_retries, query_key
+                                            ));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     tracing::error!(
-                                        "Query failed for {}:{}:{}: {}",
-                                        result.account_id,
-                                        result.region,
-                                        resource_type,
+                                        "Query failed for {}: {}",
+                                        query_key,
                                         e
                                     );
-                                    // Mark service as failed in Phase 1 tracking
-                                    if let Ok(mut state) = state_arc_clone.try_write() {
-                                        state.mark_phase1_service_failed(&resource_type);
+                                    // Retry loop for failed queries too
+                                    let max_retries = 10;
+                                    let mut success = false;
+                                    for attempt in 0..max_retries {
+                                        if let Ok(mut state) = state_arc_clone.try_write() {
+                                            state.mark_phase1_query_failed(&query_key);
+                                            success = true;
+                                            if attempt > 0 {
+                                                tracing::debug!(
+                                                    "Lock acquired after {} retries for failed {}",
+                                                    attempt, query_key
+                                                );
+                                            }
+                                            break;
+                                        }
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+                                    }
+                                    if !success {
+                                        tracing::error!(
+                                            "!!! LOCK CONTENTION: Failed to mark {} as failed after {} retries!",
+                                            query_key, max_retries
+                                        );
+                                        super::query_timing::log_query_event(&format!(
+                                            "!!! LOCK CONTENTION: try_write() failed after {} retries for mark_phase1_query_failed({})",
+                                            max_retries, query_key
+                                        ));
                                     }
                                 }
                             }
@@ -3255,14 +3686,54 @@ impl ResourceExplorerWindow {
                         );
                     };
 
+                    let state_arc_for_progress = state_arc.clone();
                     let progress_processing = async {
                         while let Some(progress) = progress_receiver.recv().await {
                             tracing::debug!(
-                                "Progress: {} - {} - {}",
+                                "Progress: {} - {} - {} (status: {:?})",
                                 progress.account,
                                 progress.region,
-                                progress.message
+                                progress.message,
+                                progress.status
                             );
+
+                            // Handle FetchingTags progress - update state for UI display
+                            if matches!(progress.status, super::aws_client::QueryStatus::FetchingTags) {
+                                tracing::info!(
+                                    "FetchingTags progress: {} ({}/{})",
+                                    progress.resource_type,
+                                    progress.items_processed.unwrap_or(0),
+                                    progress.estimated_total.unwrap_or(0)
+                                );
+                                if let Ok(mut state) = state_arc_for_progress.try_write() {
+                                    state.phase1_tag_fetching = true;
+                                    state.phase1_tag_resource_type = Some(progress.resource_type.clone());
+                                    if let (Some(count), Some(total)) = (progress.items_processed, progress.estimated_total) {
+                                        state.phase1_tag_progress_count = count;
+                                        state.phase1_tag_progress_total = total;
+                                    }
+                                }
+                            } else if matches!(progress.status,
+                                super::aws_client::QueryStatus::Completed |
+                                super::aws_client::QueryStatus::Failed) {
+                                // Clear tag fetching state when any resource type completes
+                                // With parallel queries, clearing unconditionally is safe because
+                                // the next FetchingTags message will set it again if still fetching
+                                if let Ok(mut state) = state_arc_for_progress.try_write() {
+                                    tracing::debug!(
+                                        "Clearing tag fetch state on {:?} for {}",
+                                        progress.status,
+                                        progress.resource_type
+                                    );
+                                    state.phase1_tag_fetching = false;
+                                    state.phase1_tag_resource_type = None;
+                                }
+                            }
+                        }
+                        // Clear tag fetching state when channel closes (final cleanup)
+                        if let Ok(mut state) = state_arc_for_progress.try_write() {
+                            state.phase1_tag_fetching = false;
+                            state.phase1_tag_resource_type = None;
                         }
                         tracing::debug!("Progress receiver channel closed");
                     };
@@ -3291,7 +3762,9 @@ impl ResourceExplorerWindow {
                 Ok(_query_resources) => {
                     for attempt in 0..3 {
                         if let Ok(mut state) = state_arc.try_write() {
-                            let final_cache = runtime.block_on(async { cache.read().await.clone() });
+                            // Sync from shared cache to state.cached_queries for compatibility
+                            // (will be removed when state.cached_queries is fully deprecated)
+                            let final_cache = cache.to_hashmap();
                             state.cached_queries = final_cache;
 
                             // Filter resources to match current scope before setting state.resources
@@ -3355,9 +3828,12 @@ impl ResourceExplorerWindow {
 
             // Remove selected combinations from cache to force refresh
             // Map display names to cache keys using the stored mapping
+            let shared_cache = super::cache::shared_cache();
             if let Ok(mut state) = self.state.try_write() {
                 for display_name in &selected_combinations {
                     if let Some(cache_key) = self.refresh_display_to_cache.get(display_name) {
+                        // Remove from both shared cache and state.cached_queries
+                        shared_cache.remove_resources(cache_key);
                         state.cached_queries.remove(cache_key);
                         tracing::info!(
                             "Cleared cache for combination: {} (display: {})",
@@ -3379,11 +3855,8 @@ impl ResourceExplorerWindow {
                 return;
             };
 
-            let cache = if let Ok(state) = self.state.try_read() {
-                state.cached_queries.clone()
-            } else {
-                return;
-            };
+            // Use shared cache instead of state.cached_queries
+            let cache = super::cache::shared_cache();
 
             // Clone AWS client for thread
             let aws_client = match &self.aws_client {
@@ -3427,8 +3900,8 @@ impl ResourceExplorerWindow {
                     anyhow::Error,
                 >;
                 let result: RefreshResult = runtime.block_on(async {
-                    // Convert to Arc<RwLock> for parallel method
-                    let cache_arc = Arc::new(tokio::sync::RwLock::new(cache));
+                    // Use shared cache directly (already Arc<SharedResourceCache>)
+                    let cache_arc = cache.clone();
 
                     // Create channels for parallel results
                     let (result_sender, mut result_receiver) =
@@ -3439,14 +3912,14 @@ impl ResourceExplorerWindow {
                     // Clone data for async tasks to avoid lifetime issues
                     let aws_client_clone = aws_client.clone();
                     let scope_clone = scope.clone();
-                    let cache_arc_clone = cache_arc.clone();
+                    let cache_clone = cache_arc.clone();
 
                     // Start parallel queries
                     let query_future = aws_client_clone.query_aws_resources_parallel(
                         &scope_clone,
                         result_sender,
                         Some(progress_sender),
-                        cache_arc_clone,
+                        cache_clone,
                     );
 
                     // Use Arc<Mutex> to share resources between async tasks for refresh
@@ -3528,8 +4001,8 @@ impl ResourceExplorerWindow {
                     // Get final results from shared storage
                     let final_resources = all_resources.lock().await.clone();
 
-                    // Return final cache and resources
-                    let final_cache = cache_arc.read().await.clone();
+                    // Return final cache and resources (convert from shared cache for compatibility)
+                    let final_cache = cache_arc.to_hashmap();
                     Ok((final_resources, final_cache))
                 });
 
@@ -3544,8 +4017,31 @@ impl ResourceExplorerWindow {
 
                         for attempt in 0..max_attempts {
                             if let Ok(mut state) = state_arc.try_write() {
-                                state.resources = resources.clone();
                                 state.cached_queries = final_cache.clone();
+
+                                // Apply the same filtering as initial query to ensure consistent behavior
+                                // S3 buckets are hybrid-global: queried globally but filtered by actual region
+                                let mut filtered_resources = Vec::new();
+                                for resource in &resources {
+                                    // Check account match
+                                    let account_matches = scope.accounts.iter()
+                                        .any(|a| a.account_id == resource.account_id);
+
+                                    // True global resources match any region; S3 buckets filtered by actual region
+                                    let is_true_global = resource.region == "Global"
+                                        && resource.resource_type != "AWS::S3::Bucket";
+                                    let region_matches = is_true_global
+                                        || scope.regions.iter().any(|r| r.region_code == resource.region);
+
+                                    // Check resource type match
+                                    let type_matches = scope.resource_types.iter()
+                                        .any(|rt| rt.resource_type == resource.resource_type);
+
+                                    if account_matches && region_matches && type_matches {
+                                        filtered_resources.push(resource.clone());
+                                    }
+                                }
+                                state.resources = filtered_resources;
                                 state.loading_tasks.remove(&cache_key);
 
                                 tracing::info!(
@@ -3618,9 +4114,10 @@ impl ResourceExplorerWindow {
             .iter()
             .any(|a| a.account_id == resource.account_id);
 
-        // True global resources (IAM, Route53, etc.) match any region in the scope
-        // Note: S3 buckets are NOT in this list - they now have their actual region
-        // and should be filtered by region like normal regional resources
+        // True global resources (IAM, Route53, etc.) match any region in the scope.
+        // S3 buckets are hybrid-global: queried globally but have actual regions.
+        // They are filtered by their actual bucket region to only show buckets
+        // in selected regions (user expectation: select us-east-1, see us-east-1 buckets).
         let is_true_global_resource = resource.region == "Global"
             && resource.resource_type != "AWS::S3::Bucket";
 
@@ -3707,6 +4204,11 @@ impl ResourceExplorerWindow {
         state_arc_for_phase2: Arc<RwLock<ResourceExplorerState>>,
         aws_client: Arc<AWSResourceClient>,
     ) {
+        // Sync detailed_properties from cache BEFORE checking what needs enrichment
+        // This ensures we recognize resources that were enriched in a previous interrupted Phase 2
+        let cache_clone = state.cached_queries.clone();
+        Self::sync_detailed_properties_from_cache(state, &cache_clone);
+
         let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
 
         // Only enrich resources that are visible (in state.resources, filtered by selected regions)
@@ -3734,10 +4236,11 @@ impl ResourceExplorerWindow {
         state.phase2_progress_count = 0;
 
         let phase2_generation = state.phase2_generation;
-        let cache_for_phase2 = Arc::new(tokio::sync::RwLock::new(state.cached_queries.clone()));
+        // Use shared cache for Phase 2 enrichment
+        let cache_for_phase2 = super::cache::shared_cache();
 
         // Debug: log cache keys and resources at Phase 2 start
-        let cache_keys: Vec<_> = state.cached_queries.keys().cloned().collect();
+        let cache_keys = cache_for_phase2.resource_keys();
         let s3_resources_with_details: usize = state.resources.iter()
             .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
             .count();
@@ -3773,10 +4276,15 @@ impl ResourceExplorerWindow {
                     resources_to_enrich,
                     result_tx,
                     Some(progress_tx),
-                    cache_for_phase2,
+                    cache_for_phase2.clone(),
                 );
 
                 let mut canceled = false;
+
+                // Debounce resource refresh to reduce UI flickering (2 second interval)
+                // Status bar updates happen on every message, but tree data refresh is debounced
+                let resource_refresh_debounce_ms: u128 = 2000;
+                let mut last_resource_refresh = std::time::Instant::now();
 
                 while let Some(progress) = progress_rx.recv().await {
                     let generation_matches = {
@@ -3803,7 +4311,8 @@ impl ResourceExplorerWindow {
                     );
 
                     let updated_cache = if is_enrichment_update {
-                        Some(cache_for_sync.read().await.clone())
+                        // Convert from shared cache to HashMap for compatibility
+                        Some(cache_for_sync.to_hashmap())
                     } else {
                         None
                     };
@@ -3868,6 +4377,7 @@ impl ResourceExplorerWindow {
 
                         break;
                     } else if let Ok(mut s) = state_arc_for_phase2.try_write() {
+                        // Always update status bar progress (fast updates)
                         s.phase2_current_service = Some(progress.resource_type.clone());
                         if let (Some(processed), Some(total)) =
                             (progress.items_processed, progress.estimated_total)
@@ -3876,12 +4386,18 @@ impl ResourceExplorerWindow {
                             s.phase2_progress_total = total;
                         }
 
-                        if let Some(cache) = updated_cache {
-                            s.cached_queries = cache;
-                            let cached_queries = s.cached_queries.clone();
-                            Self::refresh_resources_from_cache_filtered(&mut s, &cached_queries);
-                            // NO enrichment_version increment - data syncs but no tree rebuild
-                            // Tree structure is the same, only detailed_properties change
+                        // Debounce resource refresh to reduce UI flickering
+                        // Only sync cache to resources every 2 seconds during enrichment
+                        let elapsed_since_refresh = last_resource_refresh.elapsed().as_millis();
+                        if elapsed_since_refresh >= resource_refresh_debounce_ms {
+                            if let Some(cache) = updated_cache {
+                                s.cached_queries = cache;
+                                let cached_queries = s.cached_queries.clone();
+                                // Use efficient in-place sync that only updates detailed_properties
+                                // This is faster than full refresh and doesn't trigger tree rebuild
+                                Self::sync_detailed_properties_from_cache(&mut s, &cached_queries);
+                            }
+                            last_resource_refresh = std::time::Instant::now();
                         }
                     }
                 }
@@ -3899,7 +4415,8 @@ impl ResourceExplorerWindow {
                     return;
                 }
 
-                let updated_cache = cache_for_sync.read().await.clone();
+                // Convert from shared cache to HashMap for compatibility
+                let updated_cache = cache_for_sync.to_hashmap();
 
                 let mut s = state_arc_for_phase2.write().await;
                 if s.phase2_enrichment_in_progress {
@@ -3961,342 +4478,5 @@ impl ResourceExplorerWindow {
         // Fallback: warn and return empty list instead of fake accounts
         tracing::warn!("No real AWS accounts available - AWS Identity Center may not be logged in");
         Vec::new()
-    }
-
-    /// Render a closeable account tag with colored background
-    /// Returns true if the tag was clicked (should be removed)
-    fn render_closeable_account_tag(
-        ui: &mut Ui,
-        account_id: &str,
-        display_name: &str,
-        tag_color: Color32,
-    ) -> bool {
-        let text_color = get_contrasting_text_color(tag_color);
-
-        // Extract account name and ID from display_name, excluding email
-        // Format is: "account_name - account_id (email)" -> we want "account_name - account_id"
-        let clean_display_name = if let Some(email_start) = display_name.find(" (") {
-            display_name[..email_start].to_string()
-        } else {
-            display_name.to_string()
-        };
-
-        // Create tag content with close button
-        let tag_text = format!("{} x", clean_display_name);
-
-        // Calculate text size (smaller for compact display)
-        let font_size = 9.0;
-        let text_galley = ui.fonts(|fonts| {
-            fonts.layout_no_wrap(
-                tag_text.clone(),
-                egui::FontId::proportional(font_size),
-                text_color,
-            )
-        });
-
-        // Add padding to the text size (smaller padding)
-        let padding = egui::vec2(5.0, 2.0);
-        let desired_size = text_galley.size() + 2.0 * padding;
-
-        // Allocate space for the tag
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if ui.is_rect_visible(rect) {
-            // Draw rounded rectangle background
-            ui.painter().rect_filled(
-                rect, 3.0, // corner radius
-                tag_color,
-            );
-
-            // Draw text centered in the rect
-            let text_pos = rect.center() - text_galley.size() / 2.0;
-            ui.painter().galley(text_pos, text_galley, text_color);
-        }
-
-        // Show tooltip on hover and return click status
-        let clicked = response.clicked();
-        response.on_hover_text(format!("Account: {} (click to remove)", account_id));
-        clicked
-    }
-
-    /// Render a closeable region tag with colored background
-    /// Returns true if the tag was clicked (should be removed)
-    fn render_closeable_region_tag(
-        ui: &mut Ui,
-        region_code: &str,
-        display_name: &str,
-        tag_color: Color32,
-    ) -> bool {
-        let text_color = get_contrasting_text_color(tag_color);
-
-        // Create tag content with close button
-        let tag_text = format!("{} x", display_name);
-
-        // Calculate text size (smaller for compact display)
-        let font_size = 9.0;
-        let text_galley = ui.fonts(|fonts| {
-            fonts.layout_no_wrap(
-                tag_text.clone(),
-                egui::FontId::proportional(font_size),
-                text_color,
-            )
-        });
-
-        // Add padding to the text size (smaller padding)
-        let padding = egui::vec2(5.0, 2.0);
-        let desired_size = text_galley.size() + 2.0 * padding;
-
-        // Allocate space for the tag
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if ui.is_rect_visible(rect) {
-            // Draw rounded rectangle background
-            ui.painter().rect_filled(
-                rect, 3.0, // corner radius
-                tag_color,
-            );
-
-            // Draw text centered in the rect
-            let text_pos = rect.center() - text_galley.size() / 2.0;
-            ui.painter().galley(text_pos, text_galley, text_color);
-        }
-
-        // Show tooltip on hover and return click status
-        let clicked = response.clicked();
-        response.on_hover_text(format!("Region: {} (click to remove)", region_code));
-        clicked
-    }
-
-    /// Render a closeable resource type tag with count information
-    /// Returns true if the tag was clicked (should be removed)
-    fn render_closeable_resource_type_tag_with_count(
-        ui: &mut Ui,
-        resource_type: &str,
-        display_name: &str,
-        count: usize,
-    ) -> bool {
-        let tag_color = Color32::from_rgb(108, 117, 125); // Bootstrap secondary color
-        let text_color = Color32::WHITE;
-
-        // Create tag content with close button and count
-        let tag_text = if count == 0 {
-            format!("{} (0) x", display_name)
-        } else {
-            format!("{} ({}) x", display_name, count)
-        };
-
-        // Calculate text size (smaller for compact display)
-        let font_size = 9.0;
-        let text_galley = ui.fonts(|fonts| {
-            fonts.layout_no_wrap(
-                tag_text.clone(),
-                egui::FontId::proportional(font_size),
-                text_color,
-            )
-        });
-
-        // Add padding to the text size (smaller padding)
-        let padding = egui::vec2(5.0, 2.0);
-        let desired_size = text_galley.size() + 2.0 * padding;
-
-        // Allocate space for the tag
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if ui.is_rect_visible(rect) {
-            // Draw rounded rectangle background
-            ui.painter().rect_filled(
-                rect, 3.0, // corner radius
-                tag_color,
-            );
-
-            // Draw text centered in the rect
-            let text_pos = rect.center() - text_galley.size() / 2.0;
-            ui.painter().galley(text_pos, text_galley, text_color);
-        }
-
-        // Show tooltip on hover and return click status
-        let clicked = response.clicked();
-        let tooltip_text = if count == 0 {
-            format!(
-                "Resource Type: {} - No resources found (click to remove)",
-                resource_type
-            )
-        } else {
-            format!(
-                "Resource Type: {} - {} resources found (click to remove)",
-                resource_type, count
-            )
-        };
-        response.on_hover_text(tooltip_text);
-        clicked
-    }
-
-    /// Process pending detail requests from the tree renderer and trigger AWS describe calls
-    fn process_pending_detail_requests(
-        &self,
-        state: &ResourceExplorerState,
-        ctx: &Context,
-        pending_requests: Vec<String>,
-    ) {
-        for resource_key in pending_requests {
-            // Parse the resource key: account_id:region:resource_id
-            let parts: Vec<&str> = resource_key.split(':').collect();
-            if parts.len() != 3 {
-                tracing::warn!("Invalid resource key format: {}", resource_key);
-                continue;
-            }
-
-            let account_id = parts[0];
-            let region = parts[1];
-            let resource_id = parts[2];
-
-            // Find the resource in the current state
-            if let Some(resource) = state.resources.iter().find(|r| {
-                r.account_id == account_id && r.region == region && r.resource_id == resource_id
-            }) {
-                // Skip if we already have detailed properties
-                if resource.detailed_properties.is_some() {
-                    continue;
-                }
-
-                // Trigger async detailed loading
-                self.load_resource_details(resource.clone(), ctx, resource_key.clone());
-            }
-        }
-    }
-
-    /// Process tag badge clicks by adding filters to the filter group
-    fn process_tag_badge_clicks(
-        &self,
-        state: &mut ResourceExplorerState,
-        clicks: Vec<super::state::TagClickAction>,
-    ) {
-        use super::state::{BooleanOperator, TagFilter, TagFilterGroup, TagFilterType};
-        use super::widgets::tag_filter_builder::TagFilterBuilderWidget;
-
-        for click in clicks {
-            // Create the filter for this tag
-            let new_filter = TagFilter {
-                tag_key: click.tag_key.clone(),
-                filter_type: TagFilterType::Equals,
-                values: vec![click.tag_value.clone()],
-                pattern: None,
-            };
-
-            // Check if existing filter group is empty
-            if state.tag_filter_group.is_empty() {
-                // No existing filters - add as first filter
-                state.tag_filter_group.add_filter(new_filter);
-
-                tracing::info!(
-                    "Added first filter: {} = {}",
-                    click.tag_key,
-                    click.tag_value
-                );
-            } else {
-                // Existing filters - add as new sub-group with OR operator
-                let mut new_sub_group = TagFilterGroup::new();
-                new_sub_group.operator = BooleanOperator::Or;
-                new_sub_group.add_filter(new_filter);
-
-                state.tag_filter_group.add_sub_group(new_sub_group);
-
-                tracing::info!(
-                    "Added filter as sub-group: {} = {} (combined with OR)",
-                    click.tag_key,
-                    click.tag_value
-                );
-            }
-
-            // Log the resulting expression for visibility
-            let filter_expr =
-                TagFilterBuilderWidget::format_filter_expression(&state.tag_filter_group, 0);
-            tracing::info!("Updated filter expression: {}", filter_expr);
-        }
-
-        // Filters have changed, which will trigger tree rebuild on next frame
-    }
-
-    /// Load detailed properties for a specific resource using AWS describe APIs
-    fn load_resource_details(&self, resource: ResourceEntry, ctx: &Context, resource_key: String) {
-        if let Some(ref aws_client) = self.aws_client {
-            let client = aws_client.clone();
-            let state_arc = Arc::clone(&self.state);
-            let ctx_clone = ctx.clone();
-            let failed_requests_arc = Arc::clone(&self.failed_detail_requests);
-
-            // Clone the resource for the async task
-            let resource_clone = resource.clone();
-
-            // Spawn background thread to avoid blocking UI (following existing pattern)
-            std::thread::spawn(move || {
-                // Create tokio runtime for async operations
-                let runtime = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to create tokio runtime for detailed loading: {}",
-                            e
-                        );
-                        return;
-                    }
-                };
-
-                // Perform async describe operation
-                let result = runtime.block_on(async {
-                    tracing::info!(
-                        "🔍 Loading detailed properties for: {} ({})",
-                        resource_clone.display_name,
-                        resource_clone.resource_type
-                    );
-
-                    client.describe_resource(&resource_clone).await
-                });
-
-                match result {
-                    Ok(detailed_properties) => {
-                        // Update the resource with detailed properties
-                        if let Ok(mut state) = state_arc.try_write() {
-                            // Find and update the resource in the state
-                            if let Some(existing_resource) = state.resources.iter_mut().find(|r| {
-                                r.account_id == resource_clone.account_id
-                                    && r.region == resource_clone.region
-                                    && r.resource_id == resource_clone.resource_id
-                            }) {
-                                existing_resource.set_detailed_properties(detailed_properties);
-                                tracing::info!(
-                                    "✅ Successfully loaded detailed properties for: {}",
-                                    existing_resource.display_name
-                                );
-
-                                // Request UI repaint to show the updated data
-                                ctx_clone.request_repaint();
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "❌ Failed to load detailed properties for {}: {}",
-                            resource_clone.display_name,
-                            e
-                        );
-
-                        // Mark this resource as failed to prevent future retries
-                        if let Ok(mut failed_set) = failed_requests_arc.try_write() {
-                            failed_set.insert(resource_key);
-                            tracing::debug!(
-                                "🚫 Marked resource as failed: {}",
-                                resource_clone.display_name
-                            );
-                        }
-
-                        // Request UI repaint to show the failed state
-                        ctx_clone.request_repaint();
-                    }
-                }
-            });
-        } else {
-            tracing::warn!("AWS client not available for loading detailed properties");
-        }
     }
 }

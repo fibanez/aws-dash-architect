@@ -22,6 +22,9 @@ Comprehensive AWS resource discovery and visualization platform providing multi-
 - **CredentialCoordinator**: Manages AWS credentials for hundreds of accounts via Identity Center
 - **TreeBuilder/TreeRenderer**: Hierarchical visualization system with stable node IDs and consistent sorting
 - **NormalizerFactory**: Standardizes AWS API responses into consistent ResourceEntry format
+- **ResourceCache**: Shared Moka cache with compression for accelerated queries across windows/panes
+- **RetryTracker**: Global tracking of AWS SDK retries and error categorization
+- **QueryTiming**: Debug-only timing instrumentation for performance troubleshooting
 
 ## Two-Phase Loading Architecture
 
@@ -155,6 +158,10 @@ let query_region = registry.get_query_region(); // Returns "us-east-1"
 - `src/app/resource_explorer/credentials.rs` - Multi-account credential management
 - `src/app/resource_explorer/tree.rs` - Hierarchical resource organization
 - `src/app/resource_explorer/status.rs` - Thread-safe status messaging for async operation progress
+- `src/app/resource_explorer/cache.rs` - Shared Moka cache with compression
+- `src/app/resource_explorer/retry_tracker.rs` - Global AWS SDK retry tracking
+- `src/app/resource_explorer/sdk_errors.rs` - Error categorization for user feedback
+- `src/app/resource_explorer/query_timing.rs` - Debug-only timing instrumentation
 - `src/app/resource_explorer/aws_services/` - 90+ AWS service modules (EC2, IAM, S3, Lambda, Bedrock, CloudWatch, Logs, etc.)
 - `src/app/resource_explorer/child_resources.rs` - Parent-child resource hierarchy configuration
 - `src/app/resource_explorer/normalizers/` - Resource data transformation modules
@@ -279,6 +286,17 @@ status_channel.send(StatusMessage::completed("IAM", "list_roles", Some("42 roles
 
 **UI Integration:**
 The status bar displays the most recent fresh message, providing real-time feedback during resource discovery and enrichment operations.
+
+## Performance & Monitoring Systems
+
+**Shared Caching**:
+All Explorer instances share a global Moka cache with transparent compression (8-10x ratio). Cache auto-sizes to 25% of available RAM (512MB-8GB). First query fetches from AWS, subsequent queries return instantly from cache. 30-minute idle timeout. See [Resource Explorer Caching](resource-explorer-caching.md).
+
+**Error Categorization & Retry Tracking**:
+AWS SDK errors are categorized (throttled, timeout, network, service unavailable, permission denied) with global retry tracking. Status bar shows active retries and recovered queries. Service availability indicators persist after loading completes. See [SDK Error Handling](sdk-error-handling.md).
+
+**Query Timing Instrumentation** (debug builds only):
+Detailed timing logs track query lifecycle, cache hits/misses, stuck operations, and phase boundaries. Log file: `$HOME/.local/share/awsdash/logs/query_timing.log`. See [Query Timing & Monitoring](query-timing-monitoring.md).
 
 ## JSON Expansion Utility
 

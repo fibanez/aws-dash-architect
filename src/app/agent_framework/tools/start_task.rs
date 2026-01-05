@@ -55,7 +55,8 @@ impl StartTaskTool {
          - Context information from previous completed tasks\n\
          - Objective and how this contributes to the overall goal\n\
          - Expected output format\n\n\
-         Workers have access to: listAccounts(), listRegions(), queryResources(), \
+         Workers have access to: listAccounts(), listRegions(), loadCache(), \
+         getResourceSchema(), queryCachedResources(), showInExplorer(), \
          queryCloudWatchLogEvents(), getCloudTrailEvents()\n\n\
          **Good task example**:\n\
          'User asked: \"Find all production EC2 instances with high CPU usage\"\n\
@@ -63,7 +64,7 @@ impl StartTaskTool {
          Context: This is step 1 of analyzing production infrastructure.\n\
          Expected output: JSON array with instance ID, type, state, launch time'\n\n\
          **Bad task example**:\n\
-         'Use queryResources() API to call EC2' (too implementation-focused, lacks context)"
+         'Call loadCache() for EC2' (too implementation-focused, lacks context)"
     }
 
     /// Get the parameters schema
@@ -129,6 +130,9 @@ impl Tool for StartTaskTool {
         parameters: Option<Value>,
         _context: Option<&stood::agent::AgentContext>,
     ) -> Result<ToolResult, ToolError> {
+        stood::perf_checkpoint!("awsdash.start_task.execute.start");
+        let _tool_guard = stood::perf_guard!("awsdash.start_task.execute");
+
         // Parse input
         let params = parameters.ok_or_else(|| ToolError::InvalidParameters {
             message: "start_task tool requires 'task_description' parameter".to_string(),
@@ -169,15 +173,19 @@ impl Tool for StartTaskTool {
         );
 
         // Request agent creation via channel
-        let agent_id = request_agent_creation(
-            input.short_description.clone(),
-            input.task_description.clone(),
-            input.expected_output_format.clone(),
-            parent_id,
-        )
+        stood::perf_checkpoint!("awsdash.start_task.request_creation.start", &format!("parent_id={}, task={}", parent_id, &input.short_description));
+        let agent_id = stood::perf_timed!("awsdash.start_task.request_agent_creation", {
+            request_agent_creation(
+                input.short_description.clone(),
+                input.task_description.clone(),
+                input.expected_output_format.clone(),
+                parent_id,
+            )
+        })
         .map_err(|e| ToolError::InvalidParameters {
             message: format!("Failed to create task-agent: {}", e),
         })?;
+        stood::perf_checkpoint!("awsdash.start_task.request_creation.end", &format!("worker_id={}", agent_id));
 
         tracing::info!(
             target: "agent::start_task",
@@ -202,9 +210,13 @@ impl Tool for StartTaskTool {
             "Waiting for worker to complete (status: Starting Task)"
         );
 
-        match wait_for_worker_completion(agent_id, Duration::from_secs(300)) {
+        stood::perf_checkpoint!("awsdash.start_task.wait_completion.start", &format!("worker_id={}", agent_id));
+        match stood::perf_timed!("awsdash.start_task.wait_for_worker_completion", {
+            wait_for_worker_completion(agent_id, Duration::from_secs(300))
+        }) {
             Ok(result) => {
                 let execution_time_ms = start_time.elapsed().as_millis();
+                stood::perf_checkpoint!("awsdash.start_task.wait_completion.success", &format!("worker_id={}, execution_time_ms={}", agent_id, execution_time_ms));
                 tracing::info!(
                     target: "agent::start_task",
                     parent_id = %parent_id,
@@ -220,6 +232,7 @@ impl Tool for StartTaskTool {
                 })))
             }
             Err(error) => {
+                stood::perf_checkpoint!("awsdash.start_task.wait_completion.error", &format!("worker_id={}, error={}", agent_id, error));
                 tracing::error!(
                     target: "agent::start_task",
                     parent_id = %parent_id,

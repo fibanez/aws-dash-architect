@@ -9,6 +9,11 @@ use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
+// Performance timing (debug builds only)
+use crate::perf_checkpoint;
+use crate::perf_guard;
+use crate::perf_timed;
+
 use crate::app::agent_framework::agent_logger::AgentLogger;
 use crate::app::agent_framework::agent_types::{
     AgentId, AgentMetadata, AgentStatus, AgentType, StoodLogLevel,
@@ -103,22 +108,29 @@ impl AgentInstance {
     /// * `metadata` - Agent metadata (name, description, model)
     /// * `agent_type` - Type of agent (TaskManager or TaskWorker)
     pub fn new(metadata: AgentMetadata, agent_type: AgentType) -> Self {
+        let _timing = perf_guard!("AgentInstance::new", &metadata.name);
+
         let id = AgentId::new();
         let (tx, rx) = mpsc::channel();
 
         // Create logger for this agent
-        let logger = Arc::new(
-            AgentLogger::new(id, metadata.name.clone(), &agent_type)
-                .expect("Failed to create agent logger"),
-        );
+        let logger = perf_timed!("AgentInstance::new.create_logger", {
+            Arc::new(
+                AgentLogger::new(id, metadata.name.clone(), &agent_type)
+                    .expect("Failed to create agent logger"),
+            )
+        });
 
         // Log agent creation with type
         logger.log_agent_created(&agent_type, &metadata);
         logger.log_system_message(&agent_type, &format!("Agent type: {}", agent_type));
 
         // Create dedicated tokio runtime for this agent
-        let runtime =
-            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"));
+        let runtime = perf_timed!("AgentInstance::new.create_tokio_runtime", {
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
+        });
+
+        perf_checkpoint!("AgentInstance::new.building_struct");
 
         Self {
             id,
@@ -574,46 +586,77 @@ impl AgentInstance {
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
         agent_logging_enabled: bool,
     ) -> Result<stood::agent::Agent, String> {
+        let _timing = perf_guard!("create_stood_agent", &self.metadata.name);
+
         use stood::agent::{Agent, EventLoopConfig};
         use stood::llm::Bedrock;
         use stood::telemetry::{AwsCredentialSource, TelemetryConfig};
 
-        // Get AWS credentials
-        let creds = aws_identity
-            .get_default_role_credentials()
-            .map_err(|e| format!("Failed to get AWS credentials: {}", e))?;
+        // Get AWS credentials from the Home Dash Account for Bedrock
+        perf_checkpoint!("create_stood_agent.get_bedrock_credentials_start");
+        let bedrock_creds = perf_timed!("create_stood_agent.get_bedrock_credentials", {
+            aws_identity
+                .get_bedrock_credentials()
+                .map_err(|e| format!("Failed to get Bedrock credentials: {}", e))?
+        });
 
-        let access_key = creds.access_key_id;
-        let secret_key = creds.secret_access_key;
-        let session_token = creds.session_token;
-        let region = "us-east-1".to_string();
+        let access_key = bedrock_creds.credentials.access_key_id;
+        let secret_key = bedrock_creds.credentials.secret_access_key;
+        let session_token = bedrock_creds.credentials.session_token;
+        let region = bedrock_creds.region.clone();
 
-        // Determine agent naming
-        let (agent_type_name, agent_name) = match &self.agent_type {
-            AgentType::TaskManager => ("manager", "awsdash-manager"),
-            AgentType::TaskWorker { .. } => ("worker", "awsdash-worker"),
+        self.logger.log_system_message(
+            &self.agent_type,
+            &format!(
+                "Using Bedrock from Home Dash Account: {} in region: {}",
+                bedrock_creds.account_id, region
+            ),
+        );
+
+        // Get the role name for log group naming
+        let role_name = aws_identity.get_default_role_name();
+
+        // Determine agent naming based on role name
+        // Use role-based agent IDs for shared log groups
+        let (agent_type_name, agent_name, telemetry_agent_id) = match &self.agent_type {
+            AgentType::TaskManager => (
+                "manager",
+                "awsdash-manager",
+                crate::app::agent_framework::telemetry_init::manager_agent_id(&role_name),
+            ),
+            AgentType::TaskWorker { .. } => (
+                "worker",
+                "awsdash-worker",
+                crate::app::agent_framework::telemetry_init::worker_agent_id(&role_name),
+            ),
         };
-        let agent_id = format!("awsdash-{}-{}", agent_type_name, self.id);
+        let agent_id = format!("{}-{}-{}", role_name, agent_type_name, self.id);
+
+        // Check if log groups are already initialized (skip check if so)
+        let skip_log_group_check =
+            crate::app::agent_framework::telemetry_init::are_log_groups_initialized();
 
         // Configure telemetry programmatically (no environment variables)
         let telemetry_config = if agent_logging_enabled {
             // Log which account is being used for telemetry
             if let Some(account_id) = aws_identity.get_selected_account_id() {
                 tracing::info!(
-                    "Agent Logging enabled for account: {}, region: {}",
+                    "Agent Logging enabled for account: {}, region: {}, skip_log_group_check: {}",
                     account_id,
-                    region
+                    region,
+                    skip_log_group_check
                 );
             }
             TelemetryConfig::cloudwatch(&region)
                 .with_service_name("awsdash")
-                .with_agent_id(&agent_id)
+                .with_agent_id(&telemetry_agent_id)
                 .with_content_capture(true) // Enable content capture for debugging
                 .with_credentials(AwsCredentialSource::Explicit {
                     access_key_id: access_key.clone(),
                     secret_access_key: secret_key.clone(),
                     session_token: session_token.clone(),
                 })
+                .with_skip_log_group_check(skip_log_group_check)
         } else {
             TelemetryConfig::disabled()
         };
@@ -725,11 +768,11 @@ impl AgentInstance {
                     region.clone(),
                 )
                 .tools(self.get_tools_for_type()),
-            AgentModel::NovaPro => Agent::builder()
+            AgentModel::Nova2Pro => Agent::builder()
                 .name(agent_name)
                 .with_id(&agent_id)
                 .with_telemetry(telemetry_config.clone())
-                .model(Bedrock::NovaPro)
+                .model(Bedrock::Nova2Pro)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
                 .with_cancellation()
@@ -741,11 +784,11 @@ impl AgentInstance {
                     region.clone(),
                 )
                 .tools(self.get_tools_for_type()),
-            AgentModel::NovaLite => Agent::builder()
+            AgentModel::Nova2Lite => Agent::builder()
                 .name(agent_name)
                 .with_id(&agent_id)
                 .with_telemetry(telemetry_config.clone())
-                .model(Bedrock::NovaLite)
+                .model(Bedrock::Nova2Lite)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
                 .with_cancellation()
@@ -772,13 +815,16 @@ impl AgentInstance {
             agent_builder
         };
 
-        let agent = self
-            .runtime
-            .block_on(async { agent_builder.build().await })
-            .map_err(|e| format!("Failed to build agent: {}", e))?;
+        perf_checkpoint!("create_stood_agent.building_agent");
+        let agent = perf_timed!("create_stood_agent.agent_builder_build", {
+            self.runtime
+                .block_on(async { agent_builder.build().await })
+                .map_err(|e| format!("Failed to build agent: {}", e))?
+        });
 
         self.logger
             .log_system_message(&self.agent_type, "Agent successfully created");
+        perf_checkpoint!("create_stood_agent.complete");
         Ok(agent)
     }
 
@@ -791,7 +837,10 @@ impl AgentInstance {
     /// - Spawns background thread for execution
     /// - Sets processing flag
     pub fn send_message(&mut self, user_message: String) {
+        let _timing = perf_guard!("send_message", &self.metadata.name);
+
         // === Pre-send middleware processing ===
+        perf_checkpoint!("send_message.middleware_pre_send");
         let ctx = self.create_layer_context();
         let processed_message = match self.layer_stack.process_pre_send(&user_message, &ctx) {
             Ok(msg) => msg,
@@ -845,7 +894,14 @@ impl AgentInstance {
         let message_for_agent = processed_message; // Use processed message for agent
 
         // Spawn background thread
+        perf_checkpoint!("send_message.spawning_background_thread");
         std::thread::spawn(move || {
+            // Initialize perf timing for this thread
+            crate::app::agent_framework::perf_timing::init_perf_log();
+            let _thread_timing = crate::app::agent_framework::perf_timing::TimingGuard::new(
+                "background_thread.total"
+            );
+
             // Set the current agent logger for this thread (so tools can log to it)
             crate::app::agent_framework::agent_logger::set_current_agent_logger(Some(Arc::clone(
                 &logger,
@@ -860,6 +916,11 @@ impl AgentInstance {
             // Set the stood log level for this thread (for AgentTracingLayer to filter stood traces)
             crate::app::agent_framework::agent_tracing::set_current_log_level(stood_log_level);
 
+            crate::app::agent_framework::perf_timing::log_checkpoint(
+                "background_thread.context_setup_complete",
+                None
+            );
+
             // Execute agent in tokio runtime
             // Note: We intentionally hold the MutexGuard across await because the stood agent
             // must remain locked during execution. This is safe because only one thread
@@ -867,6 +928,10 @@ impl AgentInstance {
             #[allow(clippy::await_holding_lock)]
             runtime.block_on(async move {
                 logger.log_system_message(&agent_type, "Background execution started");
+                crate::app::agent_framework::perf_timing::log_checkpoint(
+                    "background_thread.tokio_runtime_entered",
+                    None
+                );
 
                 // Lazy initialization of stood agent
                 let mut agent_guard = stood_agent.lock().unwrap();
@@ -912,9 +977,26 @@ Query result presentation:
 
                 // Execute agent with full message (instructions + user query)
                 logger.log_system_message(&agent_type, "Executing agent...");
-                match agent.execute(&full_message).await {
+                crate::app::agent_framework::perf_timing::log_checkpoint(
+                    "background_thread.agent_execute_start",
+                    None
+                );
+                let execute_start = std::time::Instant::now();
+                let execute_result = agent.execute(&full_message).await;
+                let execute_duration = execute_start.elapsed();
+                crate::app::agent_framework::perf_timing::log_timing(
+                    "MODEL_INVOCATION.agent_execute",
+                    execute_duration.as_micros() as u64,
+                    Some(&format!("{}ms", execute_duration.as_millis()))
+                );
+
+                match execute_result {
                     Ok(_) => {
                         logger.log_system_message(&agent_type, "Agent execution completed");
+                        crate::app::agent_framework::perf_timing::log_checkpoint(
+                            "background_thread.agent_execute_complete",
+                            None
+                        );
 
                         // Get final response from conversation
                         if let Some(last_message) = agent.conversation().messages().last() {
@@ -974,6 +1056,8 @@ Query result presentation:
 
         match self.response_channel.1.try_recv() {
             Ok(response) => {
+                perf_checkpoint!("poll_response.received");
+                let _timing = perf_guard!("poll_response.processing");
                 let response_received_at = std::time::Instant::now();
                 self.logger.log_system_message(
                     &self.agent_type,
@@ -986,6 +1070,7 @@ Query result presentation:
                 match response {
                     ConversationResponse::Success(text) => {
                         // === Post-response middleware processing ===
+                        perf_checkpoint!("poll_response.middleware_start");
                         let ctx = self.create_layer_context();
                         let (final_text, middleware_injections) =
                             match self.layer_stack.process_post_response(&text, &ctx) {
@@ -1121,7 +1206,11 @@ Query result presentation:
         aws_identity: &mut crate::app::aws_identity::AwsIdentityCenter,
         agent_logging_enabled: bool,
     ) -> Result<(), String> {
-        let agent = self.create_stood_agent(aws_identity, agent_logging_enabled)?;
+        let _timing = perf_guard!("AgentInstance::initialize", &self.metadata.name);
+
+        let agent = perf_timed!("AgentInstance::initialize.create_stood_agent", {
+            self.create_stood_agent(aws_identity, agent_logging_enabled)?
+        });
 
         // Capture the cancellation token for Stop button support
         self.cancel_token = agent.cancellation_token();
@@ -1132,11 +1221,13 @@ Query result presentation:
             );
         }
 
+        perf_checkpoint!("AgentInstance::initialize.acquiring_lock");
         let mut guard = self.stood_agent.lock().unwrap();
         *guard = Some(agent);
 
         self.logger
             .log_system_message(&self.agent_type, "Agent fully initialized and ready");
+        perf_checkpoint!("AgentInstance::initialize.complete");
         Ok(())
     }
 

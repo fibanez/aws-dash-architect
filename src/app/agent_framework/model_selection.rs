@@ -18,10 +18,10 @@ pub enum AgentModel {
     ClaudeHaiku45,
     /// Claude Opus 4.5 - Most capable
     ClaudeOpus45,
-    /// Amazon Nova Pro - AWS native model
-    NovaPro,
-    /// Amazon Nova Lite - Lightweight AWS model
-    NovaLite,
+    /// Amazon Nova 2 Pro - intelligent reasoning model with 1M context
+    Nova2Pro,
+    /// Amazon Nova 2 Lite - fast reasoning model with 1M context
+    Nova2Lite,
 }
 
 impl AgentModel {
@@ -31,8 +31,8 @@ impl AgentModel {
             AgentModel::ClaudeSonnet45 => "Claude Sonnet 4.5",
             AgentModel::ClaudeHaiku45 => "Claude Haiku 4.5",
             AgentModel::ClaudeOpus45 => "Claude Opus 4.5",
-            AgentModel::NovaPro => "Amazon Nova Pro",
-            AgentModel::NovaLite => "Amazon Nova Lite",
+            AgentModel::Nova2Pro => "Amazon Nova 2 Pro",
+            AgentModel::Nova2Lite => "Amazon Nova 2 Lite",
         }
     }
 
@@ -42,8 +42,8 @@ impl AgentModel {
             AgentModel::ClaudeSonnet45,
             AgentModel::ClaudeHaiku45,
             AgentModel::ClaudeOpus45,
-            AgentModel::NovaPro,
-            AgentModel::NovaLite,
+            AgentModel::Nova2Pro,
+            AgentModel::Nova2Lite,
         ]
     }
 }
@@ -72,8 +72,8 @@ mod tests {
         );
         assert_eq!(AgentModel::ClaudeHaiku45.display_name(), "Claude Haiku 4.5");
         assert_eq!(AgentModel::ClaudeOpus45.display_name(), "Claude Opus 4.5");
-        assert_eq!(AgentModel::NovaPro.display_name(), "Amazon Nova Pro");
-        assert_eq!(AgentModel::NovaLite.display_name(), "Amazon Nova Lite");
+        assert_eq!(AgentModel::Nova2Pro.display_name(), "Amazon Nova 2 Pro");
+        assert_eq!(AgentModel::Nova2Lite.display_name(), "Amazon Nova 2 Lite");
     }
 
     #[test]

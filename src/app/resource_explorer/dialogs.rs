@@ -635,6 +635,12 @@ impl FuzzySearchDialog {
 
         // Initialize dialog with current selections on first open
         if !self.unified_dialog_initialized {
+            tracing::debug!(
+                "Unified dialog init: {} accounts, {} regions, {} resources to pre-populate",
+                current_accounts.len(),
+                current_regions.len(),
+                current_resources.len()
+            );
             // Pre-populate accounts
             for account in current_accounts {
                 self.selected_accounts.insert(account.account_id.clone(), true);
@@ -648,6 +654,12 @@ impl FuzzySearchDialog {
                 self.selected_resource_types.insert(resource.resource_type.clone(), true);
             }
             self.unified_dialog_initialized = true;
+            tracing::debug!(
+                "After init: selected_accounts={}, selected_regions={}, selected_resource_types={}",
+                self.selected_accounts.len(),
+                self.selected_regions.len(),
+                self.selected_resource_types.len()
+            );
         }
 
         let mut result = None;

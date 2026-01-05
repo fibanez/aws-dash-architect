@@ -12,6 +12,7 @@
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -28,37 +29,279 @@ use crate::app::resource_explorer::unified_query::{
 };
 use crate::app::resource_explorer::{get_global_bookmark_manager, get_global_explorer_state};
 
-/// JavaScript function call arguments for queryResources()
+// ============================================================================
+// Context-Optimized Resource Query Structs
+// ============================================================================
+
+/// JavaScript function call arguments for loadCache()
+///
+/// Queries AWS resources and returns counts per scope combination.
+/// Designed to minimize LLM context usage by returning only count metadata
+/// instead of full resource arrays (~99% reduction).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryResourcesArgs {
-    /// Account IDs to query (null = random account)
+pub struct LoadCacheArgs {
+    /// Account IDs to query (undefined = all configured accounts)
     pub accounts: Option<Vec<String>>,
 
-    /// Region codes to query (null = us-east-1)
+    /// Region codes to query (undefined = all enabled regions)
     pub regions: Option<Vec<String>>,
 
-    /// CloudFormation resource types (required)
+    /// CloudFormation resource types (REQUIRED, cannot be empty)
     pub resource_types: Vec<String>,
-
-    /// Detail level for returned data: "count", "summary" (default), "tags", "full"
-    pub detail: Option<String>,
 }
 
-// Note: Resource types (ResourceSummary, ResourceWithTags, ResourceFull) are now
-// imported from unified_query.rs for consistency between Explorer and Agent Framework.
+/// Result from loadCache() - returns counts instead of resource data
+///
+/// This structure is designed for minimal context consumption. Instead of
+/// returning massive resource arrays, it returns count breakdowns per
+/// account:region:resourceType combination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadCacheResult {
+    /// Query status: 'success', 'partial', 'error'
+    pub status: String,
+
+    /// Count breakdown per account:region:resourceType combination
+    /// Key format: "account_id:region_code:resource_type"
+    /// Example: {"123456789012:us-east-1:AWS::EC2::Instance": 45}
+    pub count_by_scope: HashMap<String, usize>,
+
+    /// Total count across all scopes
+    pub total_count: usize,
+
+    /// Non-fatal warnings (rate limiting, timeouts, etc.)
+    pub warnings: Vec<QueryWarning>,
+
+    /// Fatal errors per account/region
+    pub errors: Vec<QueryError>,
+
+    /// Actual accounts queried (resolved from input)
+    pub accounts_queried: Vec<String>,
+
+    /// Actual regions queried (resolved from input)
+    pub regions_queried: Vec<String>,
+
+    /// ISO timestamp when load completed
+    pub load_timestamp_utc: String,
+}
+
+/// JavaScript function call arguments for getResourceSchema()
+///
+/// Returns ONE example resource from cache to show structure and available properties.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetResourceSchemaArgs {
+    /// CloudFormation resource type to get schema for
+    pub resource_type: String,
+}
+
+/// Tag key-value pair for example resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceTag {
+    pub key: String,
+    pub value: String,
+}
+
+/// Example resource showing structure and available properties
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleResource {
+    pub resource_id: String,
+    pub display_name: String,
+    pub account_id: String,
+    pub region: String,
+    pub properties: serde_json::Value,
+    pub tags: Vec<ResourceTag>,
+    pub status: Option<String>,
+}
+
+/// Cache statistics for a resource type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStats {
+    pub total_count: usize,
+    pub account_count: usize,
+    pub region_count: usize,
+}
+
+/// Result from getResourceSchema()
+///
+/// Returns ONE example resource from the cache to demonstrate the structure
+/// and available properties for a given resource type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetResourceSchemaResult {
+    /// Status: 'success' if example found, 'not_found' if no resources in cache
+    pub status: String,
+
+    /// The resource type requested
+    pub resource_type: String,
+
+    /// Example resource (FIRST resource found in cache, deterministic)
+    pub example_resource: Option<ExampleResource>,
+
+    /// Cache statistics for this resource type
+    pub cache_stats: Option<CacheStats>,
+
+    /// Message if status is 'not_found'
+    pub message: Option<String>,
+}
+
+/// Grouping mode for Explorer window visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "PascalCase")]
+pub enum GroupingMode {
+    ByAccount,
+    ByRegion,
+    ByResourceType,
+    ByTag { key: String },
+    ByTagHierarchy { keys: Vec<String> },
+    ByProperty { path: String },
+    ByPropertyHierarchy { paths: Vec<String> },
+}
+
+/// Tag filter for filtering resources by tag values
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagFilter {
+    pub tag_key: String,
+    pub filter_type: String, // 'Equals', 'NotEquals', 'Contains', 'StartsWith', 'EndsWith', 'Regex', 'Exists', 'NotExists', 'In', 'NotIn'
+    pub values: Option<Vec<String>>,
+    pub pattern: Option<String>,
+}
+
+/// Tag filter group with boolean logic (AND/OR) and nested groups
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagFilterGroup {
+    pub operator: String, // 'And' | 'Or'
+    pub filters: Vec<TagFilter>,
+    pub sub_groups: Option<Vec<TagFilterGroup>>,
+}
+
+/// JavaScript function call arguments for showInExplorer()
+///
+/// Opens the Explorer window with dynamic configuration. This is a V8 function,
+/// NOT a tool. The Explorer window queries data independently (cache-aware).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowInExplorerArgs {
+    /// Account IDs to display (undefined = all)
+    pub accounts: Option<Vec<String>>,
+
+    /// Region codes to display (undefined = all)
+    pub regions: Option<Vec<String>>,
+
+    /// CloudFormation resource types (undefined = all)
+    pub resource_types: Option<Vec<String>>,
+
+    /// Grouping mode for visualization
+    pub grouping: Option<GroupingMode>,
+
+    /// Tag filters for resource filtering
+    pub tag_filters: Option<TagFilterGroup>,
+
+    /// Search filter text
+    pub search_filter: Option<String>,
+
+    /// Display title for the view
+    pub title: Option<String>,
+}
+
+/// Result from showInExplorer()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowInExplorerResult {
+    /// Status: 'success' if window opened, 'error' otherwise
+    pub status: String,
+
+    /// Optional message (error details if status is 'error')
+    pub message: Option<String>,
+
+    /// Number of resources to be displayed (if known)
+    pub resources_displayed: Option<usize>,
+}
+
+/// Arguments for queryCachedResources()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryCachedResourcesArgs {
+    /// Account IDs to filter (null = all cached accounts)
+    pub accounts: Option<Vec<String>>,
+
+    /// Region codes to filter (null = all cached regions)
+    pub regions: Option<Vec<String>>,
+
+    /// Resource types to query (REQUIRED, can be multiple)
+    pub resource_types: Vec<String>,
+}
+
+/// Result from queryCachedResources()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryCachedResourcesResult {
+    /// Status: 'success' if resources found, 'not_found' if cache is empty
+    pub status: String,
+
+    /// Array of cached resources (full ResourceEntry objects serialized to JSON)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<Vec<serde_json::Value>>,
+
+    /// Total count of resources returned
+    pub count: usize,
+
+    /// Accounts that had cached data
+    pub accounts_with_data: Vec<String>,
+
+    /// Regions that had cached data
+    pub regions_with_data: Vec<String>,
+
+    /// Resource types found
+    pub resource_types_found: Vec<String>,
+
+    /// Message (helpful if status is not_found)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
 
 /// Register resource-related functions into V8 context
 pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
 
-    // Register queryResources() function
-    let query_resources_fn = v8::Function::new(scope, query_resources_callback)
-        .expect("Failed to create queryResources function");
-    let fn_name =
-        v8::String::new(scope, "queryResources").expect("Failed to create function name string");
-    global.set(scope, fn_name.into(), query_resources_fn.into());
+    // CONTEXT-OPTIMIZED RESOURCE QUERY FUNCTIONS
+    // Minimize LLM context by returning counts/schemas instead of full resource arrays
 
+    // Register loadCache() function
+    let load_cache_fn = v8::Function::new(scope, load_cache_callback)
+        .expect("Failed to create loadCache function");
+    let fn_name =
+        v8::String::new(scope, "loadCache").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), load_cache_fn.into());
+
+    // Register getResourceSchema() function
+    let get_schema_fn = v8::Function::new(scope, get_resource_schema_callback)
+        .expect("Failed to create getResourceSchema function");
+    let fn_name =
+        v8::String::new(scope, "getResourceSchema").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), get_schema_fn.into());
+
+    // Register showInExplorer() function
+    let show_explorer_fn = v8::Function::new(scope, show_in_explorer_callback)
+        .expect("Failed to create showInExplorer function");
+    let fn_name =
+        v8::String::new(scope, "showInExplorer").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), show_explorer_fn.into());
+
+    // Register queryCachedResources() function
+    let query_cached_fn = v8::Function::new(scope, query_cached_resources_callback)
+        .expect("Failed to create queryCachedResources function");
+    let fn_name =
+        v8::String::new(scope, "queryCachedResources").expect("Failed to create function name string");
+    global.set(scope, fn_name.into(), query_cached_fn.into());
+
+    // BOOKMARK FUNCTIONS
     // Register listBookmarks() function
     let list_bookmarks_fn = v8::Function::new(scope, list_bookmarks_callback)
         .expect("Failed to create listBookmarks function");
@@ -76,8 +319,12 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
     Ok(())
 }
 
-/// Callback for queryResources() JavaScript function
-fn query_resources_callback(
+/// Callback for loadCache() JavaScript function
+///
+/// Queries AWS resources but returns counts per account:region:resourceType
+/// instead of full resource data. Designed for minimal LLM context consumption
+/// (~99% reduction compared to returning full resource arrays).
+fn load_cache_callback(
     scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments<'_>,
     mut rv: v8::ReturnValue<'_>,
@@ -88,7 +335,7 @@ fn query_resources_callback(
         None => {
             let msg = v8::String::new(
                 scope,
-                "queryResources() requires an object argument with { accounts, regions, resourceTypes, detail? }",
+                "loadCache() requires an object argument with { accounts?, regions?, resourceTypes }",
             )
             .unwrap();
             let error = v8::Exception::type_error(scope, msg);
@@ -108,8 +355,8 @@ fn query_resources_callback(
         }
     };
 
-    // Parse JSON into QueryResourcesArgs
-    let query_args: QueryResourcesArgs = match serde_json::from_str(&json_str) {
+    // Parse JSON into LoadCacheArgs
+    let load_args: LoadCacheArgs = match serde_json::from_str(&json_str) {
         Ok(args) => args,
         Err(e) => {
             let msg = v8::String::new(scope, &format!("Failed to parse arguments: {}", e)).unwrap();
@@ -119,19 +366,26 @@ fn query_resources_callback(
         }
     };
 
-    // Execute async query in Tokio runtime
-    let result = match execute_query(query_args) {
+    // Execute query and count results
+    let result = match execute_load_cache(load_args) {
         Ok(result) => result,
         Err(e) => {
             // Return error result instead of throwing exception
-            // This allows the caller to check status and errors
-            let error_result: UnifiedQueryResult<Vec<serde_json::Value>> =
-                UnifiedQueryResult::error(vec![QueryError {
+            let error_result = LoadCacheResult {
+                status: "error".to_string(),
+                count_by_scope: HashMap::new(),
+                total_count: 0,
+                warnings: vec![],
+                errors: vec![QueryError {
                     account: "all".to_string(),
                     region: "all".to_string(),
-                    code: "QueryFailed".to_string(),
+                    code: "LoadCacheFailed".to_string(),
                     message: e.to_string(),
-                }]);
+                }],
+                accounts_queried: vec![],
+                regions_queried: vec![],
+                load_timestamp_utc: chrono::Utc::now().to_rfc3339(),
+            };
             if let Ok(json) = serde_json::to_string(&error_result) {
                 if let Some(v8_str) = v8::String::new(scope, &json) {
                     if let Some(v8_value) = v8::json::parse(scope, v8_str) {
@@ -140,6 +394,756 @@ fn query_resources_callback(
                     }
                 }
             }
+            let msg = v8::String::new(scope, &format!("Load cache failed: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Serialize result to JSON string
+    let json_str = match serde_json::to_string(&result) {
+        Ok(json) => json,
+        Err(e) => {
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize result: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Create V8 string from JSON
+    let v8_str = match v8::String::new(scope, &json_str) {
+        Some(s) => s,
+        None => {
+            let msg = v8::String::new(scope, "Failed to create V8 string").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON in V8 to create JavaScript object
+    let v8_value = match v8::json::parse(scope, v8_str) {
+        Some(v) => v,
+        None => {
+            let msg = v8::String::new(scope, "Failed to parse JSON in V8").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    rv.set(v8_value);
+}
+
+/// Execute load cache query (synchronous wrapper for async code)
+fn execute_load_cache(args: LoadCacheArgs) -> Result<LoadCacheResult> {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async { load_cache_internal(args).await })
+    })
+}
+
+/// Execute complete resource query with automatic enrichment (BLACK BOX API)
+///
+/// This is the canonical way to query AWS resources - it encapsulates Explorer's
+/// complete workflow including Phase 1 queries, Phase 2 enrichment, and caching.
+///
+/// # Architecture
+///
+/// This function acts as a **black box API** that agent framework code calls without
+/// needing to understand Explorer's internal implementation. If Explorer changes its
+/// query strategy, enrichment logic, or caching approach, this function's signature
+/// stays the same.
+///
+/// # What This Function Does (Transparent to Caller)
+///
+/// 1. **Phase 1: Parallel AWS Queries**
+///    - Calls `query_aws_resources_parallel()` for all account/region/type combinations
+///    - Results stream back via channels and accumulate in cache
+///    - Uses Explorer's proven concurrent collection pattern
+///
+/// 2. **Phase 2: Automatic Enrichment** (for security-critical resources)
+///    - Security groups, S3 buckets, IAM roles automatically get detailed properties
+///    - Calls AWS Describe APIs to get full configuration (e.g., security group rules)
+///    - Enrichment happens transparently - caller doesn't need to request it
+///
+/// 3. **Cache Management**
+///    - Updates Explorer's global cache atomically
+///    - Ensures consistency between Explorer UI and agent queries
+///    - Cache keyed by "account:region:resourceType"
+///
+/// 4. **Resource Filtering**
+///    - Returns only resources matching the requested scope
+///    - Filters happen AFTER enrichment to avoid partial data
+///
+/// # Integration Points
+///
+/// - **Explorer UI**: Can call this from UI thread (via tokio runtime)
+/// - **Agent Framework**: Calls this from async context (already in tokio)
+/// - **Future APIs**: Any code needing AWS resource data should call this
+///
+/// # Cache Strategy
+///
+/// The function clones Explorer's cache at the start, runs queries updating the clone,
+/// then atomically syncs the final cache back. This prevents:
+/// - Race conditions between concurrent queries
+/// - Partial cache states visible to other callers
+/// - Inconsistency between loadCache() and queryCachedResources()
+///
+/// # Why Phase 2 is Automatic
+///
+/// Security analysis (the primary agent use case) requires detailed properties:
+/// - Security Groups: Need IpPermissions with FromPort, ToPort, IpRanges
+/// - S3 Buckets: Need bucket policies and ACLs
+/// - IAM Roles: Need trust policies and permissions
+///
+/// Without Phase 2, agents would see simplified data like:
+/// ```json
+/// "IpPermissions": [{"IpProtocol": "-1"}]  // Missing port ranges!
+/// ```
+///
+/// With Phase 2, agents see complete data:
+/// ```json
+/// "IpPermissions": [{
+///   "IpProtocol": "tcp",
+///   "FromPort": 22,
+///   "ToPort": 22,
+///   "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
+/// }]
+/// ```
+///
+/// # Parameters
+///
+/// - `account_ids`: AWS account IDs to query (must not be empty)
+/// - `region_codes`: AWS regions to query (must not be empty)
+/// - `resource_types`: CloudFormation types like "AWS::EC2::SecurityGroup"
+///
+/// # Returns
+///
+/// Vector of `ResourceEntry` with:
+/// - Phase 1 data (basic properties from List APIs)
+/// - Phase 2 data (detailed properties from Describe APIs) for enrichable types
+/// - Filtered to exactly match the requested scope
+///
+/// # Errors
+///
+/// Returns error if:
+/// - AWS client not initialized
+/// - Explorer state not initialized
+/// - Query task panics (should never happen)
+///
+/// Individual query failures (e.g., access denied for one region) are logged
+/// but don't fail the entire operation - you get partial results.
+///
+/// # Example Usage
+///
+/// ```rust
+/// // Agent framework example:
+/// let resources = execute_complete_query(
+///     vec!["123456789012".to_string()],
+///     vec!["us-east-1".to_string()],
+///     vec!["AWS::EC2::SecurityGroup".to_string()],
+/// ).await?;
+///
+/// // Now resources contains ALL security groups with FULL rules (Phase 2 enriched)
+/// // Agent can analyze: resources[0].detailed_properties["IpPermissions"]
+/// ```
+async fn execute_complete_query(
+    account_ids: Vec<String>,
+    region_codes: Vec<String>,
+    resource_types: Vec<String>,
+) -> Result<Vec<ResourceEntry>> {
+    // Get global AWS client
+    let client = get_global_aws_client().ok_or_else(|| anyhow!("AWS client not initialized"))?;
+
+    // Validate resource types
+    if resource_types.is_empty() {
+        return Err(anyhow!("resource_types array cannot be empty"));
+    }
+
+    // Build QueryScope
+    let scope = build_query_scope(&account_ids, &region_codes, &resource_types)?;
+
+    // Use the shared Moka cache - same cache used by Explorer UI
+    // This provides unified caching between Agent and Explorer queries
+    let cache = crate::app::resource_explorer::cache::shared_cache();
+
+    // Create channels
+    let (result_tx, mut result_rx) = mpsc::channel(1000);
+
+    // Collect resources like Explorer does
+    let all_resources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let all_resources_clone = all_resources.clone();
+
+    // Start parallel query
+    let client_clone = Arc::clone(&client);
+    let cache_clone = cache.clone();
+    let scope_clone = scope.clone();
+
+    let query_future = async move {
+        client_clone
+            .query_aws_resources_parallel(&scope_clone, result_tx, None, cache_clone)
+            .await
+    };
+
+    // Process results (Explorer pattern)
+    let result_processing = async move {
+        while let Some(result) = result_rx.recv().await {
+            match result.resources {
+                Ok(resources) => {
+                    let mut all_res = all_resources_clone.lock().await;
+                    all_res.extend(resources);
+                }
+                Err(e) => {
+                    warn!("Query failed for {}:{}:{}: {}",
+                        result.account_id, result.region, result.resource_type, e);
+                }
+            }
+        }
+    };
+
+    // Wait for both to complete (Explorer uses tokio::join!)
+    let (query_result, _) = tokio::join!(query_future, result_processing);
+    if let Err(e) = query_result {
+        warn!("Query error: {}", e);
+    }
+
+    // Get final resources from Phase 1
+    let phase1_resources = all_resources.lock().await.clone();
+
+    // PHASE 2: Automatic enrichment for security-critical resources
+    //
+    // This is transparent to the caller - they just get fully-enriched resources.
+    // Explorer determines which types need enrichment (security groups, S3 buckets, IAM roles, etc.)
+    let enrichable_types = ResourceExplorerState::enrichable_resource_types();
+    let needs_enrichment = resource_types.iter()
+        .any(|rt| enrichable_types.contains(&rt.as_str()));
+
+    if needs_enrichment {
+        info!("Phase 2: Auto-enriching security-critical resource types");
+
+        // Find resources from Phase 1 that need enrichment
+        let resources_to_enrich: Vec<ResourceEntry> = phase1_resources
+            .iter()
+            .filter(|r| {
+                enrichable_types.contains(&r.resource_type.as_str())
+                    && r.detailed_properties.is_none() // Only enrich if not already enriched
+            })
+            .cloned()
+            .collect();
+
+        if !resources_to_enrich.is_empty() {
+            info!("Phase 2: Enriching {} resources with detailed properties", resources_to_enrich.len());
+
+            // Create channels for Phase 2 progress tracking
+            let (progress_tx, mut progress_rx) = mpsc::channel(100);
+            let (result_tx, _result_rx) = mpsc::channel(100);
+
+            // Use shared cache directly - no need to clone/sync since it's shared globally
+            let phase2_cache = cache.clone();
+
+            // Start Phase 2 enrichment (spawns background AWS Describe API calls)
+            client.start_phase2_enrichment(
+                resources_to_enrich,
+                result_tx,
+                Some(progress_tx),
+                phase2_cache,
+            );
+
+            // Wait for Phase 2 to complete
+            // This blocks until all Describe API calls finish
+            while let Some(progress) = progress_rx.recv().await {
+                if matches!(
+                    progress.status,
+                    super::super::super::super::resource_explorer::aws_client::QueryStatus::EnrichmentCompleted
+                ) {
+                    info!("Phase 2: Enrichment completed successfully");
+                    break;
+                }
+            }
+            // No sync needed - SharedResourceCache is shared globally between Agent and Explorer
+        } else {
+            info!("Phase 2: All resources already enriched (cached from previous query)");
+        }
+    }
+
+    // Filter resources to match the requested scope
+    // This uses Explorer's exact filtering logic
+    let filtered_resources: Vec<ResourceEntry> = phase1_resources
+        .iter()
+        .filter(|resource| {
+            // Match account
+            account_ids.contains(&resource.account_id)
+                // Match region
+                && region_codes.contains(&resource.region)
+                // Match resource type
+                && resource_types.contains(&resource.resource_type)
+        })
+        .cloned()
+        .collect();
+
+    info!(
+        "Query complete: {} resources (Phase 1: {}, enriched: {})",
+        filtered_resources.len(),
+        phase1_resources.len(),
+        filtered_resources.iter().filter(|r| r.detailed_properties.is_some()).count()
+    );
+
+    Ok(filtered_resources)
+}
+
+/// Internal async implementation of load cache
+///
+/// Queries AWS resources but returns counts instead of full data to minimize context.
+/// This achieves ~99% context reduction by returning metadata instead of resource arrays.
+async fn load_cache_internal(args: LoadCacheArgs) -> Result<LoadCacheResult> {
+    let start_time = chrono::Utc::now();
+
+    // Resolve accounts: if None/empty, get ALL configured accounts
+    let account_ids = match args.accounts {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => {
+            // Get ALL accounts from GLOBAL_AWS_IDENTITY
+            let identity = super::accounts::get_global_aws_identity()
+                .ok_or_else(|| anyhow!("AWS Identity Center not initialized"))?;
+
+            let identity_guard = identity
+                .lock()
+                .map_err(|e| anyhow!("Failed to lock AwsIdentityCenter: {}", e))?;
+
+            if identity_guard.accounts.is_empty() {
+                return Err(anyhow!("No AWS accounts configured"));
+            }
+
+            identity_guard
+                .accounts
+                .iter()
+                .map(|acc| acc.account_id.clone())
+                .collect()
+        }
+    };
+
+    // Resolve regions: if None/empty, use common AWS regions
+    let region_codes = match args.regions {
+        Some(regions) if !regions.is_empty() => regions,
+        _ => {
+            info!("No regions specified, using common AWS regions");
+            vec![
+                "us-east-1".to_string(),
+                "us-west-2".to_string(),
+                "eu-west-1".to_string(),
+                "ap-southeast-1".to_string(),
+            ]
+        }
+    };
+
+    // Call the black-box API - it handles everything (Phase 1, Phase 2, caching)
+    let all_resources = execute_complete_query(
+        account_ids.clone(),
+        region_codes.clone(),
+        args.resource_types.clone(),
+    )
+    .await?;
+
+    // Calculate counts by scope from returned resources
+    let mut count_by_scope: HashMap<String, usize> = HashMap::new();
+    for resource in &all_resources {
+        let cache_key = format!(
+            "{}:{}:{}",
+            resource.account_id, resource.region, resource.resource_type
+        );
+        *count_by_scope.entry(cache_key).or_insert(0) += 1;
+    }
+
+    let total_count = all_resources.len();
+    info!("loadCache: Returning summary for {} total resources", total_count);
+
+    // Return success result
+    Ok(LoadCacheResult {
+        status: "success".to_string(),
+        count_by_scope,
+        total_count,
+        warnings: Vec::new(), // Shared function handles errors internally
+        errors: Vec::new(),
+        accounts_queried: account_ids,
+        regions_queried: region_codes,
+        load_timestamp_utc: start_time.to_rfc3339(),
+    })
+}
+
+/// Callback for getResourceSchema() JavaScript function
+///
+/// Returns ONE example resource from the cache to show structure and available properties.
+fn get_resource_schema_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    args: v8::FunctionCallbackArguments<'_>,
+    mut rv: v8::ReturnValue<'_>,
+) {
+    // Parse resourceType from first argument
+    let resource_type = match args.get(0).to_string(scope) {
+        Some(s) => s.to_rust_string_lossy(scope),
+        None => {
+            let msg = v8::String::new(
+                scope,
+                "getResourceSchema() requires a resource type string as first argument",
+            )
+            .unwrap();
+            let error = v8::Exception::type_error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Execute schema lookup
+    let result = match execute_get_resource_schema(&resource_type) {
+        Ok(result) => result,
+        Err(e) => {
+            // Return not_found result instead of throwing exception
+            let error_result = GetResourceSchemaResult {
+                status: "not_found".to_string(),
+                resource_type: resource_type.clone(),
+                example_resource: None,
+                cache_stats: None,
+                message: Some(format!("Failed to get schema: {}", e)),
+            };
+            if let Ok(json) = serde_json::to_string(&error_result) {
+                if let Some(v8_str) = v8::String::new(scope, &json) {
+                    if let Some(v8_value) = v8::json::parse(scope, v8_str) {
+                        rv.set(v8_value);
+                        return;
+                    }
+                }
+            }
+            let msg = v8::String::new(scope, &format!("Get schema failed: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Serialize result to JSON string
+    let json_str = match serde_json::to_string(&result) {
+        Ok(json) => json,
+        Err(e) => {
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize result: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Create V8 string from JSON
+    let v8_str = match v8::String::new(scope, &json_str) {
+        Some(s) => s,
+        None => {
+            let msg = v8::String::new(scope, "Failed to create V8 string").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON in V8 to create JavaScript object
+    let v8_value = match v8::json::parse(scope, v8_str) {
+        Some(v) => v,
+        None => {
+            let msg = v8::String::new(scope, "Failed to parse JSON in V8").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    rv.set(v8_value);
+}
+
+/// Execute get resource schema (synchronous wrapper for async code)
+fn execute_get_resource_schema(resource_type: &str) -> Result<GetResourceSchemaResult> {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(async { get_resource_schema_internal(resource_type).await })
+    })
+}
+
+/// Internal async implementation of get resource schema
+///
+/// Searches the ResourceExplorerState cache for ONE example resource of the given type.
+/// Returns the FIRST resource found (deterministic) to show structure and available properties.
+async fn get_resource_schema_internal(resource_type: &str) -> Result<GetResourceSchemaResult> {
+    // Get global explorer state
+    let explorer_state = get_global_explorer_state()
+        .ok_or_else(|| anyhow!("Explorer state not initialized (login required)"))?;
+
+    let state_guard = explorer_state.read().await;
+
+    // Search cache for ANY resource of this type
+    let mut example_resource: Option<&ResourceEntry> = None;
+    let mut total_count = 0usize;
+    let mut unique_accounts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut unique_regions: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (_cache_key, entries) in &state_guard.cached_queries {
+        for entry in entries {
+            if entry.resource_type == resource_type {
+                // Take first resource as example if not yet set
+                if example_resource.is_none() {
+                    example_resource = Some(entry);
+                }
+
+                // Track statistics
+                total_count += 1;
+                unique_accounts.insert(entry.account_id.clone());
+                unique_regions.insert(entry.region.clone());
+            }
+        }
+    }
+
+    // Build result
+    if let Some(example) = example_resource {
+        // Merge all property fields into single object
+        // Order: properties -> raw_properties -> detailed_properties (later overwrites earlier)
+        let mut merged_properties = serde_json::Map::new();
+
+        // Layer 1: properties (normalized minimal data)
+        if let Some(props) = example.properties.as_object() {
+            for (key, value) in props {
+                merged_properties.insert(key.clone(), value.clone());
+            }
+        }
+
+        // Layer 2: raw_properties (Phase 1 List API response)
+        if let Some(raw) = example.raw_properties.as_object() {
+            for (key, value) in raw {
+                merged_properties.insert(key.clone(), value.clone());
+            }
+        }
+
+        // Layer 3: detailed_properties (Phase 2 Describe API response)
+        if let Some(detailed) = example.detailed_properties.as_ref() {
+            if let Some(detailed_obj) = detailed.as_object() {
+                for (key, value) in detailed_obj {
+                    merged_properties.insert(key.clone(), value.clone());
+                }
+            }
+        }
+
+        Ok(GetResourceSchemaResult {
+            status: "success".to_string(),
+            resource_type: resource_type.to_string(),
+            example_resource: Some(ExampleResource {
+                resource_id: example.resource_id.clone(),
+                display_name: example.display_name.clone(),
+                account_id: example.account_id.clone(),
+                region: example.region.clone(),
+                properties: serde_json::Value::Object(merged_properties),
+                tags: example
+                    .tags
+                    .iter()
+                    .map(|t| ResourceTag {
+                        key: t.key.clone(),
+                        value: t.value.clone(),
+                    })
+                    .collect(),
+                status: example.status.clone(),
+            }),
+            cache_stats: Some(CacheStats {
+                total_count,
+                account_count: unique_accounts.len(),
+                region_count: unique_regions.len(),
+            }),
+            message: None,
+        })
+    } else {
+        // Build helpful error message with cache statistics
+        use std::collections::HashSet;
+
+        let cache_size = state_guard.cached_queries.len();
+        let mut cache_types = HashSet::new();
+
+        for cache_key in state_guard.cached_queries.keys() {
+            let parts: Vec<&str> = cache_key.split(':').collect();
+            if parts.len() == 3 {
+                cache_types.insert(parts[2].to_string());
+            }
+        }
+
+        let mut message = format!("No resources of type '{}' found in cache.\n\n", resource_type);
+
+        if cache_size == 0 {
+            message.push_str("Cache is empty. Did you call loadCache() first?");
+        } else {
+            message.push_str(&format!(
+                "Cache contains {} other resource types:\n  ",
+                cache_types.len()
+            ));
+
+            let mut available_types: Vec<_> = cache_types.iter().map(|s| s.as_str()).collect();
+            available_types.sort();
+            message.push_str(&available_types.join(", "));
+            message.push_str(&format!(
+                "\n\nTip: Call loadCache() with resourceTypes: ['{}'] to populate this type.",
+                resource_type
+            ));
+        }
+
+        Ok(GetResourceSchemaResult {
+            status: "not_found".to_string(),
+            resource_type: resource_type.to_string(),
+            example_resource: None,
+            cache_stats: None,
+            message: Some(message),
+        })
+    }
+}
+
+/// Callback for showInExplorer() JavaScript function
+///
+/// Opens the Explorer window with dynamic configuration from JavaScript.
+/// Enqueues an action for the Explorer window to poll and apply.
+fn show_in_explorer_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    args: v8::FunctionCallbackArguments<'_>,
+    mut rv: v8::ReturnValue<'_>,
+) {
+    // Parse JavaScript arguments
+    let args_obj = match args.get(0).to_object(scope) {
+        Some(obj) => obj,
+        None => {
+            let msg = v8::String::new(
+                scope,
+                "showInExplorer() requires an object argument with optional { accounts?, regions?, resourceTypes?, grouping?, tagFilters?, searchFilter?, title? }",
+            )
+            .unwrap();
+            let error = v8::Exception::type_error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Convert V8 object to JSON string for parsing
+    let json_str = match v8::json::stringify(scope, args_obj.into()) {
+        Some(s) => s.to_rust_string_lossy(scope),
+        None => {
+            let msg = v8::String::new(scope, "Failed to stringify arguments").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON into ShowInExplorerArgs
+    let show_args: ShowInExplorerArgs = match serde_json::from_str(&json_str) {
+        Ok(args) => args,
+        Err(e) => {
+            let msg = v8::String::new(scope, &format!("Failed to parse arguments: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Enqueue action for Explorer window
+    crate::app::resource_explorer::enqueue_explorer_action(
+        crate::app::resource_explorer::ExplorerAction::OpenWithConfig(show_args),
+    );
+
+    // Return success result
+    let result = ShowInExplorerResult {
+        status: "success".to_string(),
+        message: Some("Explorer window action enqueued".to_string()),
+        resources_displayed: None, // Unknown until Explorer processes the action
+    };
+
+    // Serialize result to JSON string
+    let json_str = match serde_json::to_string(&result) {
+        Ok(json) => json,
+        Err(e) => {
+            let msg =
+                v8::String::new(scope, &format!("Failed to serialize result: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Create V8 string from JSON
+    let v8_str = match v8::String::new(scope, &json_str) {
+        Some(s) => s,
+        None => {
+            let msg = v8::String::new(scope, "Failed to create V8 string").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON in V8 to create JavaScript object
+    let v8_value = match v8::json::parse(scope, v8_str) {
+        Some(v) => v,
+        None => {
+            let msg = v8::String::new(scope, "Failed to parse JSON in V8").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    rv.set(v8_value);
+}
+
+/// Callback for queryCachedResources() JavaScript function
+///
+/// Queries cached resources by account, region, and resource type.
+/// Returns actual ResourceEntry objects (not just counts) for filtering/analysis.
+fn query_cached_resources_callback(
+    scope: &mut v8::PinScope<'_, '_>,
+    args: v8::FunctionCallbackArguments<'_>,
+    mut rv: v8::ReturnValue<'_>,
+) {
+    // Parse JavaScript arguments
+    let args_obj = match args.get(0).to_object(scope) {
+        Some(obj) => obj,
+        None => {
+            let msg = v8::String::new(
+                scope,
+                "queryCachedResources() requires an object argument with { accounts?, regions?, resourceTypes }",
+            )
+            .unwrap();
+            let error = v8::Exception::type_error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Convert V8 object to JSON string for parsing
+    let json_str = match v8::json::stringify(scope, args_obj.into()) {
+        Some(s) => s.to_rust_string_lossy(scope),
+        None => {
+            let msg = v8::String::new(scope, "Failed to stringify arguments").unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Parse JSON into QueryCachedResourcesArgs
+    let query_args: QueryCachedResourcesArgs = match serde_json::from_str(&json_str) {
+        Ok(args) => args,
+        Err(e) => {
+            let msg = v8::String::new(scope, &format!("Failed to parse arguments: {}", e)).unwrap();
+            let error = v8::Exception::error(scope, msg);
+            scope.throw_exception(error);
+            return;
+        }
+    };
+
+    // Execute query synchronously (wraps async code)
+    let result = match execute_query_cached_resources(query_args) {
+        Ok(r) => r,
+        Err(e) => {
             let msg = v8::String::new(scope, &format!("Query failed: {}", e)).unwrap();
             let error = v8::Exception::error(scope, msg);
             scope.throw_exception(error);
@@ -184,30 +1188,29 @@ fn query_resources_callback(
     rv.set(v8_value);
 }
 
-/// Execute AWS resource query (synchronous wrapper for async code)
-fn execute_query(args: QueryResourcesArgs) -> Result<UnifiedQueryResult<serde_json::Value>> {
-    // Use the current runtime's handle and block_in_place to avoid nested runtime error
+/// Execute queryCachedResources (synchronous wrapper for async code)
+fn execute_query_cached_resources(args: QueryCachedResourcesArgs) -> Result<QueryCachedResourcesResult> {
     tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async { query_resources_internal(args).await })
+        tokio::runtime::Handle::current()
+            .block_on(async { query_cached_resources_internal(args).await })
     })
 }
 
-/// Internal async implementation of resource query
-async fn query_resources_internal(
-    args: QueryResourcesArgs,
-) -> Result<UnifiedQueryResult<serde_json::Value>> {
-    // Parse detail level (default: summary)
-    let detail_level = DetailLevel::from_str_opt(args.detail.as_deref());
-    debug!("Query detail level: {:?}", detail_level);
+/// Internal async implementation of queryCachedResources
+///
+/// Thin wrapper around Explorer's query infrastructure (same as loadCache).
+/// The query engine handles caching transparently - we just return full resources
+/// instead of counts.
+async fn query_cached_resources_internal(
+    args: QueryCachedResourcesArgs,
+) -> Result<QueryCachedResourcesResult> {
+    use std::collections::HashSet;
 
-    // Get global AWS client
-    let client = get_global_aws_client().ok_or_else(|| anyhow!("AWS client not initialized"))?;
-
-    // Get accounts: if null, pick one random account
-    let account_ids = match args.accounts {
-        Some(ids) if !ids.is_empty() => ids,
+    // Resolve accounts: if None/empty, get ALL configured accounts
+    let account_ids = match &args.accounts {
+        Some(ids) if !ids.is_empty() => ids.clone(),
         _ => {
-            // Get one random account from GLOBAL_AWS_IDENTITY
+            // Get ALL accounts from GLOBAL_AWS_IDENTITY
             let identity = super::accounts::get_global_aws_identity()
                 .ok_or_else(|| anyhow!("AWS Identity Center not initialized"))?;
 
@@ -219,283 +1222,136 @@ async fn query_resources_internal(
                 return Err(anyhow!("No AWS accounts configured"));
             }
 
-            // Pick a random account
-            let mut rng = rand::thread_rng();
-            let random_account = identity_guard
+            identity_guard
                 .accounts
-                .choose(&mut rng)
-                .ok_or_else(|| anyhow!("Failed to select random account"))?;
-
-            info!(
-                "Using random account: {} ({})",
-                random_account.account_name, random_account.account_id
-            );
-            vec![random_account.account_id.clone()]
+                .iter()
+                .map(|acc| acc.account_id.clone())
+                .collect()
         }
     };
 
-    // Get regions: if null, use us-east-1
-    let region_codes = match args.regions {
-        Some(regions) if !regions.is_empty() => regions,
+    // Resolve regions: if None/empty, use common AWS regions
+    let region_codes = match &args.regions {
+        Some(regions) if !regions.is_empty() => regions.clone(),
         _ => {
-            info!("No regions specified, using us-east-1");
-            vec!["us-east-1".to_string()]
+            info!("No regions specified, using common AWS regions");
+            vec![
+                "us-east-1".to_string(),
+                "us-west-2".to_string(),
+                "eu-west-1".to_string(),
+                "ap-southeast-1".to_string(),
+            ]
         }
     };
 
-    // Validate resource types are not empty
-    if args.resource_types.is_empty() {
-        return Err(anyhow!("resource_types array cannot be empty"));
-    }
+    // Call the black-box API - it handles everything (Phase 1, Phase 2, caching)
+    // This encapsulates Explorer's complete workflow transparently
+    let all_resources = execute_complete_query(
+        account_ids,
+        region_codes,
+        args.resource_types.clone(),
+    )
+    .await?;
 
-    // Build QueryScope
-    let scope = build_query_scope(&account_ids, &region_codes, &args.resource_types)?;
+    // Format resources for JavaScript consumption
+    // Convert ResourceEntry objects to JavaScript-friendly JSON with merged properties
+    let mut js_resources = Vec::new();
+    let mut accounts_found = HashSet::new();
+    let mut regions_found = HashSet::new();
+    let mut types_found = HashSet::new();
 
-    // Get global explorer state for unified caching
-    let explorer_state = get_global_explorer_state();
+    for entry in &all_resources {
+        // Merge all property fields into single object for JavaScript
+        // Layer 1: properties (normalized minimal)
+        // Layer 2: raw_properties (Phase 1 List API data)
+        // Layer 3: detailed_properties (Phase 2 Describe API data)
+        let mut merged_properties = serde_json::Map::new();
 
-    // Create a temporary cache for the parallel query
-    // We'll sync results with ResourceExplorerState after
-    let query_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>> =
-        Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        // Layer 1: properties
+        if let Some(props) = entry.properties.as_object() {
+            for (key, value) in props {
+                merged_properties.insert(key.clone(), value.clone());
+            }
+        }
 
-    // Check if any results are already cached in explorer state
-    if let Some(state) = &explorer_state {
-        let state_guard = state.read().await;
-        for account in &scope.accounts {
-            for region in &scope.regions {
-                for resource_type in &scope.resource_types {
-                    let cache_key = format!(
-                        "{}:{}:{}",
-                        account.account_id, region.region_code, resource_type.resource_type
-                    );
-                    if let Some(cached_entries) = state_guard.cached_queries.get(&cache_key) {
-                        // Cache hit - use cached entries
-                        debug!("Cache hit for {}", cache_key);
-                        let mut cache_guard = query_cache.write().await;
-                        cache_guard.insert(cache_key, cached_entries.clone());
-                    }
+        // Layer 2: raw_properties
+        if let Some(raw) = entry.raw_properties.as_object() {
+            for (key, value) in raw {
+                merged_properties.insert(key.clone(), value.clone());
+            }
+        }
+
+        // Layer 3: detailed_properties (Phase 2 enrichment)
+        if let Some(detailed) = entry.detailed_properties.as_ref() {
+            if let Some(detailed_obj) = detailed.as_object() {
+                for (key, value) in detailed_obj {
+                    merged_properties.insert(key.clone(), value.clone());
                 }
             }
         }
-    }
 
-    // Create result channel
-    let (result_tx, mut result_rx) = mpsc::channel(1000);
+        // Serialize tags
+        let tags_json: Vec<serde_json::Value> = entry
+            .tags
+            .iter()
+            .map(|tag| {
+                json!({
+                    "key": tag.key,
+                    "value": tag.value
+                })
+            })
+            .collect();
 
-    // Track warnings and errors per account/region
-    let mut warnings: Vec<QueryWarning> = Vec::new();
-    let mut errors: Vec<QueryError> = Vec::new();
-    let mut success_count = 0usize;
-    let mut error_count = 0usize;
-
-    // Start parallel query (spawns background tasks)
-    let client_clone = Arc::clone(&client);
-    let cache_clone = Arc::clone(&query_cache);
-    let scope_for_query = scope.clone(); // Clone for spawn, keep original for later use
-    tokio::spawn(async move {
-        if let Err(e) = client_clone
-            .query_aws_resources_parallel(
-                &scope_for_query,
-                result_tx,
-                None, // No progress updates needed
-                cache_clone,
-            )
-            .await
-        {
-            warn!("Query error: {}", e);
-        }
-    });
-
-    // Collect all results
-    let mut all_entries: Vec<ResourceEntry> = Vec::new();
-
-    while let Some(result) = result_rx.recv().await {
-        match result.resources {
-            Ok(entries) => {
-                success_count += 1;
-                // Store in explorer state cache for future queries
-                if let Some(state) = &explorer_state {
-                    let cache_key = format!(
-                        "{}:{}:{}",
-                        result.account_id, result.region, result.resource_type
-                    );
-                    let mut state_guard = state.write().await;
-                    state_guard
-                        .cached_queries
-                        .insert(cache_key, entries.clone());
-                }
-                all_entries.extend(entries);
-            }
-            Err(e) => {
-                error_count += 1;
-                let error_msg = e.to_string();
-                warn!(
-                    "Query error for {}/{}/{}: {}",
-                    result.account_id, result.region, result.resource_type, error_msg
-                );
-
-                // Categorize error
-                let (code, is_warning) = categorize_error(&error_msg);
-                if is_warning {
-                    warnings.push(QueryWarning {
-                        account: result.account_id,
-                        region: result.region,
-                        message: error_msg,
-                    });
-                } else {
-                    errors.push(QueryError {
-                        account: result.account_id,
-                        region: result.region,
-                        code,
-                        message: error_msg,
-                    });
-                }
-            }
-        }
-    }
-
-    let total_count = all_entries.len();
-    info!(
-        "Collected {} resources total (success: {}, errors: {})",
-        total_count, success_count, error_count
-    );
-
-    // Phase 2 wait logic for detail="full"
-    let (mut details_loaded, mut details_pending) = (false, false);
-
-    if detail_level == DetailLevel::Full {
-        // Check if any enrichable resources need Phase 2
-        let enrichable_types = ResourceExplorerState::enrichable_resource_types();
-        let needs_phase2 = all_entries.iter().any(|e| {
-            enrichable_types.contains(&e.resource_type.as_str())
-                && e.detailed_properties.is_none()
+        // Create JavaScript-friendly resource
+        let js_resource = json!({
+            "resourceId": entry.resource_id,
+            "displayName": entry.display_name,
+            "accountId": entry.account_id,
+            "region": entry.region,
+            "resourceType": entry.resource_type,
+            "properties": serde_json::Value::Object(merged_properties),
+            "tags": tags_json,
+            "status": entry.status,
         });
 
-        if needs_phase2 {
-            if let Some(state) = &explorer_state {
-                // Check if Phase 2 is in progress
-                let should_wait = {
-                    let guard = state.read().await;
-                    guard.phase2_enrichment_in_progress
-                };
-
-                if should_wait {
-                    info!("Waiting for Phase 2 enrichment to complete...");
-                    let start = std::time::Instant::now();
-                    let timeout = std::time::Duration::from_secs(60);
-
-                    loop {
-                        if start.elapsed() > timeout {
-                            warn!("Phase 2 wait timeout after 60 seconds");
-                            details_pending = true;
-                            break;
-                        }
-
-                        let still_waiting = {
-                            let guard = state.read().await;
-                            guard.phase2_enrichment_in_progress
-                        };
-
-                        if !still_waiting {
-                            info!("Phase 2 enrichment completed, refreshing entries");
-                            // Refresh entries from cache with enriched data
-                            all_entries = refresh_entries_from_cache(&scope, state.clone()).await;
-                            details_loaded = true;
-                            break;
-                        }
-
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                } else {
-                    // Phase 2 not running - check if details already loaded
-                    let completed = {
-                        let guard = state.read().await;
-                        guard.phase2_enrichment_completed
-                    };
-                    if completed {
-                        // Refresh to get enriched data
-                        all_entries = refresh_entries_from_cache(&scope, state.clone()).await;
-                        details_loaded = true;
-                    }
-                }
-            }
-        } else {
-            // No enrichable resources need Phase 2, or all already have details
-            details_loaded = all_entries.iter().all(|e| {
-                !enrichable_types.contains(&e.resource_type.as_str())
-                    || e.detailed_properties.is_some()
-            });
-        }
+        js_resources.push(js_resource);
+        accounts_found.insert(entry.account_id.clone());
+        regions_found.insert(entry.region.clone());
+        types_found.insert(entry.resource_type.clone());
     }
 
-    // Update total count after potential refresh
-    let total_count = all_entries.len();
+    let count = js_resources.len();
 
-    // Apply detail level filtering and convert to JSON
-    let data = match detail_level {
-        DetailLevel::Count => {
-            // Just return count in data field
-            serde_json::json!(null)
-        }
-        DetailLevel::Summary => {
-            let summaries: Vec<ResourceSummary> =
-                all_entries.iter().map(ResourceSummary::from).collect();
-            serde_json::to_value(summaries).unwrap_or(serde_json::json!([]))
-        }
-        DetailLevel::Tags => {
-            let with_tags: Vec<ResourceWithTags> =
-                all_entries.iter().map(ResourceWithTags::from).collect();
-            serde_json::to_value(with_tags).unwrap_or(serde_json::json!([]))
-        }
-        DetailLevel::Full => {
-            let full: Vec<ResourceFull> = all_entries.iter().map(ResourceFull::from).collect();
-            serde_json::to_value(full).unwrap_or(serde_json::json!([]))
-        }
-    };
+    if count == 0 {
+        // Build error message
+        let message = format!(
+            "No resources found for: {}\n\nQuery completed but returned no matching resources.",
+            args.resource_types.join(", ")
+        );
 
-    // Build result with appropriate status and Phase 2 metadata
-    let result = UnifiedQueryResult::from_results_with_phase2_status(
-        data,
-        total_count,
-        success_count,
-        error_count,
-        warnings,
-        errors,
-        details_loaded,
-        details_pending,
-    );
-
-    Ok(result)
-}
-
-/// Refresh entries from the explorer state cache
-/// This is called after Phase 2 completes to get the enriched data
-async fn refresh_entries_from_cache(
-    scope: &QueryScope,
-    state: Arc<tokio::sync::RwLock<crate::app::resource_explorer::state::ResourceExplorerState>>,
-) -> Vec<ResourceEntry> {
-    let guard = state.read().await;
-    let mut entries = Vec::new();
-
-    for account in &scope.accounts {
-        for region in &scope.regions {
-            for resource_type in &scope.resource_types {
-                let cache_key = format!(
-                    "{}:{}:{}",
-                    account.account_id, region.region_code, resource_type.resource_type
-                );
-                if let Some(cached) = guard.cached_queries.get(&cache_key) {
-                    entries.extend(cached.clone());
-                }
-            }
-        }
+        Ok(QueryCachedResourcesResult {
+            status: "not_found".to_string(),
+            resources: None,
+            count: 0,
+            accounts_with_data: Vec::new(),
+            regions_with_data: Vec::new(),
+            resource_types_found: Vec::new(),
+            message: Some(message),
+        })
+    } else {
+        Ok(QueryCachedResourcesResult {
+            status: "success".to_string(),
+            resources: Some(js_resources),
+            count,
+            accounts_with_data: accounts_found.into_iter().collect(),
+            regions_with_data: regions_found.into_iter().collect(),
+            resource_types_found: types_found.into_iter().collect(),
+            message: None,
+        })
     }
-
-    entries
 }
 
-/// Categorize an error message into a code and whether it's a warning
+/// Categorize an error message into a code and whether it's a warning (used by loadCache)
 fn categorize_error(error_msg: &str) -> (String, bool) {
     let lower = error_msg.to_lowercase();
     if lower.contains("access denied") || lower.contains("not authorized") {
@@ -740,24 +1596,160 @@ async fn query_bookmark_internal(
         bookmark.name, bookmark.account_ids, bookmark.region_codes, bookmark.resource_type_ids
     );
 
-    // Build QueryResourcesArgs from bookmark
-    let query_args = QueryResourcesArgs {
-        accounts: if bookmark.account_ids.is_empty() {
-            None
-        } else {
-            Some(bookmark.account_ids.clone())
-        },
-        regions: if bookmark.region_codes.is_empty() {
-            None
-        } else {
-            Some(bookmark.region_codes.clone())
-        },
-        resource_types: bookmark.resource_type_ids.clone(),
-        detail: options.detail,
+    // Get global AWS client
+    let client = get_global_aws_client().ok_or_else(|| anyhow!("AWS client not initialized"))?;
+
+    // Get accounts from bookmark
+    let account_ids = if bookmark.account_ids.is_empty() {
+        // Get one random account from GLOBAL_AWS_IDENTITY
+        let identity = super::accounts::get_global_aws_identity()
+            .ok_or_else(|| anyhow!("AWS Identity Center not initialized"))?;
+
+        let identity_guard = identity
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock AwsIdentityCenter: {}", e))?;
+
+        if identity_guard.accounts.is_empty() {
+            return Err(anyhow!("No AWS accounts configured"));
+        }
+
+        // Pick a random account
+        let mut rng = rand::thread_rng();
+        let random_account = identity_guard
+            .accounts
+            .choose(&mut rng)
+            .ok_or_else(|| anyhow!("Failed to select random account"))?;
+
+        info!(
+            "Using random account for bookmark: {} ({})",
+            random_account.account_name, random_account.account_id
+        );
+        vec![random_account.account_id.clone()]
+    } else {
+        bookmark.account_ids.clone()
     };
 
-    // Execute the query using the existing internal function
-    query_resources_internal(query_args).await
+    // Get regions from bookmark
+    let region_codes = if bookmark.region_codes.is_empty() {
+        info!("No regions specified in bookmark, using us-east-1");
+        vec!["us-east-1".to_string()]
+    } else {
+        bookmark.region_codes.clone()
+    };
+
+    // Validate resource types are not empty
+    if bookmark.resource_type_ids.is_empty() {
+        return Err(anyhow!("Bookmark has no resource types configured"));
+    }
+
+    // Build QueryScope
+    let scope = build_query_scope(&account_ids, &region_codes, &bookmark.resource_type_ids)?;
+
+    // Use the shared Moka cache - same cache used by Explorer UI
+    // This provides unified caching between Agent and Explorer queries
+    let cache = crate::app::resource_explorer::cache::shared_cache();
+
+    // Create result channel
+    let (result_tx, mut result_rx) = mpsc::channel(1000);
+
+    // Track warnings and errors per account/region
+    let mut warnings: Vec<QueryWarning> = Vec::new();
+    let mut errors: Vec<QueryError> = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+
+    // Start parallel query (spawns background tasks)
+    let client_clone = Arc::clone(&client);
+    let cache_clone = Arc::clone(&cache);
+    let scope_for_query = scope.clone();
+    tokio::spawn(async move {
+        if let Err(e) = client_clone
+            .query_aws_resources_parallel(
+                &scope_for_query,
+                result_tx,
+                None, // No progress updates needed
+                cache_clone,
+            )
+            .await
+        {
+            warn!("Bookmark query error: {}", e);
+        }
+    });
+
+    // Collect all results
+    let mut all_entries: Vec<ResourceEntry> = Vec::new();
+
+    while let Some(result) = result_rx.recv().await {
+        match result.resources {
+            Ok(entries) => {
+                success_count += 1;
+                // No sync needed - SharedResourceCache is shared globally
+                all_entries.extend(entries);
+            }
+            Err(e) => {
+                error_count += 1;
+                let error_msg = e.to_string();
+                warn!(
+                    "Bookmark query error for {}/{}/{}: {}",
+                    result.account_id, result.region, result.resource_type, error_msg
+                );
+
+                // Categorize error
+                let (code, is_warning) = categorize_error(&error_msg);
+                if is_warning {
+                    warnings.push(QueryWarning {
+                        account: result.account_id,
+                        region: result.region,
+                        message: error_msg,
+                    });
+                } else {
+                    errors.push(QueryError {
+                        account: result.account_id,
+                        region: result.region,
+                        code,
+                        message: error_msg,
+                    });
+                }
+            }
+        }
+    }
+
+    let total_count = all_entries.len();
+    info!(
+        "Bookmark query collected {} resources (success: {}, errors: {})",
+        total_count, success_count, error_count
+    );
+
+    // Apply detail level filtering and convert to JSON
+    let data = match detail_level {
+        DetailLevel::Count => serde_json::json!(null),
+        DetailLevel::Summary => {
+            let summaries: Vec<ResourceSummary> =
+                all_entries.iter().map(ResourceSummary::from).collect();
+            serde_json::to_value(summaries).unwrap_or(serde_json::json!([]))
+        }
+        DetailLevel::Tags => {
+            let with_tags: Vec<ResourceWithTags> =
+                all_entries.iter().map(ResourceWithTags::from).collect();
+            serde_json::to_value(with_tags).unwrap_or(serde_json::json!([]))
+        }
+        DetailLevel::Full => {
+            let full: Vec<ResourceFull> = all_entries.iter().map(ResourceFull::from).collect();
+            serde_json::to_value(full).unwrap_or(serde_json::json!([]))
+        }
+    };
+
+    // Build result
+    let result = UnifiedQueryResult::from_results(
+        data,
+        total_count,
+        success_count,
+        error_count,
+        warnings,
+        errors,
+    );
+
+    Ok(result)
 }
 
 /// Build QueryScope from arguments
@@ -808,392 +1800,6 @@ fn build_query_scope(
     })
 }
 
-/// Get LLM documentation for resource query functions
-pub fn get_documentation() -> String {
-    r#"
-### queryResources()
-
-Query AWS resources across accounts, regions, and resource types with configurable detail levels.
-
-**Signature:**
-```typescript
-function queryResources(options: QueryOptions): QueryResult
-
-interface QueryOptions {
-  accounts?: string[] | null;      // Account IDs (null = random account)
-  regions?: string[] | null;       // Region codes (null = us-east-1)
-  resourceTypes: string[];         // CloudFormation resource types (required)
-  detail?: 'count' | 'summary' | 'tags' | 'full';  // Detail level (default: 'summary')
-}
-
-interface QueryResult {
-  status: 'success' | 'partial' | 'error';  // Query status
-  data: ResourceInfo[] | null;               // Resources (null for count)
-  count: number;                             // Total resource count
-  warnings: QueryWarning[];                  // Non-fatal issues (rate limiting, timeouts)
-  errors: QueryError[];                      // Errors per account/region
-}
-
-interface QueryWarning {
-  account: string;
-  region: string;
-  message: string;
-}
-
-interface QueryError {
-  account: string;
-  region: string;
-  code: string;    // e.g., 'AccessDenied', 'NotFound', 'InvalidRequest'
-  message: string;
-}
-```
-
-**Detail Levels:**
-- `count`: Just totals, data is null - use for "how many instances exist?"
-- `summary` (DEFAULT): Minimal fields: resourceId, displayName, resourceType, accountId, region, status
-- `tags`: Summary fields plus tags array
-- `full`: Complete data including properties, rawProperties, detailedProperties
-
-**Resource Info by Detail Level:**
-```typescript
-// detail: 'summary' (default)
-interface ResourceSummary {
-  resourceId: string;
-  displayName: string;
-  resourceType: string;
-  accountId: string;
-  region: string;
-  status: string | null;
-}
-
-// detail: 'tags'
-interface ResourceWithTags extends ResourceSummary {
-  tags: Array<{key: string, value: string}>;
-}
-
-// detail: 'full'
-interface ResourceFull extends ResourceWithTags {
-  properties: object;           // Normalized properties from Phase 1
-  rawProperties: object;        // Original AWS API response from Phase 1
-  detailedProperties: object | null;  // Phase 2 enrichment data (only for enrichable types)
-                                      // Contains: policies, encryption settings, configurations
-                                      // null for non-enrichable types (EC2, VPC, etc.)
-}
-```
-
-**Status Meanings:**
-- `success`: All account/region queries succeeded
-- `partial`: Some queries succeeded, some failed (check errors array)
-- `error`: All queries failed (check errors array)
-
-**Description:**
-Executes parallel AWS API queries across specified accounts, regions, and resource types.
-Returns a result object with status, data, count, warnings, and errors.
-Results are cached and shared with AWS Explorer UI for efficiency.
-
-**Default Behavior:**
-- If `accounts` is `null` or empty: selects ONE random account from configured accounts
-- If `regions` is `null` or empty: Uses `us-east-1` region only
-- If `detail` is not specified: Uses `summary` level
-- `resourceTypes` is REQUIRED and cannot be empty
-
-**Resource Types:**
-Use CloudFormation format (e.g., `AWS::EC2::Instance`, `AWS::S3::Bucket`, `AWS::IAM::Role`).
-We support 93 services and 183 resource types.
-
-**Return value structure:**
-```json
-{
-  "status": "success",
-  "data": [
-    {
-      "resourceId": "i-1234567890abcdef0",
-      "displayName": "web-server-01",
-      "resourceType": "AWS::EC2::Instance",
-      "accountId": "123456789012",
-      "region": "us-east-1",
-      "status": "running"
-    }
-  ],
-  "count": 1,
-  "warnings": [],
-  "errors": []
-}
-```
-
-**Example usage:**
-```javascript
-// Quick count - how many EC2 instances?
-const countResult = queryResources({
-  accounts: ["123456789012"],
-  regions: ["us-east-1"],
-  resourceTypes: ["AWS::EC2::Instance"],
-  detail: "count"
-});
-console.log(`Found ${countResult.count} EC2 instances`);
-
-// Default summary query
-const result = queryResources({
-  accounts: ["123456789012"],
-  regions: ["us-east-1"],
-  resourceTypes: ["AWS::EC2::Instance"]
-});
-
-if (result.status === "error") {
-  console.error("Query failed:", result.errors);
-  return null;
-}
-
-if (result.status === "partial") {
-  console.warn("Some queries failed:", result.errors);
-}
-
-console.log(`Found ${result.count} instances`);
-result.data.forEach(i => {
-  console.log(`${i.displayName}: ${i.status}`);
-});
-
-// Query with tags to filter by environment
-const tagResult = queryResources({
-  accounts: listAccounts().map(a => a.id),
-  regions: ["us-east-1", "us-west-2"],
-  resourceTypes: ["AWS::EC2::Instance"],
-  detail: "tags"
-});
-
-const prodInstances = tagResult.data.filter(r =>
-  r.tags.some(t => t.key === "Environment" && t.value === "Production")
-);
-
-// Full details for deep inspection
-const fullResult = queryResources({
-  accounts: ["123456789012"],
-  regions: ["us-east-1"],
-  resourceTypes: ["AWS::EC2::Instance"],
-  detail: "full"
-});
-
-fullResult.data.forEach(r => {
-  console.log(`Instance: ${r.displayName}`);
-  console.log(`  Type: ${r.properties.InstanceType}`);
-  console.log(`  Launch: ${r.properties.LaunchTime}`);
-  console.log(`  Tags: ${r.tags.length}`);
-});
-```
-
-**Error handling:**
-```javascript
-const result = queryResources({
-  accounts: null,
-  regions: null,
-  resourceTypes: ["AWS::EC2::Instance"]
-});
-
-// Check status first
-if (result.status === "error") {
-  result.errors.forEach(e => {
-    console.error(`Error in ${e.account}/${e.region}: ${e.code} - ${e.message}`);
-  });
-  return null;
-}
-
-// Handle partial results
-if (result.status === "partial") {
-  console.warn("Partial results - some queries failed:");
-  result.errors.forEach(e => console.warn(`  ${e.account}/${e.region}: ${e.code}`));
-  result.warnings.forEach(w => console.warn(`  Warning: ${w.message}`));
-}
-
-// Empty results are valid (status: success, count: 0)
-if (result.count === 0) {
-  console.log("No resources found matching criteria");
-  return [];
-}
-
-return result.data;
-```
-
-**Performance considerations:**
-- Use `detail: "count"` for existence checks - no data transferred
-- Use `detail: "summary"` (default) for list views
-- Use `detail: "tags"` only when filtering by tags
-- Use `detail: "full"` only when you need all properties
-- Results are cached and shared with AWS Explorer UI
-- Large queries (many accounts x regions x types) may take 10-60 seconds
-
-**Global Services (region parameter has no effect):**
-Some AWS services are global - they return the same resources regardless of which region you query:
-- `AWS::S3::Bucket` - list-buckets returns ALL buckets in the account, not region-specific
-- `AWS::IAM::Role`, `AWS::IAM::User`, `AWS::IAM::Policy` - IAM is global
-- `AWS::Route53::HostedZone` - Route53 is global DNS
-- `AWS::CloudFront::Distribution` - CloudFront is global CDN
-- `AWS::Organizations::*` - Organizations is global
-
-For global services, the region parameter doesn't filter results. The system automatically
-queries once per account regardless of how many regions you specify.
-
-**Two-Phase Loading and detailedProperties:**
-Some resource types require two phases to load complete data:
-- Phase 1: Quick list query returns basic info immediately
-- Phase 2: Background enrichment fetches detailed properties (policies, configurations, etc.)
-
-The `detailedProperties` field is ONLY populated for "enrichable" resource types after Phase 2:
-- AWS::S3::Bucket (bucket policies, encryption, versioning)
-- AWS::Lambda::Function (function configuration, environment variables)
-- AWS::IAM::Role, AWS::IAM::User, AWS::IAM::Policy (inline policies, attached policies)
-- AWS::KMS::Key (key policies, rotation status)
-- AWS::SQS::Queue (queue policies, attributes)
-- AWS::SNS::Topic (topic policies, subscriptions)
-- AWS::DynamoDB::Table (table settings, GSIs)
-- AWS::ECS::Cluster, AWS::ECS::Service
-- AWS::CloudFormation::Stack (stack resources, outputs)
-- And others (Cognito, CodeCommit, ELBv2, EMR, EventBridge, Glue)
-
-Non-enrichable resources (EC2 instances, VPCs, Subnets) have `detailedProperties: null`
-because their full data is available in Phase 1.
-
-When using `detail: "full"`, the query waits for Phase 2 to complete (up to 60s timeout).
-The result includes Phase 2 status:
-```typescript
-interface QueryResult {
-  // ... other fields ...
-  detailsLoaded: boolean;   // true if Phase 2 completed for all enrichable resources
-  detailsPending: boolean;  // true if Phase 2 is still running (timeout occurred)
-}
-```
-
-**Common Error Codes:**
-Errors in the `errors` array have specific codes:
-- `AccessDenied` - IAM permissions insufficient for this resource type
-- `InvalidToken` - Region not enabled or not accessible (common for opt-in regions like me-south-1, af-south-1)
-- `OptInRequired` - Region requires explicit opt-in in AWS Account settings
-- `Timeout` - Network timeout (retryable)
-- `RateLimitExceeded` - API throttled (retryable, appears as warning not error)
-- `NotFound` - Resource or service not found
-- `InvalidRequest` - Invalid parameters
-
-Region-related errors (InvalidToken, OptInRequired) are normal for opt-in regions that
-haven't been enabled in the account. These can be safely ignored for most use cases.
-
----
-
-### listBookmarks()
-
-List all saved bookmarks (flat list, no folder hierarchy).
-
-**Signature:**
-```typescript
-function listBookmarks(): BookmarkInfo[]
-
-interface BookmarkInfo {
-  id: string;                   // Unique bookmark ID (UUID)
-  name: string;                 // Display name
-  description: string | null;   // Optional description
-  accountIds: string[];         // Saved account IDs
-  regionCodes: string[];        // Saved region codes
-  resourceTypes: string[];      // Saved resource types
-  hasTagFilters: boolean;       // Whether bookmark has tag filters
-  hasSearchFilter: boolean;     // Whether bookmark has search filter
-  accessCount: number;          // Times this bookmark was accessed
-  lastAccessed: string | null;  // ISO timestamp of last access
-}
-```
-
-**Description:**
-Returns all user-created bookmarks as a flat list. Bookmarks are saved queries
-that store account, region, resource type selections along with filters.
-Use with `queryBookmarks()` to execute a bookmark's query.
-
-**Example usage:**
-```javascript
-// List all bookmarks
-const bookmarks = listBookmarks();
-console.log(`Found ${bookmarks.length} bookmarks`);
-
-// Find bookmarks by name
-const prodBookmark = bookmarks.find(b => b.name.includes("Production"));
-if (prodBookmark) {
-  console.log(`Found: ${prodBookmark.name} (${prodBookmark.resourceTypes.join(", ")})`);
-}
-
-// List bookmarks with their configurations
-bookmarks.forEach(b => {
-  console.log(`${b.name}:`);
-  console.log(`  Accounts: ${b.accountIds.length || "all"}`);
-  console.log(`  Regions: ${b.regionCodes.join(", ") || "default"}`);
-  console.log(`  Types: ${b.resourceTypes.join(", ")}`);
-  console.log(`  Has filters: tags=${b.hasTagFilters}, search=${b.hasSearchFilter}`);
-});
-```
-
----
-
-### queryBookmarks()
-
-Execute a saved bookmark's query and return resources.
-
-**Signature:**
-```typescript
-function queryBookmarks(
-  bookmarkId: string,
-  options?: { detail?: 'count' | 'summary' | 'tags' | 'full' }
-): QueryResult
-
-// Returns same QueryResult as queryResources()
-interface QueryResult {
-  status: 'success' | 'partial' | 'error';
-  data: ResourceInfo[] | null;
-  count: number;
-  warnings: QueryWarning[];
-  errors: QueryError[];
-}
-```
-
-**Description:**
-Executes the saved query from a bookmark. This is a convenience function that
-loads the bookmark's configuration (accounts, regions, resource types) and
-runs `queryResources()` with those parameters.
-
-**Parameters:**
-- `bookmarkId` (required): The bookmark's UUID from `listBookmarks()`
-- `options.detail`: Detail level for results (same as queryResources)
-
-**Example usage:**
-```javascript
-// Get bookmarks and execute one
-const bookmarks = listBookmarks();
-const myBookmark = bookmarks.find(b => b.name === "Production EC2");
-
-if (myBookmark) {
-  // Quick count
-  const count = queryBookmarks(myBookmark.id, { detail: "count" });
-  console.log(`Production has ${count.count} EC2 instances`);
-
-  // Full query with tags
-  const result = queryBookmarks(myBookmark.id, { detail: "tags" });
-  if (result.status === "success") {
-    result.data.forEach(r => {
-      console.log(`${r.displayName} - ${r.status}`);
-    });
-  }
-}
-
-// Execute bookmark by ID directly (if you know the ID)
-const result = queryBookmarks("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
-console.log(`Found ${result.count} resources`);
-
-// Handle errors
-if (result.status === "error") {
-  console.error("Bookmark query failed:", result.errors);
-}
-```
-
-**Error handling:**
-- Returns error result if bookmark ID not found
-- Returns error result if AWS client not initialized (login required)
-- Partial results if some account/region queries fail
-"#.to_string()
-}
 
 #[cfg(test)]
 mod tests {
@@ -1236,40 +1842,6 @@ mod tests {
         assert_eq!(scope.resource_types[2].service_name, "IAM");
     }
 
-    #[test]
-    fn test_documentation_format() {
-        let docs = get_documentation();
-
-        // Verify required documentation elements for queryResources
-        assert!(docs.contains("queryResources()"));
-        assert!(docs.contains("function queryResources("));
-        assert!(docs.contains("QueryOptions"));
-        assert!(docs.contains("QueryResult"));
-        assert!(docs.contains("detail?:"));
-        assert!(docs.contains("'count' | 'summary' | 'tags' | 'full'"));
-        assert!(docs.contains("status: 'success' | 'partial' | 'error'"));
-        assert!(docs.contains("warnings:"));
-        assert!(docs.contains("errors:"));
-        assert!(docs.contains("Return value structure:"));
-        assert!(docs.contains("```json"));
-        assert!(docs.contains("Example usage:"));
-        assert!(docs.contains("Error handling:"));
-        assert!(docs.contains("Performance considerations:"));
-
-        // Verify listBookmarks documentation
-        assert!(docs.contains("listBookmarks()"));
-        assert!(docs.contains("function listBookmarks(): BookmarkInfo[]"));
-        assert!(docs.contains("interface BookmarkInfo"));
-        assert!(docs.contains("accountIds: string[]"));
-        assert!(docs.contains("regionCodes: string[]"));
-        assert!(docs.contains("resourceTypes: string[]"));
-        assert!(docs.contains("hasTagFilters: boolean"));
-
-        // Verify queryBookmarks documentation
-        assert!(docs.contains("queryBookmarks()"));
-        assert!(docs.contains("function queryBookmarks("));
-        assert!(docs.contains("bookmarkId: string"));
-    }
 
     #[test]
     fn test_categorize_error() {
@@ -1309,30 +1881,6 @@ mod tests {
         assert!(!is_warning);
     }
 
-    #[test]
-    fn test_query_resources_args_deserialize() {
-        // Test with all fields
-        let json = r#"{
-            "accounts": ["123456789012"],
-            "regions": ["us-east-1"],
-            "resourceTypes": ["AWS::EC2::Instance"],
-            "detail": "full"
-        }"#;
-        let args: QueryResourcesArgs = serde_json::from_str(json).unwrap();
-        assert_eq!(args.accounts, Some(vec!["123456789012".to_string()]));
-        assert_eq!(args.regions, Some(vec!["us-east-1".to_string()]));
-        assert_eq!(args.resource_types, vec!["AWS::EC2::Instance".to_string()]);
-        assert_eq!(args.detail, Some("full".to_string()));
-
-        // Test with minimal fields (detail optional)
-        let json_minimal = r#"{
-            "resourceTypes": ["AWS::S3::Bucket"]
-        }"#;
-        let args_minimal: QueryResourcesArgs = serde_json::from_str(json_minimal).unwrap();
-        assert_eq!(args_minimal.accounts, None);
-        assert_eq!(args_minimal.regions, None);
-        assert_eq!(args_minimal.detail, None);
-    }
 
     #[test]
     fn test_query_bookmarks_args_deserialize() {

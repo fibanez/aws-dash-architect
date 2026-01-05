@@ -129,10 +129,11 @@ pub fn render_agent_chat(
     let mut worker_log_clicked: Option<PathBuf> = None;
 
     // Scrollable conversation area with critical constraints + auto-scroll
-    ScrollArea::vertical()
+    // Use both() to enable horizontal scrolling for wide content like tables
+    ScrollArea::both()
         .id_salt(("conversation_scroll", agent_id)) // Per-agent scroll position
         .auto_shrink([false, false]) // Don't shrink - prevents collapse
-        .max_height(conversation_max_height) // Cap height - prevents auto-growth
+        .max_height(conversation_max_height) // Cap height - prevents vertical auto-growth
         .stick_to_bottom(true) // Auto-scroll to show latest messages
         .show(ui, |ui| {
             // No placeholder message - just show empty space when no messages

@@ -11,15 +11,97 @@
 //! - **UI Layer** (this file): Two-pane layout, agent selection, chat interface
 //! - **Business Layer**: AgentManager handles agent lifecycle
 //! - **Separation**: Window lifecycle is independent of agent lifecycle
+//!
+//! ## Soft-Maximize Feature
+//!
+//! This window implements a "soft-maximize" feature that can be reused in other windows.
+//! Unlike traditional maximize which locks the window, soft-maximize simply sets the
+//! window position and size to fill the available area below the menu bar.
+//!
+//! ### Key Requirements
+//!
+//! 1. **Maximize fills below menu**: When maximized, window position is set to (0, MENU_BAR_HEIGHT)
+//!    and size fills the remaining screen area. The Dash menu bar remains visible.
+//! 2. **Window remains interactive**: After maximizing, the window stays resizable, movable,
+//!    and collapsible. User can manually resize/move away from maximized state.
+//! 3. **Restore remembers position**: Before maximizing, the current position and size are saved.
+//!    Clicking restore returns the window to its previous state.
+//! 4. **Button in content area**: The maximize/restore button is rendered at the top-right
+//!    of the window content (below the title bar), not in the title bar itself.
+//!
+//! ### Implementation Guide (for adding to other windows)
+//!
+//! 1. **Add import**: `use super::window_maximize::{WindowMaximizeState, MENU_BAR_HEIGHT};`
+//!
+//! 2. **Add field to struct**: `maximize_state: WindowMaximizeState,`
+//!
+//! 3. **Initialize in new()**: `maximize_state: WindowMaximizeState::new(),`
+//!
+//! 4. **In show/show_with_focus method**:
+//!    ```ignore
+//!    // Get window config based on maximize state
+//!    let default_size = egui::Vec2::new(800.0, 600.0);
+//!    let (pos, size, should_set_pos) = self.maximize_state.get_window_config(ctx, default_size);
+//!
+//!    // Configure window - keep resizable/movable/collapsible always true
+//!    let mut window = egui::Window::new("Title")
+//!        .resizable(true)
+//!        .movable(true)
+//!        .collapsible(true);
+//!
+//!    // Apply position/size based on state
+//!    if self.maximize_state.is_maximized {
+//!        window = window
+//!            .default_size(size)
+//!            .current_pos(pos.unwrap_or(egui::Pos2::new(0.0, MENU_BAR_HEIGHT)));
+//!    } else {
+//!        window = window.default_size(default_size);
+//!        if should_set_pos { if let Some(p) = pos { window = window.current_pos(p); } }
+//!    }
+//!    ```
+//!
+//! 5. **Add maximize button at top of content**:
+//!    ```ignore
+//!    let response = window.show(ctx, |ui| {
+//!        // Maximize button row - right-aligned
+//!        ui.horizontal(|ui| {
+//!            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+//!                if ui.button(self.maximize_state.button_label())
+//!                    .on_hover_text(self.maximize_state.button_tooltip())
+//!                    .clicked()
+//!                { self.maximize_state.toggle(); }
+//!            });
+//!        });
+//!        ui.separator();
+//!        // ... rest of content
+//!    });
+//!    ```
+//!
+//! 6. **Save position for restore** (after window.show):
+//!    ```ignore
+//!    if !self.maximize_state.is_maximized {
+//!        if let Some(inner) = response {
+//!            let rect = inner.response.rect;
+//!            self.maximize_state.save_restore_state(rect.min, rect.size());
+//!        }
+//!    }
+//!    ```
+//!
+//! ### Button Labels
+//!
+//! - Maximize: `[ ]` (empty square) - tooltip "Maximize window"
+//! - Restore: `[_]` (square with line) - tooltip "Restore window"
 
 use super::agent_log_window::AgentLogWindow;
 use super::window_focus::FocusableWindow;
+use super::window_maximize::{WindowMaximizeState, MENU_BAR_HEIGHT};
 use crate::app::agent_framework::{
     get_agent_creation_receiver, get_ui_event_receiver, render_agent_chat, AgentCreationRequest,
     AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, InlineWorkerDisplay,
     ProcessingStatusWidget, StoodLogLevel,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
+use crate::{perf_checkpoint, perf_guard, perf_timed};
 use eframe::egui;
 use egui::{Context, RichText, ScrollArea, Ui};
 use egui_commonmark::CommonMarkCache;
@@ -137,6 +219,10 @@ pub struct AgentManagerWindow {
     // Inline worker messages keyed by conversation message index
     // Maps message_index -> Vec<WorkerInlineMessage>
     worker_inline_messages: HashMap<usize, Vec<WorkerInlineMessage>>,
+
+    /// Soft-maximize state - see module docs for implementation guide
+    /// Tracks: is_maximized, restore_pos, restore_size
+    maximize_state: WindowMaximizeState,
 }
 
 impl Default for AgentManagerWindow {
@@ -165,6 +251,7 @@ impl AgentManagerWindow {
             markdown_cache: CommonMarkCache::default(),
             status_widgets: HashMap::new(),
             worker_inline_messages: HashMap::new(),
+            maximize_state: WindowMaximizeState::new(),
         }
     }
 
@@ -233,6 +320,15 @@ impl AgentManagerWindow {
             .horizontal(|mut strip| {
                 // LEFT PANE: Agent list with fixed width
                 strip.cell(|ui| {
+                    // ================================================================
+                    // SCROLLABLE SIDEBAR
+                    // Wrap entire left pane in ScrollArea with horizontal scrolling.
+                    // This captures any content overflow (e.g., from longer model names
+                    // in the dropdown) with a scrollbar instead of expanding the window.
+                    // ================================================================
+                    ScrollArea::both()
+                        .id_salt("left_pane_scroll")
+                        .show(ui, |ui| {
                     ui.heading(RichText::new("Agents").size(14.0));
 
                     // Stood log level dropdown
@@ -279,6 +375,7 @@ impl AgentManagerWindow {
                     ui.horizontal(|ui| {
                         egui::ComboBox::from_id_salt("model_selector")
                             .selected_text(self.selected_model.display_name())
+                            .width(120.0)
                             .show_ui(ui, |ui| {
                                 for model in AgentModel::all_models() {
                                     ui.selectable_value(
@@ -314,57 +411,53 @@ impl AgentManagerWindow {
                     let mut finish_editing = false;
                     let mut cancel_editing = false;
 
-                    // Agent list scroll area - takes remaining vertical space
-                    ScrollArea::vertical()
-                        .id_salt("agent_list_scroll")
-                        .show(ui, |ui| {
-                            if agent_list.is_empty() {
-                                ui.label(RichText::new("No agents").weak());
+                    // Agent list - no nested scroll area needed since parent scrolls
+                    if agent_list.is_empty() {
+                        ui.label(RichText::new("No agents").weak());
+                    } else {
+                        for (agent_id, name) in agent_list {
+                            let is_selected = self.selected_agent_id == Some(agent_id);
+                            let is_editing = self.editing_agent_name == Some(agent_id);
+
+                            if is_editing {
+                                // Show text edit for renaming
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.temp_agent_name)
+                                        .desired_width(100.0),
+                                );
+
+                                // Request focus on first frame of editing
+                                response.request_focus();
+
+                                // Check for Enter key while field has focus
+                                let enter_pressed =
+                                    ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                let escape_pressed =
+                                    ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                                if escape_pressed {
+                                    cancel_editing = true;
+                                } else if enter_pressed || response.lost_focus() {
+                                    // Enter pressed or clicked elsewhere
+                                    finish_editing = true;
+                                }
                             } else {
-                                for (agent_id, name) in agent_list {
-                                    let is_selected = self.selected_agent_id == Some(agent_id);
-                                    let is_editing = self.editing_agent_name == Some(agent_id);
+                                // Agent list item - use full width for better clickability
+                                let response = ui.selectable_label(is_selected, &name);
 
-                                    if is_editing {
-                                        // Show text edit for renaming
-                                        let response = ui.add(
-                                            egui::TextEdit::singleline(&mut self.temp_agent_name)
-                                                .desired_width(100.0),
-                                        );
+                                if response.clicked() {
+                                    clicked_agent_id = Some(agent_id);
+                                }
 
-                                        // Request focus on first frame of editing
-                                        response.request_focus();
-
-                                        // Check for Enter key while field has focus
-                                        let enter_pressed =
-                                            ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                        let escape_pressed =
-                                            ui.input(|i| i.key_pressed(egui::Key::Escape));
-
-                                        if escape_pressed {
-                                            cancel_editing = true;
-                                        } else if enter_pressed || response.lost_focus() {
-                                            // Enter pressed or clicked elsewhere
-                                            finish_editing = true;
-                                        }
-                                    } else {
-                                        // Agent list item - use full width for better clickability
-                                        let response = ui.selectable_label(is_selected, &name);
-
-                                        if response.clicked() {
-                                            clicked_agent_id = Some(agent_id);
-                                        }
-
-                                        // Double-click to edit name
-                                        if response.double_clicked() {
-                                            start_editing_id = Some(agent_id);
-                                        }
-                                    }
+                                // Double-click to edit name
+                                if response.double_clicked() {
+                                    start_editing_id = Some(agent_id);
                                 }
                             }
-                        });
+                        }
+                    }
 
-                    // Handle editing state changes after scroll area
+                    // Handle editing state changes
                     if let Some(agent_id) = start_editing_id {
                         if let Some(agent) = self.agents.get(&agent_id) {
                             self.temp_agent_name = agent.metadata().name.clone();
@@ -400,10 +493,11 @@ impl AgentManagerWindow {
                         self.temp_agent_name.clear();
                     }
 
-                    // Handle selection after scroll area
+                    // Handle selection
                     if let Some(agent_id) = clicked_agent_id {
                         self.select_agent(agent_id);
                     }
+                    }); // Close ScrollArea::both
                 });
 
                 // RIGHT PANE: Agent chat view - fills remaining space
@@ -418,6 +512,7 @@ impl AgentManagerWindow {
 
     /// Create a new agent instance
     fn create_new_agent(&mut self) {
+        let _timing = perf_guard!("create_new_agent");
         use crate::app::agent_framework::AgentMetadata;
         use chrono::Utc;
 
@@ -432,6 +527,8 @@ impl AgentManagerWindow {
             agent_count
         );
 
+        perf_checkpoint!("create_new_agent.building_metadata", &default_name);
+
         let metadata = AgentMetadata {
             name: default_name.clone(),
             description: "New agent".to_string(),
@@ -442,7 +539,10 @@ impl AgentManagerWindow {
 
         // Always create TaskManager agents
         // Future: Add UI for selecting agent type
-        let mut agent = AgentInstance::new(metadata, AgentType::TaskManager);
+        perf_checkpoint!("create_new_agent.creating_agent_instance");
+        let mut agent = perf_timed!("create_new_agent.AgentInstance_new", {
+            AgentInstance::new(metadata, AgentType::TaskManager)
+        });
         let agent_id = agent.id();
 
         // Set the current stood log level on new agent
@@ -450,11 +550,14 @@ impl AgentManagerWindow {
 
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
+            perf_checkpoint!("create_new_agent.acquiring_aws_identity_lock");
             // Extract result first to drop lock before using self
-            let init_result = agent.initialize(
-                &mut aws_identity.lock().unwrap(),
-                self.agent_logging_enabled,
-            );
+            let init_result = perf_timed!("create_new_agent.agent_initialize", {
+                agent.initialize(
+                    &mut aws_identity.lock().unwrap(),
+                    self.agent_logging_enabled,
+                )
+            });
             match init_result {
                 Ok(_) => {
                     log::info!(
@@ -462,10 +565,12 @@ impl AgentManagerWindow {
                         default_name,
                         agent_id
                     );
+                    perf_checkpoint!("create_new_agent.inserting_into_map");
                     self.agents.insert(agent_id, agent);
                     log::info!("Agent {} inserted into agents map", agent_id);
                     self.select_agent(agent_id);
                     log::info!("Agent {} selected and should now be visible", agent_id);
+                    perf_checkpoint!("create_new_agent.complete");
                 }
                 Err(e) => {
                     log::error!("Failed to initialize agent {}: {}", default_name, e);
@@ -494,6 +599,11 @@ impl AgentManagerWindow {
                 Vec::new()
             }
         };
+
+        // Only log if we have events to process
+        if !events.is_empty() {
+            perf_checkpoint!("UI.process_ui_events.start", &format!("event_count={}", events.len()));
+        }
 
         // Now process events without holding the lock
         for event in events {
@@ -763,6 +873,11 @@ impl AgentManagerWindow {
             }
         };
 
+        // Only log if we have requests to process
+        if !requests.is_empty() {
+            perf_checkpoint!("UI.process_agent_creation_requests.start", &format!("request_count={}", requests.len()));
+        }
+
         // Process each request
         for request in requests {
             tracing::debug!(
@@ -813,6 +928,9 @@ impl AgentManagerWindow {
         &mut self,
         request: &AgentCreationRequest,
     ) -> Result<AgentId, String> {
+        perf_checkpoint!("UI.handle_agent_creation_request.start", &format!("parent_id={}, task={}", request.parent_id, &request.short_description));
+        let _creation_guard = perf_guard!("UI.handle_agent_creation_request");
+
         use crate::app::agent_framework::AgentMetadata;
         use chrono::Utc;
 
@@ -852,30 +970,41 @@ impl AgentManagerWindow {
         };
 
         // Create TaskWorker agent with parent_id and parent's logger
+        perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.start");
         let agent_type = AgentType::TaskWorker {
             parent_id: request.parent_id,
         };
-        let mut agent = AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger);
+        let mut agent = perf_timed!("UI.handle_agent_creation_request.AgentInstance_new", {
+            AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger)
+        });
         let agent_id = agent.id();
+        perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.end", &format!("worker_id={}", agent_id));
 
         // Set the current stood log level on new worker agent
         agent.set_stood_log_level(self.stood_log_level);
 
         // Initialize agent with AWS credentials
+        perf_checkpoint!("UI.handle_agent_creation_request.initialize_worker.start");
         if let Some(aws_identity) = &self.aws_identity {
-            let init_result = agent.initialize(
-                &mut aws_identity.lock().unwrap(),
-                self.agent_logging_enabled,
-            );
+            let init_result = perf_timed!("UI.handle_agent_creation_request.worker_initialize", {
+                agent.initialize(
+                    &mut aws_identity.lock().unwrap(),
+                    self.agent_logging_enabled,
+                )
+            });
             if let Err(e) = init_result {
+                perf_checkpoint!("UI.handle_agent_creation_request.initialize_worker.failed", &format!("error={}", e));
                 return Err(format!("Failed to initialize agent: {}", e));
             }
         } else {
             return Err("AWS identity not available".to_string());
         }
+        perf_checkpoint!("UI.handle_agent_creation_request.initialize_worker.end");
 
         // Send initial task message
+        perf_checkpoint!("UI.handle_agent_creation_request.send_task_message.start", &format!("task_len={}", request.task_description.len()));
         agent.send_message(request.task_description.clone());
+        perf_checkpoint!("UI.handle_agent_creation_request.send_task_message.end");
 
         tracing::info!(
             target: "agent::creation",
@@ -1083,12 +1212,14 @@ impl AgentManagerWindow {
 
             // Send message if requested
             if should_send {
+                perf_checkpoint!("UI.send_message.start", &format!("agent_id={}, msg_len={}", agent_id, self.input_text.len()));
                 let message = self.input_text.clone();
                 self.input_text.clear();
 
                 // Send message to agent
                 log::info!("Sending message to agent {}: {}", agent_id, message);
                 agent.send_message(message);
+                perf_checkpoint!("UI.send_message.end", &format!("agent_id={}", agent_id));
             }
 
             // Handle stop button click - cancel ongoing execution
@@ -1146,6 +1277,10 @@ impl AgentManagerWindow {
         let frame = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let poll_start = std::time::Instant::now();
+        // Only log checkpoint on frame boundaries to reduce noise
+        if frame % 60 == 0 {
+            perf_checkpoint!("UI.poll_agent_responses.frame", &format!("frame={}", frame));
+        }
         log::trace!(
             "[FRAME {}] poll_agent_responses called at {:?}",
             frame,
@@ -1162,6 +1297,7 @@ impl AgentManagerWindow {
                 let poll_start_v2 = std::time::Instant::now();
                 if agent.poll_response() {
                     let poll_duration = poll_start_v2.elapsed();
+                    perf_checkpoint!("UI.poll.response_received", &format!("agent_id={}, poll_ms={}", agent_id, poll_duration.as_millis()));
 
                     // Get timing info from the message
                     if let Some(last_msg) = agent.messages().back() {
@@ -1216,6 +1352,8 @@ impl AgentManagerWindow {
 
         // Process completed workers: send results to parent and terminate
         for (worker_id, parent_id, result) in completed_workers {
+            perf_checkpoint!("UI.poll.worker_complete.start", &format!("worker_id={}, parent_id={}", worker_id, parent_id));
+
             // Calculate worker execution time using metadata created_at
             let execution_time = if let Some(worker_agent) = self.agents.get(&worker_id) {
                 let created_at = worker_agent.metadata().created_at;
@@ -1228,6 +1366,7 @@ impl AgentManagerWindow {
 
             // Send worker completion to channel (for start_task tool to return as ToolResult)
             let is_success = result.is_ok();
+            perf_checkpoint!("UI.poll.worker_complete.send_to_channel", &format!("worker_id={}, success={}, execution_time_ms={}", worker_id, is_success, execution_time.as_millis()));
             let completion = crate::app::agent_framework::WorkerCompletion {
                 worker_id,
                 result, // Raw result (Ok or Err), no wrapper text
@@ -1261,6 +1400,7 @@ impl AgentManagerWindow {
 
             // Remove worker instance - log path is preserved in WorkerInlineMessage
             self.agents.remove(&worker_id);
+            perf_checkpoint!("UI.poll.worker_complete.end", &format!("worker_id={}", worker_id));
             tracing::debug!(
                 target: "agent::worker_complete",
                 worker_id = %worker_id,
@@ -1313,32 +1453,146 @@ impl FocusableWindow for AgentManagerWindow {
         // Handle keyboard navigation
         self.handle_keyboard_navigation(ctx);
 
-        // Use local variable for .open() to avoid borrow checker issues
-        let mut is_open = self.open;
+        // ========================================================================
+        // SOFT-MAXIMIZE IMPLEMENTATION
+        // See module docs for full explanation. Key points:
+        // - Window remains resizable/movable/collapsible after maximize
+        // - Maximize calculates target size at button press time (from screen_rect)
+        // - Uses fixed_size for one frame to force resize, then relaxes constraints
+        // - Custom title bar places maximize button next to X (close) button
+        // ========================================================================
 
-        // Get screen constraints for proper window sizing
+        // Get screen constraints - max size leaves room for menu bar
         let screen_rect = ctx.screen_rect();
-        let max_width = screen_rect.width() * 0.9;
-        let max_height = screen_rect.height() * 0.9;
+        let max_width = screen_rect.width();
+        let max_height = screen_rect.height() - MENU_BAR_HEIGHT;
+        let default_size = egui::Vec2::new(800.0, 600.0);
 
+        // IMPORTANT: Keep resizable/movable/collapsible TRUE even when maximized
+        // This is "soft" maximize - user can still interact with the window
+        // Use title_bar(false) to render custom title bar with maximize button next to X
         let mut window = egui::Window::new(self.window_title())
-            .open(&mut is_open)
+            .title_bar(false) // Custom title bar with maximize button
             .resizable(true)
-            .default_size([max_width, max_height])
-            .constrain(true) // Ensure window stays within screen bounds
             .movable(true)
-            .collapsible(true); // Allow window collapse with triangle button
+            .collapsible(true)
+            .constrain(true);
+
+        // Apply size/position based on maximize state and resize flag
+        // When needs_resize is true, use fixed_size to force the window to target size
+        if self.maximize_state.needs_resize() {
+            // Force resize for this frame using target values calculated at toggle time
+            if let Some(target_size) = self.maximize_state.target_size() {
+                window = window.fixed_size(target_size);
+            }
+            if let Some(target_pos) = self.maximize_state.target_pos() {
+                window = window.current_pos(target_pos);
+            }
+        } else if self.maximize_state.is_maximized {
+            // Already maximized - use maximized size as default
+            let maximized_size = egui::Vec2::new(max_width, max_height);
+            window = window
+                .default_size(maximized_size)
+                .min_size([600.0, 400.0]);
+        } else {
+            // ================================================================
+            // WINDOW SIZE CONFIGURATION (matches Explorer pattern)
+            // - default_size: Initial window dimensions
+            // - min_size: Prevent shrinking too small
+            // - NO max_size: Allow user to resize larger
+            // - Bottom panel inside content: Prevents auto-growth
+            // See: https://github.com/emilk/egui/discussions/610
+            // ================================================================
+            window = window
+                .default_size(default_size)
+                .min_size([600.0, 400.0]); // Prevent shrinking too small
+        }
 
         if bring_to_front {
             window = window.order(egui::Order::Foreground);
         }
 
-        window.show(ctx, |ui| {
+        // Track if close button was clicked in custom title bar
+        let mut close_clicked = false;
+
+        let response = window.show(ctx, |ui| {
+            // ================================================================
+            // CUSTOM TITLE BAR - Contains title, maximize button, and close button
+            // Maximize button [ ] / [_] placed directly next to X button
+            // ================================================================
+            ui.horizontal(|ui| {
+                // Window title on the left
+                ui.heading(&self.window_title());
+
+                // Spacer to push buttons to the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Close button (X) - rightmost
+                    if ui.button("X")
+                        .on_hover_text("Close window")
+                        .clicked()
+                    {
+                        close_clicked = true;
+                    }
+
+                    // Maximize button - next to close button
+                    if ui.button(self.maximize_state.button_label())
+                        .on_hover_text(self.maximize_state.button_tooltip())
+                        .clicked()
+                    {
+                        // toggle() calculates target size at click time from screen_rect
+                        self.maximize_state.toggle(ctx);
+                    }
+                });
+            });
+            ui.separator();
+
+            // ================================================================
+            // BOTTOM PANEL - Anchors the bottom edge to prevent auto-growth
+            // This pattern matches the Explorer window which uses a bottom
+            // panel for status bar. The panel has fixed height and prevents
+            // the window from growing frame-by-frame.
+            // See: resource_explorer/window.rs line 291-293
+            // ================================================================
+            egui::TopBottomPanel::bottom("agent_manager_status_bar")
+                .show_separator_line(true)
+                .show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Show agent count
+                        let agent_count = self.agents.len();
+                        ui.label(format!("Agents: {}", agent_count));
+
+                        ui.separator();
+
+                        // Show selected model
+                        ui.label(format!("Model: {}", self.selected_model.display_name()));
+                    });
+                });
+
+            // Main content fills remaining space (between title bar and bottom panel)
             self.ui_content(ui);
         });
 
-        // Update self.open based on window state (X button click)
-        self.open = is_open;
+        // Update self.open based on close button click
+        if close_clicked {
+            self.open = false;
+        }
+
+        // Clear resize flag after window is shown (size has been applied)
+        if self.maximize_state.needs_resize() {
+            self.maximize_state.clear_resize_flag();
+        }
+
+        // ================================================================
+        // SAVE POSITION FOR RESTORE
+        // Only save when NOT maximized - this captures the "normal" state
+        // that we'll restore to when user clicks restore button
+        // ================================================================
+        if !self.maximize_state.is_maximized && !self.maximize_state.needs_resize() {
+            if let Some(inner_response) = &response {
+                let rect = inner_response.response.rect;
+                self.maximize_state.save_restore_state(rect.min, rect.size());
+            }
+        }
 
         // Show agent log window if open
         if self.agent_log_window.is_open() {

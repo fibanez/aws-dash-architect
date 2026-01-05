@@ -986,6 +986,46 @@ pub struct TreeRenderer {
     expanded_names: std::collections::HashSet<String>,
     // Phase 2 enrichment status (set by parent before rendering)
     pub phase2_in_progress: bool,
+    console_role_menu: ConsoleRoleMenuState,
+    console_role_menu_next_request_id: u64,
+    default_role_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum ConsoleRoleMenuStatus {
+    Idle,
+    Loading,
+    Loaded(Vec<String>),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+struct ConsoleRoleMenuState {
+    account_id: Option<String>,
+    request_id: u64,
+    status: ConsoleRoleMenuStatus,
+}
+
+impl ConsoleRoleMenuState {
+    fn new() -> Self {
+        Self {
+            account_id: None,
+            request_id: 0,
+            status: ConsoleRoleMenuStatus::Idle,
+        }
+    }
+
+    fn reset_for_account(&mut self, account_id: String, request_id: u64) {
+        self.account_id = Some(account_id);
+        self.request_id = request_id;
+        self.status = ConsoleRoleMenuStatus::Loading;
+    }
+
+    fn clear(&mut self) {
+        self.account_id = None;
+        self.request_id = 0;
+        self.status = ConsoleRoleMenuStatus::Idle;
+    }
 }
 
 impl Default for TreeRenderer {
@@ -1010,7 +1050,33 @@ impl TreeRenderer {
             json_search_terms: std::collections::HashMap::new(),
             expanded_names: std::collections::HashSet::new(),
             phase2_in_progress: false,
+            console_role_menu: ConsoleRoleMenuState::new(),
+            console_role_menu_next_request_id: 1,
+            default_role_name: None,
         }
+    }
+
+    pub fn apply_console_role_menu_update(
+        &mut self,
+        update: super::ConsoleRoleMenuUpdate,
+    ) {
+        let matches_account = self
+            .console_role_menu
+            .account_id
+            .as_deref()
+            .is_some_and(|id| id == update.account_id);
+        if !matches_account || self.console_role_menu.request_id != update.request_id {
+            return;
+        }
+
+        self.console_role_menu.status = match update.result {
+            Ok(roles) => ConsoleRoleMenuStatus::Loaded(roles),
+            Err(err) => ConsoleRoleMenuStatus::Error(err),
+        };
+    }
+
+    pub fn set_default_role_name(&mut self, role_name: Option<String>) {
+        self.default_role_name = role_name;
     }
 
     /// Get the expand level for a resource (default: 1)
@@ -1262,7 +1328,7 @@ impl TreeRenderer {
                     }
 
                     egui::CollapsingHeader::new(final_header)
-                        .default_open(false)
+                        .default_open(depth == 0) // Auto-expand top-level node
                         .id_salt(&node.id) // Unique ID for state management
                         .show(ui, |ui| {
                             // Render children
@@ -1408,6 +1474,19 @@ impl TreeRenderer {
 
                 // Handle right-click context menu for copy options
                 tag_response.context_menu(|ui| {
+                    let resource_arn = resource
+                        .properties
+                        .get("Arn")
+                        .and_then(|v| v.as_str())
+                        .map(|value| value.to_string())
+                        .or_else(|| {
+                            resource
+                                .raw_properties
+                                .get("Arn")
+                                .and_then(|v| v.as_str())
+                                .map(|value| value.to_string())
+                        });
+
                     if ui.button("Copy Name").clicked() {
                         ui.ctx().copy_text(resource.display_name.clone());
                         ui.close();
@@ -1420,12 +1499,94 @@ impl TreeRenderer {
                         ui.ctx().copy_text(resource_name_id.clone());
                         ui.close();
                     }
-                    if let Some(arn) = resource.properties.get("Arn").and_then(|v| v.as_str()) {
+                    if let Some(arn) = resource_arn.as_deref() {
                         if ui.button("Copy ARN").clicked() {
                             ui.ctx().copy_text(arn.to_string());
                             ui.close();
                         }
                     }
+                    ui.menu_button("AWS Console", |ui| {
+                        ui.set_min_width(320.0);
+                        let account_id = resource.account_id.clone();
+                        let needs_reset = match self.console_role_menu.account_id.as_deref() {
+                            Some(id) => id != account_id,
+                            None => true,
+                        };
+                        if needs_reset {
+                            let request_id = self.console_role_menu_next_request_id;
+                            self.console_role_menu_next_request_id = self
+                                .console_role_menu_next_request_id
+                                .saturating_add(1);
+                            self.console_role_menu.reset_for_account(account_id.clone(), request_id);
+                            self.pending_explorer_actions.push(
+                                super::ResourceExplorerAction::RequestAwsConsoleRoles {
+                                    request_id,
+                                    account_id: account_id.clone(),
+                                },
+                            );
+                        }
+
+                        let status = self.console_role_menu.status.clone();
+                        match status {
+                            ConsoleRoleMenuStatus::Idle => {
+                                ui.label("Loading roles...");
+                            }
+                            ConsoleRoleMenuStatus::Loading => {
+                                ui.label("Loading roles...");
+                            }
+                            ConsoleRoleMenuStatus::Loaded(roles) => {
+                                if roles.is_empty() {
+                                    ui.label("No roles available");
+                                }
+                                let mut ordered_roles = roles.clone();
+                                if let Some(default_role) = self.default_role_name.as_ref() {
+                                    if let Some(pos) =
+                                        ordered_roles.iter().position(|role| role == default_role)
+                                    {
+                                        let default = ordered_roles.remove(pos);
+                                        ordered_roles.insert(0, default);
+                                    }
+                                }
+                                for role in ordered_roles {
+                                    if ui.button(&role).clicked() {
+                                        self.pending_explorer_actions.push(
+                                            super::ResourceExplorerAction::OpenAwsConsoleWithRole {
+                                                resource_type: resource.resource_type.clone(),
+                                                resource_id: resource.resource_id.clone(),
+                                                resource_name: resource.display_name.clone(),
+                                                resource_arn: resource_arn.clone(),
+                                                account_id: resource.account_id.clone(),
+                                                region: resource.region.clone(),
+                                                role_name: role.clone(),
+                                            },
+                                        );
+                                        self.console_role_menu.clear();
+                                        ui.close();
+                                    }
+                                }
+                            }
+                            ConsoleRoleMenuStatus::Error(message) => {
+                                ui.label("Failed to load roles");
+                                if ui.button("Retry").clicked() {
+                                    let request_id = self.console_role_menu_next_request_id;
+                                    self.console_role_menu_next_request_id = self
+                                        .console_role_menu_next_request_id
+                                        .saturating_add(1);
+                                    self.console_role_menu
+                                        .reset_for_account(account_id.clone(), request_id);
+                                    self.pending_explorer_actions.push(
+                                        super::ResourceExplorerAction::RequestAwsConsoleRoles {
+                                            request_id,
+                                            account_id: account_id.clone(),
+                                        },
+                                    );
+                                }
+                                if !message.is_empty() {
+                                    ui.label(message);
+                                }
+                            }
+                        }
+                    });
                 });
 
                 // Render status and age information after the tag (20% smaller)
@@ -2294,6 +2455,39 @@ impl TreeRenderer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_console_role_menu_update_applies_only_for_matching_request() {
+        let mut renderer = TreeRenderer::new();
+        renderer
+            .console_role_menu
+            .reset_for_account("123456789012".to_string(), 1);
+
+        renderer.apply_console_role_menu_update(super::ConsoleRoleMenuUpdate {
+            request_id: 2,
+            account_id: "123456789012".to_string(),
+            result: Ok(vec!["RoleA".to_string()]),
+        });
+        assert!(matches!(
+            renderer.console_role_menu.status,
+            ConsoleRoleMenuStatus::Loading
+        ));
+
+        renderer.apply_console_role_menu_update(super::ConsoleRoleMenuUpdate {
+            request_id: 1,
+            account_id: "123456789012".to_string(),
+            result: Ok(vec!["RoleA".to_string()]),
+        });
+        assert!(matches!(
+            renderer.console_role_menu.status,
+            ConsoleRoleMenuStatus::Loaded(_)
+        ));
     }
 }
 

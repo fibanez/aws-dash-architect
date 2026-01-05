@@ -16,6 +16,30 @@ pub enum ResourceExplorerAction {
         account_id: String,
         region: String,
     },
+    /// Request available AWS Identity Center roles for an account (AWS Console submenu)
+    RequestAwsConsoleRoles {
+        request_id: u64,
+        account_id: String,
+    },
+    /// Request to open AWS Console for a resource
+    OpenAwsConsole {
+        resource_type: String,
+        resource_id: String,
+        resource_name: String,
+        resource_arn: Option<String>,
+        account_id: String,
+        region: String,
+    },
+    /// Request to open AWS Console for a resource with a selected role
+    OpenAwsConsoleWithRole {
+        resource_type: String,
+        resource_id: String,
+        resource_name: String,
+        resource_arn: Option<String>,
+        account_id: String,
+        region: String,
+        role_name: String,
+    },
     /// Request to open CloudTrail Events for a resource
     OpenCloudTrailEvents {
         resource_type: String,
@@ -98,9 +122,50 @@ pub fn get_global_bookmark_manager() -> Option<Arc<StdRwLock<BookmarkManager>>> 
     }
 }
 
+// ============================================================================
+// V8 -> Explorer Communication Queue
+// ============================================================================
+
+/// Actions from V8 JavaScript to Explorer window
+/// This queue allows V8 bindings to request Explorer window operations
+#[derive(Debug, Clone)]
+pub enum ExplorerAction {
+    /// Open Explorer window with dynamic configuration from JavaScript
+    OpenWithConfig(crate::app::agent_framework::v8_bindings::bindings::resources::ShowInExplorerArgs),
+}
+
+/// Global action queue for V8 -> Explorer communication
+/// V8 callbacks enqueue actions here, Explorer window polls and drains in update()
+static EXPLORER_ACTION_QUEUE: Mutex<Vec<ExplorerAction>> = Mutex::new(Vec::new());
+
+/// Enqueue an action for the Explorer window (called from V8 bindings)
+pub fn enqueue_explorer_action(action: ExplorerAction) {
+    match EXPLORER_ACTION_QUEUE.lock() {
+        Ok(mut queue) => {
+            queue.push(action);
+        }
+        Err(e) => {
+            warn!("Failed to enqueue Explorer action: {}", e);
+        }
+    }
+}
+
+/// Drain all pending actions from the queue (called by Explorer window in update())
+pub fn drain_explorer_actions() -> Vec<ExplorerAction> {
+    match EXPLORER_ACTION_QUEUE.lock() {
+        Ok(mut queue) => std::mem::take(&mut *queue),
+        Err(e) => {
+            warn!("Failed to drain Explorer actions: {}", e);
+            Vec::new()
+        }
+    }
+}
+
 pub mod aws_client;
 pub mod aws_services;
 pub mod bookmarks;
+pub mod cache;
+pub mod console_links;
 pub mod child_resources;
 pub mod colors;
 pub mod credentials;
@@ -108,6 +173,9 @@ pub mod dialogs;
 pub mod global_services;
 pub mod normalizers;
 pub mod property_system;
+pub mod query_timing;
+pub mod retry_tracker;
+pub mod sdk_errors;
 pub mod state;
 pub mod status;
 pub mod tag_badges;
@@ -117,6 +185,9 @@ pub mod tree;
 pub mod unified_query;
 pub mod widgets;
 pub mod window;
+
+// Explorer Instances - Multi-pane, multi-tab, multi-window architecture
+pub mod instances;
 
 // Verification modules (DEBUG builds only)
 #[cfg(debug_assertions)]
@@ -146,15 +217,28 @@ pub use state::{
     TagFilter, TagFilterGroup, TagFilterType,
 };
 pub use status::{global_status, report_status, report_status_done, StatusChannel, StatusMessage};
+pub use retry_tracker::{retry_tracker, QueryRetrySummary, QueryRetryState, RetryTracker};
+pub use sdk_errors::{categorize_error, categorize_error_string, ErrorCategory};
 pub use tag_badges::{BadgeSelector, TagCombination, TagPopularityTracker};
 pub use tag_cache::{CacheStats, TagCache};
 pub use tag_discovery::{OverallTagStats, TagDiscovery, TagMetadata, TagStats};
+pub use cache::{
+    get_shared_cache, init_shared_cache, shared_cache, CacheConfig, CacheMemoryStats,
+    DetailedData, ResourceKey, SharedResourceCache,
+};
 pub use tree::{NodeType, TreeBuilder, TreeNode, TreeRenderer};
 pub use unified_query::{
     BookmarkInfo, DetailLevel, DetailedResources, QueryError, QueryResultStatus, QueryWarning,
     ResourceFull, ResourceSummary, ResourceWithTags, UnifiedQueryResult,
 };
-pub use window::ResourceExplorerWindow;
+pub use window::{ResourceExplorerWindow, WindowAction};
+
+#[derive(Debug, Clone)]
+pub struct ConsoleRoleMenuUpdate {
+    pub request_id: u64,
+    pub account_id: String,
+    pub result: Result<Vec<String>, String>,
+}
 
 /// Main resource explorer interface
 pub struct ResourceExplorer {
@@ -162,6 +246,7 @@ pub struct ResourceExplorer {
     state: Arc<RwLock<ResourceExplorerState>>,
     window: ResourceExplorerWindow,
     pending_actions: Arc<Mutex<Vec<ResourceExplorerAction>>>,
+    console_role_menu_updates: Arc<Mutex<Vec<ConsoleRoleMenuUpdate>>>,
 }
 
 impl Default for ResourceExplorer {
@@ -174,16 +259,22 @@ impl ResourceExplorer {
     pub fn new() -> Self {
         let state = Arc::new(RwLock::new(ResourceExplorerState::new()));
         let pending_actions = Arc::new(Mutex::new(Vec::new()));
-        let window = ResourceExplorerWindow::new(state.clone(), pending_actions.clone());
+        let console_role_menu_updates = Arc::new(Mutex::new(Vec::new()));
+        let window = ResourceExplorerWindow::new(
+            state.clone(),
+            pending_actions.clone(),
+            console_role_menu_updates.clone(),
+        );
 
         Self {
             state,
             window,
             pending_actions,
+            console_role_menu_updates,
         }
     }
 
-    pub fn show(&mut self, ctx: &Context) -> bool {
+    pub fn show(&mut self, ctx: &Context) -> WindowAction {
         self.window.show(ctx)
     }
 
@@ -217,6 +308,10 @@ impl ResourceExplorer {
         }
     }
 
+    pub fn console_role_menu_updates(&self) -> Arc<Mutex<Vec<ConsoleRoleMenuUpdate>>> {
+        self.console_role_menu_updates.clone()
+    }
+
     /// Get the ResourceExplorerState for unified caching with V8 bindings
     pub fn get_state(&self) -> Arc<RwLock<state::ResourceExplorerState>> {
         self.window.get_state()
@@ -225,5 +320,12 @@ impl ResourceExplorer {
     /// Get the BookmarkManager for unified access with V8 bindings
     pub fn get_bookmark_manager(&self) -> Arc<StdRwLock<BookmarkManager>> {
         self.window.get_bookmark_manager()
+    }
+
+    /// Reset the explorer state (called on Terminate action)
+    /// Clears: resources, query scope, filters, tree state
+    /// Preserves: cache (shared Moka cache is global), bookmarks (global)
+    pub fn reset_state(&mut self) {
+        self.window.reset_state();
     }
 }

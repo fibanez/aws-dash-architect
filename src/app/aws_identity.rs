@@ -170,6 +170,43 @@ pub struct AwsCredentials {
     pub expiration: Option<DateTime<Utc>>,
 }
 
+/// Bedrock-specific credentials including the target region.
+///
+/// Contains AWS credentials along with the region where Bedrock API calls
+/// should be made. The region is determined by the Home Dash Account's
+/// configuration (where the DynamoDB table is located).
+#[derive(Debug, Clone)]
+pub struct BedrockCredentials {
+    /// AWS credentials for Bedrock API authentication.
+    pub credentials: AwsCredentials,
+
+    /// AWS region for Bedrock API calls.
+    ///
+    /// This region is derived from the Home Dash Account's DynamoDB table ARN.
+    pub region: String,
+
+    /// The AWS account ID these credentials belong to.
+    ///
+    /// This is the Home Dash Account ID from the DynamoDB table ARN.
+    pub account_id: String,
+}
+
+/// Home Dash Account information extracted from the awsdash role policy.
+///
+/// Contains the account ID and region where the awsdash DynamoDB table is located.
+/// This determines where Bedrock API calls should be made.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeDashAccount {
+    /// AWS account ID that owns the awsdash DynamoDB table.
+    pub account_id: String,
+
+    /// AWS region where the DynamoDB table is located.
+    pub region: String,
+
+    /// The DynamoDB table name (typically "awsdash").
+    pub table_name: String,
+}
+
 /// AWS account accessible through Identity Center with role-based access.
 ///
 /// Represents a single AWS account that the authenticated user can access through
@@ -587,6 +624,14 @@ pub struct AwsIdentityCenter {
     #[serde(skip)]
     pub infrastructure_info: Option<InfrastructureInfo>,
 
+    /// Home Dash Account information extracted from the awsdash role policy.
+    ///
+    /// Contains the account ID and region where the awsdash DynamoDB table is located.
+    /// This is used to determine where Bedrock API calls should be made.
+    /// Extracted from the DynamoDB ARN in the role's inline policy.
+    #[serde(skip)]
+    pub home_dash_account: Option<HomeDashAccount>,
+
     /// Discovered CloudFormation deployment role name.
     ///
     /// This stores the CloudFormation deployment role name extracted from the
@@ -660,6 +705,7 @@ impl AwsIdentityCenter {
             default_role_account_id: None,
             sso_management_account_id: None,
             infrastructure_info: None,
+            home_dash_account: None,
             cloudformation_deployment_role_name: None,
         }
     }
@@ -874,6 +920,13 @@ impl AwsIdentityCenter {
     ///     }
     /// }
     /// ```
+    /// Get the default role name configured for this identity center
+    ///
+    /// Returns the IAM role name used for application operations (e.g., "awsdash").
+    pub fn get_default_role_name(&self) -> String {
+        self.default_role_name.clone()
+    }
+
     pub fn get_default_role_credentials(&mut self) -> Result<AwsCredentials, String> {
         info!(
             "Getting credentials for default role: {}",
@@ -1011,6 +1064,91 @@ impl AwsIdentityCenter {
     /// belong to. Useful for debugging and telemetry configuration.
     pub fn get_selected_account_id(&self) -> Option<String> {
         self.default_role_account_id.clone()
+    }
+
+    /// Get credentials for Bedrock API calls from the Home Dash Account.
+    ///
+    /// Returns credentials from the account that owns the awsdash infrastructure
+    /// (DynamoDB table), along with the region where Bedrock should be called.
+    /// This ensures Bedrock calls are made in the same account/region as the
+    /// application's data store.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(BedrockCredentials)` - Credentials and region for Bedrock API calls
+    /// * `Err(String)` - If infrastructure info is not available or credentials
+    ///   cannot be obtained for the Home Dash Account
+    ///
+    /// # Prerequisites
+    ///
+    /// - User must be logged in
+    /// - Infrastructure info must be extracted (happens automatically after login)
+    /// - The Home Dash Account must have the default role available
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use aws_dash::app::aws_identity::AwsIdentityCenter;
+    /// # let mut identity_center = AwsIdentityCenter::new("url".to_string(), "role".to_string(), "region".to_string());
+    /// match identity_center.get_bedrock_credentials() {
+    ///     Ok(bedrock_creds) => {
+    ///         println!("Bedrock account: {}", bedrock_creds.account_id);
+    ///         println!("Bedrock region: {}", bedrock_creds.region);
+    ///         // Use bedrock_creds.credentials for API authentication
+    ///     }
+    ///     Err(error) => {
+    ///         eprintln!("Failed to get Bedrock credentials: {}", error);
+    ///     }
+    /// }
+    /// ```
+    pub fn get_bedrock_credentials(&mut self) -> Result<BedrockCredentials, String> {
+        // Get the Home Dash Account (extracted from the awsdash role's DynamoDB policy)
+        match &self.home_dash_account {
+            Some(home_dash) => {
+                let account_id = home_dash.account_id.clone();
+                let region = home_dash.region.clone();
+
+                info!(
+                    "Getting Bedrock credentials for Home Dash Account: {} in region: {}",
+                    account_id, region
+                );
+
+                // Clone role name to avoid borrow conflict
+                let role_name = self.default_role_name.clone();
+
+                // Get credentials for the Home Dash Account
+                let credentials = self.get_account_credentials(&account_id, &role_name)?;
+
+                Ok(BedrockCredentials {
+                    credentials,
+                    region,
+                    account_id,
+                })
+            }
+            None => {
+                // Fallback: Use default role credentials with Identity Center region
+                warn!(
+                    "Home Dash Account not available - falling back to default role credentials. \
+                     Ensure the awsdash role policy contains a DynamoDB resource ARN with account ID."
+                );
+
+                let credentials = self.get_default_role_credentials()?;
+                let region = self.identity_center_region.clone();
+                let account_id = self.default_role_account_id.clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                info!(
+                    "Using fallback Bedrock credentials from account: {} in region: {}",
+                    account_id, region
+                );
+
+                Ok(BedrockCredentials {
+                    credentials,
+                    region,
+                    account_id,
+                })
+            }
+        }
     }
 
     /// Initiate OAuth 2.0 device authorization flow with AWS SSO OIDC.
@@ -1439,6 +1577,10 @@ impl AwsIdentityCenter {
                 tracing::info!(
                     "Device authorization complete, accounts loaded, waiting for credentials"
                 );
+
+                // Extract Home Dash Account from the awsdash role's DynamoDB policy
+                // This determines which account/region to use for Bedrock
+                self.extract_home_dash_account();
 
                 // Try to automatically extract infrastructure information for common CloudFormation roles
                 self.auto_extract_infrastructure_info();
@@ -1898,6 +2040,206 @@ impl AwsIdentityCenter {
             .unwrap_or_default()
     }
 
+    pub(crate) fn fetch_console_menu_roles(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<String>, String> {
+        let access_token = match &self.access_token {
+            Some(token) => token.clone(),
+            None => return Err("Not logged in".to_string()),
+        };
+
+        if !self.accounts.iter().any(|a| a.account_id == account_id) {
+            return Err(format!("Account {} not found", account_id));
+        }
+
+        let rt_start = std::time::Instant::now();
+        let runtime =
+            Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!(
+            "⏱️ [AWS] Runtime creation (fetch_console_menu_roles) took {:?}",
+            rt_start.elapsed()
+        );
+
+        let region = self.identity_center_region.clone();
+        let default_role = self.default_role_name.clone();
+
+        let mut roles = runtime.block_on(async {
+            let region = Region::new(region);
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(region)
+                .load()
+                .await;
+            let sso_client = SsoClient::new(&config);
+
+            let mut roles = Vec::new();
+            let mut next_token: Option<String> = None;
+            loop {
+                let mut request = sso_client
+                    .list_account_roles()
+                    .access_token(&access_token)
+                    .account_id(account_id);
+                if let Some(token) = next_token {
+                    request = request.next_token(token);
+                }
+                match request.send().await {
+                    Ok(resp) => {
+                        if let Some(role_list) = resp.role_list {
+                            for role in role_list {
+                                if let Some(role_name) = role.role_name {
+                                    roles.push(role_name);
+                                }
+                            }
+                        }
+                        next_token = resp.next_token;
+                        if next_token.is_none() {
+                            break;
+                        }
+                    }
+                    Err(err) => return Err(format!("Failed to list account roles: {}", err)),
+                }
+            }
+            Ok::<_, String>(roles)
+        })?;
+
+        roles.sort();
+        if let Some(pos) = roles.iter().position(|role| role == &default_role) {
+            let default = roles.remove(pos);
+            roles.insert(0, default);
+        }
+
+        Ok(roles)
+    }
+
+    fn get_account_credentials_ephemeral(
+        &self,
+        account_id: &str,
+        role_name: &str,
+    ) -> Result<AwsCredentials, String> {
+        let access_token = match &self.access_token {
+            Some(token) => token.clone(),
+            None => return Err("Not logged in".to_string()),
+        };
+
+        if !self.accounts.iter().any(|a| a.account_id == account_id) {
+            return Err(format!("Account {} not found", account_id));
+        }
+
+        let rt_start = std::time::Instant::now();
+        let runtime =
+            Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!(
+            "⏱️ [AWS] Runtime creation (get_account_credentials_ephemeral) took {:?}",
+            rt_start.elapsed()
+        );
+
+        let region = self.identity_center_region.clone();
+        runtime.block_on(async {
+            let region = Region::new(region);
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(region)
+                .load()
+                .await;
+            let sso_client = SsoClient::new(&config);
+
+            match sso_client
+                .get_role_credentials()
+                .access_token(&access_token)
+                .account_id(account_id)
+                .role_name(role_name)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    if let Some(creds) = resp.role_credentials {
+                        let exp = creds.expiration;
+                        let expiration = {
+                            let secs = exp / 1000;
+                            let nsecs = ((exp % 1000) * 1_000_000) as u32;
+                            Some(DateTime::from_timestamp(secs, nsecs).unwrap_or_else(Utc::now))
+                        };
+
+                        Ok(AwsCredentials {
+                            access_key_id: creds.access_key_id.unwrap_or_default(),
+                            secret_access_key: creds.secret_access_key.unwrap_or_default(),
+                            session_token: creds.session_token,
+                            expiration,
+                        })
+                    } else {
+                        Err("No credentials in response".to_string())
+                    }
+                }
+                Err(e) => Err(format!("Failed to get credentials: {}", e)),
+            }
+        })
+    }
+
+    pub(crate) fn generate_console_signin_url_ephemeral(
+        &self,
+        account_id: &str,
+        role_name: &str,
+        destination: &str,
+    ) -> Result<String, String> {
+        let credentials = self.get_account_credentials_ephemeral(account_id, role_name)?;
+
+        let session_json = serde_json::json!({
+            "sessionId": credentials.access_key_id,
+            "sessionKey": credentials.secret_access_key,
+            "sessionToken": credentials.session_token.unwrap_or_default()
+        });
+
+        let session_data = session_json.to_string();
+        let encoded_session_data = utf8_percent_encode(&session_data, NON_ALPHANUMERIC).to_string();
+
+        let console_url = format!(
+            "https://signin.aws.amazon.com/federation?Action=getSigninToken&Session={}",
+            encoded_session_data
+        );
+
+        let rt_start = std::time::Instant::now();
+        let runtime =
+            Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!(
+            "⏱️ [AWS] Runtime creation (generate_console_url_ephemeral) took {:?}",
+            rt_start.elapsed()
+        );
+
+        let signin_result = runtime.block_on(async {
+            let client = reqwest::Client::new();
+            let resp = match client.get(&console_url).send().await {
+                Ok(r) => r,
+                Err(e) => return Err(format!("Failed to get signin token: {}", e)),
+            };
+
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => return Err(format!("Failed to read signin token response: {}", e)),
+            };
+
+            let token: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(t) => t,
+                Err(e) => return Err(format!("Failed to parse signin token: {}", e)),
+            };
+
+            match token.get("SigninToken") {
+                Some(token) => match token.as_str() {
+                    Some(t) => Ok(t.to_string()),
+                    None => Err("Invalid signin token format".to_string()),
+                },
+                None => Err("No signin token in response".to_string()),
+            }
+        });
+
+        match signin_result {
+            Ok(signin_token) => Ok(format!(
+                "https://signin.aws.amazon.com/federation?Action=login&Issuer=&Destination={}&SigninToken={}",
+                utf8_percent_encode(destination, NON_ALPHANUMERIC),
+                utf8_percent_encode(&signin_token, NON_ALPHANUMERIC)
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Launch AWS Management Console in browser with federated sign-in.
     ///
     /// Opens the AWS Management Console in the user's default browser using
@@ -1956,75 +2298,9 @@ impl AwsIdentityCenter {
     /// }
     /// ```
     pub fn open_aws_console(&mut self, account_id: &str, role_name: &str) -> Result<(), String> {
-        // First, get or refresh credentials for this account and role
-        let credentials = self.get_account_credentials(account_id, role_name)?;
+        let console_signin_url =
+            self.generate_console_signin_url(account_id, role_name, "https://console.aws.amazon.com/")?;
 
-        // Build a session JSON that AWS console will need
-        let session_json = serde_json::json!({
-            "sessionId": credentials.access_key_id,
-            "sessionKey": credentials.secret_access_key,
-            "sessionToken": credentials.session_token.unwrap_or_default()
-        });
-
-        // Convert to string and URL encode
-        let session_data = session_json.to_string();
-        let encoded_session_data = utf8_percent_encode(&session_data, NON_ALPHANUMERIC).to_string();
-
-        // Build the sign-in URL
-        let console_url = format!(
-            "https://signin.aws.amazon.com/federation?Action=getSigninToken&Session={}",
-            encoded_session_data
-        );
-
-        // Execute the async code in a tokio runtime to get the signin token
-        let rt_start = std::time::Instant::now();
-        let runtime =
-            Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
-        log::info!(
-            "⏱️ [AWS] Runtime creation (generate_console_url) took {:?}",
-            rt_start.elapsed()
-        );
-
-        let signin_result = runtime.block_on(async {
-            // Make HTTP request to get signin token
-            let client = reqwest::Client::new();
-            let resp = match client.get(&console_url).send().await {
-                Ok(r) => r,
-                Err(e) => return Err(format!("Failed to get signin token: {}", e)),
-            };
-
-            // Parse response
-            let text = match resp.text().await {
-                Ok(t) => t,
-                Err(e) => return Err(format!("Failed to read signin token response: {}", e)),
-            };
-
-            // Parse the JSON response
-            let token: serde_json::Value = match serde_json::from_str(&text) {
-                Ok(t) => t,
-                Err(e) => return Err(format!("Failed to parse signin token: {}", e)),
-            };
-
-            // Extract the signin token
-            match token.get("SigninToken") {
-                Some(token) => match token.as_str() {
-                    Some(t) => Ok(t.to_string()),
-                    None => Err("Invalid signin token format".to_string()),
-                },
-                None => Err("No signin token in response".to_string()),
-            }
-        })?;
-
-        // Build the final AWS console URL with the signin token
-        let destination = "https://console.aws.amazon.com/";
-        let encoded_destination = utf8_percent_encode(destination, NON_ALPHANUMERIC).to_string();
-
-        let console_signin_url = format!(
-            "https://signin.aws.amazon.com/federation?Action=login&Destination={}&SigninToken={}",
-            encoded_destination, signin_result
-        );
-
-        // Open the URL in the default browser
         if let Err(e) = open::that(&console_signin_url) {
             return Err(format!("Failed to open browser: {}", e));
         }
@@ -2034,6 +2310,70 @@ impl AwsIdentityCenter {
             account_id, role_name
         );
         Ok(())
+    }
+
+    pub fn generate_console_signin_url(
+        &mut self,
+        account_id: &str,
+        role_name: &str,
+        destination: &str,
+    ) -> Result<String, String> {
+        let credentials = self.get_account_credentials(account_id, role_name)?;
+
+        let session_json = serde_json::json!({
+            "sessionId": credentials.access_key_id,
+            "sessionKey": credentials.secret_access_key,
+            "sessionToken": credentials.session_token.unwrap_or_default()
+        });
+
+        let session_data = session_json.to_string();
+        let encoded_session_data = utf8_percent_encode(&session_data, NON_ALPHANUMERIC).to_string();
+
+        let console_url = format!(
+            "https://signin.aws.amazon.com/federation?Action=getSigninToken&Session={}",
+            encoded_session_data
+        );
+
+        let rt_start = std::time::Instant::now();
+        let runtime =
+            Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+        log::info!(
+            "⏱️ [AWS] Runtime creation (generate_console_url) took {:?}",
+            rt_start.elapsed()
+        );
+
+        let signin_result = runtime.block_on(async {
+            let client = reqwest::Client::new();
+            let resp = match client.get(&console_url).send().await {
+                Ok(r) => r,
+                Err(e) => return Err(format!("Failed to get signin token: {}", e)),
+            };
+
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => return Err(format!("Failed to read signin token response: {}", e)),
+            };
+
+            let token: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(t) => t,
+                Err(e) => return Err(format!("Failed to parse signin token: {}", e)),
+            };
+
+            match token.get("SigninToken") {
+                Some(token) => match token.as_str() {
+                    Some(t) => Ok(t.to_string()),
+                    None => Err("Invalid signin token format".to_string()),
+                },
+                None => Err("No signin token in response".to_string()),
+            }
+        })?;
+
+        let encoded_destination = utf8_percent_encode(destination, NON_ALPHANUMERIC).to_string();
+
+        Ok(format!(
+            "https://signin.aws.amazon.com/federation?Action=login&Destination={}&SigninToken={}",
+            encoded_destination, signin_result
+        ))
     }
 
     /// Automatically discover AWSReservedSSO CloudFormation role and extract infrastructure information.
@@ -2107,6 +2447,146 @@ impl AwsIdentityCenter {
                     "Cannot auto-extract infrastructure info - no default role credentials: {}",
                     e
                 );
+            }
+        }
+    }
+
+    /// Extract the Home Dash Account from the awsdash role's DynamoDB policy.
+    ///
+    /// Reads the current role's inline policy and extracts the DynamoDB table ARN
+    /// to determine the account ID and region for the Home Dash Account.
+    /// This is where Bedrock API calls should be made.
+    ///
+    /// Called automatically after login.
+    fn extract_home_dash_account(&mut self) {
+        info!("Extracting Home Dash Account from awsdash role policy");
+
+        // Ensure we have default role credentials
+        let credentials = match &self.default_role_credentials {
+            Some(creds) => creds.clone(),
+            None => {
+                warn!("Cannot extract Home Dash Account - no default role credentials available");
+                return;
+            }
+        };
+
+        // Create a Tokio runtime for async operations
+        let runtime = match Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                warn!("Failed to create Tokio runtime for Home Dash Account extraction: {}", e);
+                return;
+            }
+        };
+
+        let region = Region::new(self.identity_center_region.clone());
+        let table_pattern = self.default_role_name.clone();
+
+        let result: Result<HomeDashAccount, String> = runtime.block_on(async {
+            // Create AWS config with our credentials
+            let expiration_time = credentials.expiration.map(|dt| {
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(dt.timestamp() as u64)
+            });
+
+            let creds = aws_credential_types::Credentials::new(
+                &credentials.access_key_id,
+                &credentials.secret_access_key,
+                credentials.session_token.clone(),
+                expiration_time,
+                "aws-dash",
+            );
+
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(region)
+                .credentials_provider(creds)
+                .load()
+                .await;
+
+            // Get current role name via STS
+            let sts_client = StsClient::new(&config);
+            let caller_identity = sts_client
+                .get_caller_identity()
+                .send()
+                .await
+                .map_err(|e| format!("Failed to get caller identity: {}", e))?;
+
+            let arn = caller_identity.arn
+                .ok_or("No ARN found in caller identity")?;
+
+            // Extract role name from ARN: arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_RoleName/username
+            let role_name = arn.split('/')
+                .nth(1)
+                .ok_or("Invalid ARN format - cannot extract role name")?
+                .to_string();
+
+            info!("Extracting Home Dash Account from role: {}", role_name);
+
+            // Get the role's inline policy
+            let iam_client = IamClient::new(&config);
+            let policy_response = iam_client
+                .get_role_policy()
+                .policy_name("AwsSSOInlinePolicy")
+                .role_name(&role_name)
+                .send()
+                .await
+                .map_err(|e| format!("Failed to get role policy: {}", e))?;
+
+            let policy_document = policy_response.policy_document;
+
+            // URL decode the policy document
+            let decoded_policy = match percent_decode(policy_document.as_bytes()).decode_utf8() {
+                Ok(decoded) => decoded.to_string(),
+                Err(_) => policy_document.clone(),
+            };
+
+            info!("Searching for DynamoDB ARN with table pattern: {}", table_pattern);
+
+            // Look for DynamoDB table ARN: arn:aws:dynamodb:REGION:ACCOUNT:table/TABLE_NAME
+            let dynamodb_pattern = format!(
+                r"arn:aws:dynamodb:([a-z0-9-]+):(\d{{12}}):table/{}",
+                regex::escape(&table_pattern)
+            );
+            let dynamodb_re = Regex::new(&dynamodb_pattern)
+                .map_err(|e| format!("Invalid DynamoDB regex pattern: {}", e))?;
+
+            if let Some(captures) = dynamodb_re.captures(&decoded_policy) {
+                let db_region = captures.get(1)
+                    .map(|m| m.as_str().to_string())
+                    .ok_or("Failed to extract region from DynamoDB ARN")?;
+                let db_account = captures.get(2)
+                    .map(|m| m.as_str().to_string())
+                    .ok_or("Failed to extract account from DynamoDB ARN")?;
+
+                info!(
+                    "Found Home Dash Account: {} in region: {} (table: {})",
+                    db_account, db_region, table_pattern
+                );
+
+                Ok(HomeDashAccount {
+                    account_id: db_account,
+                    region: db_region,
+                    table_name: table_pattern,
+                })
+            } else {
+                Err(format!(
+                    "DynamoDB table ARN for '{}' not found in role policy. \
+                     Ensure the role policy contains a DynamoDB resource ARN with account ID \
+                     (e.g., arn:aws:dynamodb:us-east-1:123456789012:table/awsdash)",
+                    table_pattern
+                ))
+            }
+        });
+
+        match result {
+            Ok(home_dash) => {
+                info!(
+                    "Home Dash Account extracted: account={}, region={}, table={}",
+                    home_dash.account_id, home_dash.region, home_dash.table_name
+                );
+                self.home_dash_account = Some(home_dash);
+            }
+            Err(e) => {
+                warn!("Failed to extract Home Dash Account: {}", e);
             }
         }
     }
@@ -2576,5 +3056,67 @@ impl AwsIdentityCenter {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn collect_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs_files(&path, files);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    fn assert_symbol_usage_restricted(symbol: &str, allowed_paths: &[&str]) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect_rs_files(&root, &mut files);
+
+        let mut offenders = Vec::new();
+        for path in files {
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if contents.contains(symbol)
+                && !allowed_paths.iter().any(|allowed| path.ends_with(allowed))
+            {
+                offenders.push(path.display().to_string());
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "Symbol '{}' used outside allowed files: {:?}",
+            symbol,
+            offenders
+        );
+    }
+
+    #[test]
+    fn test_console_menu_role_fetch_restricted() {
+        assert_symbol_usage_restricted(
+            "fetch_console_menu_roles(",
+            &[
+                "src/app/aws_identity.rs",
+                "src/app/dashui/app/window_rendering.rs",
+            ],
+        );
+        assert_symbol_usage_restricted(
+            "generate_console_signin_url_ephemeral(",
+            &[
+                "src/app/aws_identity.rs",
+                "src/app/dashui/app/window_rendering.rs",
+            ],
+        );
     }
 }

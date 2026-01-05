@@ -63,8 +63,34 @@ fn init_logging() {
     }
 }
 
-fn main() -> eframe::Result {
+fn init_perf_timing_path() {
+    // Set perf timing log path for stood library
+    // Only active in debug builds when stood is compiled with perf-timing feature
+    #[cfg(debug_assertions)]
+    {
+        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "", "awsdash") {
+            let perf_log_path = proj_dirs
+                .data_dir()
+                .join("logs")
+                .join("agent_perf_timing.log");
+            std::env::set_var("PERF_TIMING_LOG_PATH", &perf_log_path);
+            tracing::debug!(
+                "Set PERF_TIMING_LOG_PATH for stood library: {:?}",
+                perf_log_path
+            );
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some((url, title)) = awsdash::app::webview::parse_webview_args(&args) {
+        awsdash::app::webview::run_webview(url, title)?;
+        return Ok(());
+    }
+
     init_logging();
+    init_perf_timing_path();
 
     // Clean up old agent log files (keep 50 most recent)
     match awsdash::app::agent_framework::AgentLogger::cleanup_old_logs(50) {
@@ -112,5 +138,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(awsdash::DashApp::new(cc)))
         }),
-    )
+    )?;
+
+    Ok(())
 }

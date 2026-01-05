@@ -3,7 +3,11 @@
 ## [Unreleased] - 0.1.3
 
 ### January 2026
-- **Resource Explorer UI**: Added unified three-panel selection dialog and collapsible active selection tags
+- **Resource Explorer UI**: Added unified three-panel selection dialog and collapsible active selection tags for improved resource filtering
+- **Resource Explorer Caching**: Shared Moka cache with transparent compression, memory auto-sizing, and multi-pane architecture for accelerated queries
+- **Query Monitoring**: Timing instrumentation and SDK error categorization with global retry tracking and persistent service availability indicators
+- **Agent Framework**: Context-optimized resource query API with black-box interface, Amazon Nova 2 model integration, and performance timing instrumentation
+- **AWS Console Integration**: Embedded webview with multi-role account support for direct console access from resource context menus
 
 ### December 2025
 - **Agent Middleware System**: Extensible conversation middleware with logging, token tracking, and auto-analysis layers plus cancellation support

@@ -1,4 +1,5 @@
 use super::super::credentials::CredentialCoordinator;
+use super::super::query_timing;
 use super::super::state::ResourceTag;
 use anyhow::{Context, Result};
 use aws_sdk_acm as acm;
@@ -23,9 +24,11 @@ use aws_sdk_route53 as route53;
 use aws_sdk_s3 as s3;
 use aws_sdk_sns as sns;
 use aws_sdk_sqs as sqs;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio::time::{timeout, Duration};
 use tokio::sync::RwLock;
 
 /// Service for fetching tags from AWS using multiple strategies
@@ -185,7 +188,7 @@ impl ResourceTaggingService {
             let cache = self.tag_keys_cache.read().await;
             if let Some(cached) = cache.get(&cache_key) {
                 let age = Utc::now() - cached.timestamp;
-                if age < Duration::minutes(Self::CACHE_TTL_MINUTES) {
+                if age < ChronoDuration::minutes(Self::CACHE_TTL_MINUTES) {
                     tracing::debug!("Tag keys cache hit for {}/{}", account_id, region);
                     return Ok(cached.keys.clone());
                 }
@@ -266,7 +269,7 @@ impl ResourceTaggingService {
             let cache = self.tag_values_cache.read().await;
             if let Some(cached) = cache.get(&cache_key) {
                 let age = Utc::now() - cached.timestamp;
-                if age < Duration::minutes(Self::CACHE_TTL_MINUTES) {
+                if age < ChronoDuration::minutes(Self::CACHE_TTL_MINUTES) {
                     tracing::debug!(
                         "Tag values cache hit for {}/{}/{}",
                         account_id,
@@ -346,10 +349,32 @@ impl ResourceTaggingService {
         region: &str,
         resource_arn: &str,
     ) -> Result<Vec<ResourceTag>> {
+        let start = Instant::now();
+
+        // Detect service from ARN for tracking (arn:aws:SERVICE:region:account:...)
+        let service = resource_arn
+            .split(':')
+            .nth(2)
+            .map(|s| match s {
+                "logs" => "Logs",
+                "lambda" => "Lambda",
+                "ec2" => "EC2",
+                "iam" => "IAM",
+                "s3" => "S3",
+                _ => "Other",
+            })
+            .unwrap_or("Other");
+
+        // Track tag fetch start - returns unique operation ID for tracking
+        let op_id = query_timing::tag_fetch_start(service, resource_arn, region, account_id);
+
         let aws_config = self
             .credential_coordinator
             .create_aws_config_for_account(account_id, region)
             .await
+            .inspect_err(|_e| {
+                query_timing::tag_fetch_end(op_id, service, resource_arn, region, start.elapsed().as_millis(), 0, false);
+            })
             .with_context(|| {
                 format!(
                     "Failed to create AWS config for account {} in region {}",
@@ -359,12 +384,17 @@ impl ResourceTaggingService {
 
         let client = tagging::Client::new(&aws_config);
 
-        let response = client
+        let response = match client
             .get_resources()
             .resource_arn_list(resource_arn)
             .send()
-            .await
-            .context("Failed to fetch tags for resource ARN")?;
+            .await {
+            Ok(resp) => resp,
+            Err(e) => {
+                query_timing::tag_fetch_end(op_id, service, resource_arn, region, start.elapsed().as_millis(), 0, false);
+                return Err(e).context("Failed to fetch tags for resource ARN");
+            }
+        };
 
         if let Some(mappings) = response.resource_tag_mapping_list {
             if let Some(mapping) = mappings.first() {
@@ -379,10 +409,16 @@ impl ResourceTaggingService {
                     })
                     .collect();
 
+                // Log success
+                query_timing::tag_fetch_end(op_id, service, resource_arn, region, start.elapsed().as_millis(), tags.len(), true);
+
                 tracing::debug!("Fetched {} tags for ARN {}", tags.len(), resource_arn);
                 return Ok(tags);
             }
         }
+
+        // No tags found (success with 0 tags)
+        query_timing::tag_fetch_end(op_id, service, resource_arn, region, start.elapsed().as_millis(), 0, true);
 
         Ok(Vec::new())
     }
@@ -462,13 +498,23 @@ impl ResourceTaggingService {
         region: &str,
         bucket_name: &str,
     ) -> Result<Vec<ResourceTag>> {
+        let start = Instant::now();
+
+        // Track tag fetch start - returns unique operation ID for tracking
+        let op_id = query_timing::tag_fetch_start("S3", bucket_name, region, account_id);
+
         let aws_config = self
             .credential_coordinator
             .create_aws_config_for_account(account_id, region)
-            .await?;
+            .await
+            .inspect_err(|_e| {
+                query_timing::tag_fetch_end(op_id, "S3", bucket_name, region, start.elapsed().as_millis(), 0, false);
+            })?;
 
         let client = s3::Client::new(&aws_config);
 
+        // Time the actual S3 API call
+        let api_start = Instant::now();
         let response = match client.get_bucket_tagging().bucket(bucket_name).send().await {
             Ok(resp) => resp,
             Err(e) => {
@@ -479,12 +525,15 @@ impl ResourceTaggingService {
                         "S3 bucket {} has no tags (NoSuchTagSet)",
                         bucket_name
                     );
+                    // Log success with 0 tags (NoSuchTagSet is not an error)
+                    query_timing::tag_fetch_end(op_id, "S3", bucket_name, region, start.elapsed().as_millis(), 0, true);
                     return Ok(Vec::new());
                 }
-                // For other errors, provide context and propagate
+                // For other errors, log failure and propagate
+                query_timing::tag_fetch_end(op_id, "S3", bucket_name, region, start.elapsed().as_millis(), 0, false);
                 return Err(e).context(format!(
-                    "Failed to fetch S3 bucket tags for {}",
-                    bucket_name
+                    "Failed to fetch S3 bucket tags for {} (API call took {}ms)",
+                    bucket_name, api_start.elapsed().as_millis()
                 ));
             }
         };
@@ -497,6 +546,9 @@ impl ResourceTaggingService {
                 value: tag.value,
             })
             .collect();
+
+        // Log success
+        query_timing::tag_fetch_end(op_id, "S3", bucket_name, region, start.elapsed().as_millis(), tags.len(), true);
 
         tracing::debug!("Fetched {} S3 tags for bucket {}", tags.len(), bucket_name);
         Ok(tags)
@@ -523,12 +575,14 @@ impl ResourceTaggingService {
 
         let client = lambda::Client::new(&aws_config);
 
-        let response = client
-            .list_tags()
-            .resource(function_arn)
-            .send()
-            .await
-            .context("Failed to fetch Lambda tags")?;
+        // Use timeout to prevent hanging on unresponsive Lambda API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_tags().resource(function_arn).send(),
+        )
+        .await
+        .context("Lambda list_tags timed out after 10s")?
+        .context("Failed to fetch Lambda tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags
@@ -565,12 +619,14 @@ impl ResourceTaggingService {
 
         let client = iam::Client::new(&aws_config);
 
-        let response = client
-            .list_user_tags()
-            .user_name(user_name)
-            .send()
-            .await
-            .context("Failed to fetch IAM user tags")?;
+        // Use timeout to prevent hanging on unresponsive IAM API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_user_tags().user_name(user_name).send(),
+        )
+        .await
+        .context("IAM list_user_tags timed out after 10s")?
+        .context("Failed to fetch IAM user tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags
@@ -605,12 +661,14 @@ impl ResourceTaggingService {
 
         let client = iam::Client::new(&aws_config);
 
-        let response = client
-            .list_role_tags()
-            .role_name(role_name)
-            .send()
-            .await
-            .context("Failed to fetch IAM role tags")?;
+        // Use timeout to prevent hanging on unresponsive IAM API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_role_tags().role_name(role_name).send(),
+        )
+        .await
+        .context("IAM list_role_tags timed out after 10s")?
+        .context("Failed to fetch IAM role tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags
@@ -648,12 +706,14 @@ impl ResourceTaggingService {
 
         let client = iam::Client::new(&aws_config);
 
-        let response = client
-            .list_policy_tags()
-            .policy_arn(policy_arn)
-            .send()
-            .await
-            .context("Failed to fetch IAM policy tags")?;
+        // Use timeout to prevent hanging on unresponsive IAM API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_policy_tags().policy_arn(policy_arn).send(),
+        )
+        .await
+        .context("IAM list_policy_tags timed out after 10s")?
+        .context("Failed to fetch IAM policy tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags
@@ -926,12 +986,14 @@ impl ResourceTaggingService {
 
         let client = sns::Client::new(&aws_config);
 
-        let response = client
-            .list_tags_for_resource()
-            .resource_arn(resource_arn)
-            .send()
-            .await
-            .context("Failed to fetch SNS topic tags")?;
+        // Use timeout to prevent hanging on unresponsive SNS API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_tags_for_resource().resource_arn(resource_arn).send(),
+        )
+        .await
+        .context("SNS list_tags_for_resource timed out after 10s")?
+        .context("Failed to fetch SNS topic tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags
@@ -970,12 +1032,14 @@ impl ResourceTaggingService {
 
         let client = kms::Client::new(&aws_config);
 
-        let response = client
-            .list_resource_tags()
-            .key_id(key_id)
-            .send()
-            .await
-            .context("Failed to fetch KMS key tags")?;
+        // Use timeout to prevent hanging on unresponsive KMS API calls
+        let response = timeout(
+            Duration::from_secs(10),
+            client.list_resource_tags().key_id(key_id).send(),
+        )
+        .await
+        .context("KMS list_resource_tags timed out after 10s")?
+        .context("Failed to fetch KMS key tags")?;
 
         let tags: Vec<ResourceTag> = response
             .tags

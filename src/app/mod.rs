@@ -33,6 +33,7 @@ pub mod data_plane;
 pub mod fonts;
 pub mod notifications;
 pub mod resource_explorer;
+pub mod webview;
 
 // Debug-only modules
 #[cfg(debug_assertions)]

@@ -3,7 +3,6 @@
 use super::{DashApp, FocusedWindow};
 use crate::app::dashui::window_focus::FocusableWindow;
 use crate::app::dashui::window_selector::WindowType;
-use crate::trace_info;
 use eframe::egui;
 use std::time::Instant;
 use tracing::info;

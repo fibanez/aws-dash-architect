@@ -628,9 +628,21 @@ pub struct ResourceExplorerState {
     // Property grouping UI state
     pub show_property_hierarchy_builder: bool, // Show property hierarchy builder dialog
     // Phase 1: Resource listing progress tracking
-    pub phase1_pending_services: HashSet<String>, // Services still loading (display names)
-    pub phase1_failed_services: HashSet<String>,  // Services that failed to load
-    pub phase1_total_services: usize,             // Total services requested
+    // Keys are full query identifiers: "account_id:region:resource_type"
+    // This matches the granularity of actual queries (not just resource_type)
+    pub phase1_pending_queries: HashSet<String>, // Queries still loading (account:region:resource_type)
+    pub phase1_failed_queries: HashSet<String>,  // Queries that failed to load
+    pub phase1_total_queries: usize,             // Total queries requested
+    // Phase 1 tag fetching progress (during resource normalization)
+    pub phase1_tag_fetching: bool,                // Tag fetching in progress
+    pub phase1_tag_resource_type: Option<String>, // Resource type being fetched (e.g., "IAM Role")
+    pub phase1_tag_progress_count: usize,         // Tags fetched so far
+    pub phase1_tag_progress_total: usize,         // Total resources needing tags
+    // Phase 1.5: Tag analysis progress (between Phase 1 and Phase 2)
+    pub phase1_5_in_progress: bool,               // Tag analysis is currently running
+    pub phase1_5_stage: Option<String>,           // Current stage: "Discovering tags", "Analyzing popularity", etc.
+    pub phase1_5_progress_count: usize,           // Resources analyzed so far
+    pub phase1_5_progress_total: usize,           // Total resources to analyze
     // Two-phase loading state
     pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
     pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
@@ -678,9 +690,17 @@ impl ResourceExplorerState {
             show_tag_hierarchy_builder: false,
             min_tag_resources_for_grouping: 1, // Default: show all tags with at least 1 resource
             show_property_hierarchy_builder: false,
-            phase1_pending_services: HashSet::new(),
-            phase1_failed_services: HashSet::new(),
-            phase1_total_services: 0,
+            phase1_pending_queries: HashSet::new(),
+            phase1_failed_queries: HashSet::new(),
+            phase1_total_queries: 0,
+            phase1_tag_fetching: false,
+            phase1_tag_resource_type: None,
+            phase1_tag_progress_count: 0,
+            phase1_tag_progress_total: 0,
+            phase1_5_in_progress: false,
+            phase1_5_stage: None,
+            phase1_5_progress_count: 0,
+            phase1_5_progress_total: 0,
             phase2_enrichment_in_progress: false,
             phase2_enrichment_completed: false,
             phase2_current_service: None,
@@ -725,61 +745,89 @@ impl ResourceExplorerState {
     }
 
     // Phase 1 progress tracking methods
+    // Keys are full query identifiers: "account_id:region:resource_type"
+    // This ensures each individual query is tracked separately, preventing race conditions
+    // where one region completing causes "All completed" to be logged while other regions
+    // are still in-flight or failing.
 
-    /// Start Phase 1 tracking with the list of services to query
-    pub fn start_phase1_tracking(&mut self, services: Vec<String>) {
-        tracing::info!("📋 Phase 1: Starting tracking for {} services: {:?}", services.len(), services);
-        self.phase1_pending_services = services.iter().cloned().collect();
-        self.phase1_failed_services.clear();
-        self.phase1_total_services = services.len();
+    /// Start Phase 1 tracking with the list of query keys
+    /// Each key should be in format "account_id:region:resource_type"
+    pub fn start_phase1_tracking(&mut self, query_keys: Vec<String>) {
+        tracing::info!("📋 Phase 1: Starting tracking for {} queries", query_keys.len());
+        if query_keys.len() <= 10 {
+            tracing::debug!("📋 Phase 1: Query keys: {:?}", query_keys);
+        } else {
+            tracing::debug!("📋 Phase 1: Query keys (first 10 of {}): {:?}", query_keys.len(), &query_keys[..10]);
+        }
+        self.phase1_pending_queries = query_keys.iter().cloned().collect();
+        self.phase1_failed_queries.clear();
+        self.phase1_total_queries = query_keys.len();
     }
 
-    /// Mark a service as completed (successfully loaded)
-    pub fn mark_phase1_service_completed(&mut self, service: &str) {
-        let was_present = self.phase1_pending_services.remove(service);
+    /// Mark a query as completed (successfully loaded)
+    /// Key should be in format "account_id:region:resource_type"
+    pub fn mark_phase1_query_completed(&mut self, query_key: &str) {
+        let was_present = self.phase1_pending_queries.remove(query_key);
         tracing::debug!(
             "✓ Phase 1: {} completed (was_tracked: {}, remaining: {})",
-            service, was_present, self.phase1_pending_services.len()
+            query_key, was_present, self.phase1_pending_queries.len()
         );
-        if self.phase1_pending_services.is_empty() {
-            tracing::info!("✅ Phase 1: All services completed! (failed: {})", self.phase1_failed_services.len());
+        if self.phase1_pending_queries.is_empty() {
+            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries, self.phase1_failed_queries.len());
         }
     }
 
-    /// Mark a service as failed
-    pub fn mark_phase1_service_failed(&mut self, service: &str) {
-        let was_present = self.phase1_pending_services.remove(service);
-        self.phase1_failed_services.insert(service.to_string());
+    /// Mark a query as failed
+    /// Key should be in format "account_id:region:resource_type"
+    pub fn mark_phase1_query_failed(&mut self, query_key: &str) {
+        let was_present = self.phase1_pending_queries.remove(query_key);
+        self.phase1_failed_queries.insert(query_key.to_string());
         tracing::warn!(
             "✗ Phase 1: {} failed (was_tracked: {}, remaining: {}, total_failed: {})",
-            service, was_present, self.phase1_pending_services.len(), self.phase1_failed_services.len()
+            query_key, was_present, self.phase1_pending_queries.len(), self.phase1_failed_queries.len()
         );
+        // Also check if this was the last query
+        if self.phase1_pending_queries.is_empty() {
+            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries, self.phase1_failed_queries.len());
+        }
     }
 
     /// Check if Phase 1 is still in progress
     pub fn is_phase1_in_progress(&self) -> bool {
-        !self.phase1_pending_services.is_empty()
+        !self.phase1_pending_queries.is_empty()
     }
 
-    /// Get Phase 1 progress info: (pending_count, total_count, pending_services)
-    pub fn get_phase1_progress(&self) -> (usize, usize, Vec<String>) {
-        let mut pending: Vec<String> = self.phase1_pending_services.iter().cloned().collect();
+    /// Get Phase 1 progress info: (pending_count, total_count, failed_count, pending_queries)
+    pub fn get_phase1_progress(&self) -> (usize, usize, usize, Vec<String>) {
+        let mut pending: Vec<String> = self.phase1_pending_queries.iter().cloned().collect();
         pending.sort(); // Alphabetical for consistent display
-        (pending.len(), self.phase1_total_services, pending)
+        (pending.len(), self.phase1_total_queries, self.phase1_failed_queries.len(), pending)
+    }
+
+    /// Get count of failed queries in Phase 1
+    pub fn get_phase1_failed_count(&self) -> usize {
+        self.phase1_failed_queries.len()
     }
 
     /// Reset Phase 1 state
     pub fn reset_phase1_state(&mut self) {
-        if !self.phase1_pending_services.is_empty() {
+        if !self.phase1_pending_queries.is_empty() {
             tracing::warn!(
-                "⚠️ Phase 1: Resetting with {} services still pending: {:?}",
-                self.phase1_pending_services.len(),
-                self.phase1_pending_services
+                "⚠️ Phase 1: Resetting with {} queries still pending",
+                self.phase1_pending_queries.len()
             );
         }
-        self.phase1_pending_services.clear();
-        self.phase1_failed_services.clear();
-        self.phase1_total_services = 0;
+        self.phase1_pending_queries.clear();
+        // NOTE: Keep phase1_failed_queries intact for failed queries indicator
+        // They will be cleared when Phase 1 starts again (begin_phase1_tracking)
+        self.phase1_total_queries = 0;
+    }
+
+    /// Generate a query key from account, region, and resource type
+    pub fn make_query_key(account_id: &str, region: &str, resource_type: &str) -> String {
+        format!("{}:{}:{}", account_id, region, resource_type)
     }
 
     /// Check if a resource type needs Phase 2 enrichment and doesn't have details yet
@@ -809,12 +857,13 @@ impl ResourceExplorerState {
         self.phase2_progress_total = total;
     }
 
-    /// Debounce interval for tree rebuilds during Phase 2 enrichment (250ms)
-    pub const ENRICHMENT_DEBOUNCE_MS: u64 = 250;
+    /// Debounce interval for tree rebuilds during Phase 2 enrichment (2000ms)
+    /// Increased from 250ms to reduce UI flickering during large resource queries
+    pub const ENRICHMENT_DEBOUNCE_MS: u64 = 2000;
 
     /// Increment enrichment_version with debouncing to reduce UI flicker.
     /// Returns true if the version was actually incremented.
-    /// During Phase 2, this limits tree rebuilds to at most once per 250ms.
+    /// During Phase 2, this limits tree rebuilds to at most once per 2 seconds.
     pub fn increment_enrichment_version_debounced(&mut self) -> bool {
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(self.last_enrichment_rebuild);
@@ -1115,20 +1164,34 @@ impl ResourceExplorerState {
 
     /// Update tag popularity and badge selector after resources are loaded
     /// This should be called after resources are updated from a query
+    ///
+    /// This function updates phase1_5 progress fields as it processes, allowing
+    /// the UI to show status like "Analyzing tags (500/1000)".
     pub fn update_tag_popularity(&mut self) {
+        let total = self.resources.len();
+
+        // Phase 1.5: Start tag analysis
+        self.phase1_5_in_progress = true;
+        self.phase1_5_progress_total = total;
+        self.phase1_5_progress_count = 0;
+        self.phase1_5_stage = Some("Discovering tags".to_string());
+
         // Discover tags from resources (populates tag discovery for autocomplete)
         tracing::info!(
-            "🏷️  Starting tag discovery for {} resources",
-            self.resources.len()
+            "Phase 1.5: Starting tag discovery for {} resources",
+            total
         );
         self.tag_discovery.discover_tags(&self.resources);
+        self.phase1_5_progress_count = total / 3; // ~33% progress
         tracing::info!(
-            "🏷️  Tag discovery complete - {} unique tag keys found",
+            "Phase 1.5: Tag discovery complete - {} unique tag keys found",
             self.tag_discovery.tag_key_count()
         );
 
         // Analyze resources for tag popularity
+        self.phase1_5_stage = Some("Analyzing tag popularity".to_string());
         self.tag_popularity.analyze_resources(&self.resources);
+        self.phase1_5_progress_count = (total * 2) / 3; // ~66% progress
 
         // Extract tag keys from active filters to use as priority keys
         let mut priority_keys = Vec::new();
@@ -1154,7 +1217,14 @@ impl ResourceExplorerState {
         );
 
         // Rebuild property catalog
+        self.phase1_5_stage = Some("Building property index".to_string());
         self.rebuild_property_catalog();
+        self.phase1_5_progress_count = total; // 100% progress
+
+        // Phase 1.5: Complete
+        self.phase1_5_in_progress = false;
+        self.phase1_5_stage = None;
+        tracing::info!("Phase 1.5: Tag analysis complete for {} resources", total);
     }
 
     /// Get count of active presence/absence tag filters

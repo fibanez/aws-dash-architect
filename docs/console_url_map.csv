@@ -1,0 +1,167 @@
+resource_type,console_url_template,source,notes
+AWS::EC2::Instance,https://console.aws.amazon.com/ec2/home?region={region}#InstanceDetails:instanceId={instance_id},aws_console_url-project,requires instance ID
+AWS::EC2::SecurityGroup,https://console.aws.amazon.com/vpc/home?region={region}#SecurityGroup:groupId={security_group_id},aws_console_url-project,requires security group ID
+AWS::EC2::VPC,https://console.aws.amazon.com/vpc/home?region={region}#VpcDetails:VpcId={vpc_id},aws_console_url-project,requires VPC ID
+AWS::EC2::Volume,https://console.aws.amazon.com/ec2/home?region={region}#VolumeDetails:volumeId={volume_id},aws_console_url-project,requires volume ID
+AWS::EC2::Snapshot,https://console.aws.amazon.com/ec2/home?region={region}#SnapshotDetails:snapshotId={snapshot_id},aws_console_url-project,requires snapshot ID
+AWS::EC2::Image,https://console.aws.amazon.com/ec2/home?region={region}#ImageDetails:imageId={image_id},aws_console_url-project,requires AMI ID
+AWS::EC2::Subnet,https://console.aws.amazon.com/vpc/home?region={region}#SubnetDetails:subnetId={subnet_id},aws_console_url-project,requires subnet ID
+AWS::EC2::RouteTable,https://console.aws.amazon.com/vpc/home?region={region}#RouteTableDetails:RouteTableId={route_table_id},aws_console_url-project,requires route table ID
+AWS::EC2::NatGateway,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::NetworkInterface,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::VPCEndpoint,https://console.aws.amazon.com/vpc/home?region={region}#EndpointDetails:vpcEndpointId={vpc_endpoint_id},aws_console_url-project,requires VPC endpoint ID
+AWS::EC2::NetworkAcl,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::KeyPair,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::InternetGateway,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::TransitGateway,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::VPCPeeringConnection,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::FlowLog,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EC2::VolumeAttachment,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ECS::FargateService,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ECS::FargateTask,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EKS::FargateProfile,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::IAM::Role,https://console.aws.amazon.com/iam/home#/roles/{role_name},app-hardcoded,requires role name
+AWS::IAM::User,https://console.aws.amazon.com/iam/home#/users/{user_name},app-hardcoded,requires user name
+AWS::IAM::Policy,https://console.aws.amazon.com/iam/home#/policies/details/{policy_arn_encoded}?section=permissions,aws_console_url-project,requires ARN URL-encoded
+AWS::Bedrock::Model,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::InferenceProfile,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::Guardrail,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::ProvisionedModelThroughput,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::Agent,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::KnowledgeBase,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::CustomModel,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::ImportedModel,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::EvaluationJob,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::ModelInvocationJob,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::Prompt,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::Flow,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::AgentAlias,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::AgentActionGroup,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::DataSource,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::ModelCustomizationJob,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::IngestionJob,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Bedrock::FlowAlias,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::S3::Bucket,https://console.aws.amazon.com/s3/buckets/{bucket_name}?region={region}&tab=objects,aws_console_url-project,requires bucket name
+AWS::CloudFormation::Stack,https://console.aws.amazon.com/cloudformation/home?region={region}#/stacks/stackinfo?stackId={stack_arn},aws_console_url-project,requires stack ARN
+AWS::RDS::DBInstance,https://console.aws.amazon.com/rds/home?region={region}#database:id={db_instance_id};is-cluster=false,aws_console_url-project,requires DB instance ID
+AWS::RDS::DBCluster,https://console.aws.amazon.com/rds/home?region={region}#database:id={db_cluster_id};is-cluster=true,aws_console_url-project,requires DB cluster ID
+AWS::RDS::DBSnapshot,https://console.aws.amazon.com/rds/home?region={region}#db-snapshot:id={db_snapshot_id},aws_console_url-project,requires DB snapshot ID
+AWS::RDS::DBParameterGroup,https://console.aws.amazon.com/rds/home?region={region}#parameter-group-details:parameter-group-name={db_parameter_group_name},aws_console_url-project,requires DB parameter group name
+AWS::RDS::DBSubnetGroup,https://console.aws.amazon.com/rds/home?region={region}#db-subnet-group:id={db_subnet_group_name},aws_console_url-project,requires DB subnet group name
+AWS::Lambda::Function,https://console.aws.amazon.com/lambda/home?region={region}#/functions/{function_name}/versions/{version}?tab=code,aws_console_url-project,requires function name and version (use $LATEST if unknown)
+AWS::Lambda::LayerVersion,https://console.aws.amazon.com/lambda/home?region={region}#/layers/{layer_name}/versions/{layer_version}?tab=versions,aws_console_url-project,requires layer name and version
+AWS::Lambda::EventSourceMapping,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::DynamoDB::Table,https://console.aws.amazon.com/dynamodbv2/home?region={region}#item-explorer?initialTagKey=&maximize=true&table={table_name},aws_console_url-project,requires table name
+AWS::CloudWatch::Alarm,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudWatch::Dashboard,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudWatch::CompositeAlarm,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudWatch::Metric,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudWatch::InsightRule,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudWatch::AnomalyDetector,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ApiGateway::RestApi,https://console.aws.amazon.com/apigateway/main/apis/{rest_api_id}/resources?api={rest_api_id}&region={region},aws_console_url-project,requires REST API ID
+AWS::SNS::Topic,https://console.aws.amazon.com/sns/v3/home?region={region}#/topic/{topic_arn},aws_console_url-project,requires topic ARN
+AWS::SQS::Queue,https://console.aws.amazon.com/sqs/v2/home?region={region}#/queues/https%3A%2F%2Fsqs.{region}.amazonaws.com%2F{account_id}%2F{queue_name},aws_console_url-project,requires account ID and queue name
+AWS::ECS::Cluster,https://console.aws.amazon.com/ecs/clusters/{cluster_name}/services?region={region},aws_console_url-project,requires cluster name
+AWS::ECS::Service,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ECS::Task,https://console.aws.amazon.com/ecs/clusters/{cluster_name}/tasks/{task_short_id}/configuration?region={region},aws_console_url-project,requires cluster name and task short ID
+AWS::ECS::TaskDefinition,https://console.aws.amazon.com/ecs/task-definitions/{task_name}/{revision}/containers?region={region},aws_console_url-project,requires task definition name and revision
+AWS::EKS::Cluster,https://console.aws.amazon.com/eks/home?region={region}#/clusters/{cluster_name},app-hardcoded,requires cluster name
+AWS::ElasticLoadBalancing::LoadBalancer,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ElasticLoadBalancingV2::LoadBalancer,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ElasticLoadBalancingV2::TargetGroup,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Logs::LogGroup,https://console.aws.amazon.com/cloudwatch/home?region={region}#logsV2:log-groups/log-group/{log_group_name},aws_console_url-project,requires log group name (URL-encoded)
+AWS::Logs::LogStream,https://console.aws.amazon.com/cloudwatch/home?region={region}#logsV2:log-groups/log-group/{log_group_name}/log-events/{log_stream_name},aws_console_url-project,requires log group + stream (URL-encoded)
+AWS::Logs::MetricFilter,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Logs::SubscriptionFilter,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Logs::ResourcePolicy,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Logs::QueryDefinition,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ApiGatewayV2::Api,https://console.aws.amazon.com/apigateway/main/develop/routes?api={api_id}&region={region},aws_console_url-project,requires API ID
+AWS::Kinesis::Stream,https://console.aws.amazon.com/kinesis/home?region={region}#/streams/details/{stream_name}/monitoring,aws_console_url-project,requires stream name
+AWS::SageMaker::Endpoint,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::SageMaker::TrainingJob,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::SageMaker::Model,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Redshift::Cluster,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Glue::Job,https://console.aws.amazon.com/gluestudio/home?region={region}#/editor/job/{job_name},aws_console_url-project,requires job name
+AWS::Athena::WorkGroup,https://console.aws.amazon.com/athena/home?region={region}#/workgroups/details/{workgroup_name},aws_console_url-project,requires workgroup name
+AWS::Route53::HostedZone,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::EFS::FileSystem,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudTrail::Trail,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudTrail::Event,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Config::ConfigurationRecorder,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Config::ConfigRule,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::DataBrew::Job,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::DataBrew::Dataset,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Detective::Graph,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AccessAnalyzer::Analyzer,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::SSM::Parameter,https://console.aws.amazon.com/systems-manager/parameters/{parameter_name}/description?region={region}&tab=Table,aws_console_url-project,requires parameter name
+AWS::SSM::Document,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Backup::BackupPlan,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Backup::BackupVault,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Events::EventBus,https://console.aws.amazon.com/events/home?region={region}#/eventbus/{event_bus_name},aws_console_url-project,requires event bus name
+AWS::Events::Rule,https://console.aws.amazon.com/events/home?region={region}#/eventbus/{event_bus_name}/rules/{rule_name},aws_console_url-project,requires event bus name + rule name
+AWS::AppSync::GraphQLApi,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AmazonMQ::Broker,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::MSK::Cluster,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::LakeFormation::DataLakeSettings,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CodePipeline::Pipeline,https://console.aws.amazon.com/codesuite/codepipeline/pipelines/{pipeline_name}/view?region={region},aws_console_url-project,requires pipeline name
+AWS::CodeBuild::Project,https://console.aws.amazon.com/codesuite/codebuild/{account_id}/projects/{project_name}/history?region={region},aws_console_url-project,requires account ID + project name
+AWS::CodeCommit::Repository,https://console.aws.amazon.com/codesuite/codecommit/repositories/{repo_name}/browse?region={region},aws_console_url-project,requires repo name
+AWS::IoT::Thing,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::GreengrassV2::ComponentVersion,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::Account,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::DelegatedAdministrator,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::Handshake,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::Organization,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::OrganizationalUnit,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::Policy,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Organizations::Root,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CertificateManager::Certificate,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ACMPCA::CertificateAuthority,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AutoScaling::AutoScalingGroup,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AutoScaling::ScalingPolicy,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::WAFv2::WebACL,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::GuardDuty::Detector,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::SecurityHub::Hub,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::CloudFront::Distribution,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ElastiCache::CacheCluster,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ElastiCache::ReplicationGroup,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Neptune::DBCluster,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Neptune::DBInstance,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::OpenSearchService::Domain,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Cognito::UserPool,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Cognito::IdentityPool,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Cognito::UserPoolClient,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Batch::JobQueue,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Batch::ComputeEnvironment,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::KinesisFirehose::DeliveryStream,https://console.aws.amazon.com/firehose/home?region={region}#/details/{delivery_stream_name}/monitoring,aws_console_url-project,requires delivery stream name
+AWS::QuickSight::DataSource,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::QuickSight::Dashboard,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::QuickSight::DataSet,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Macie::Session,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Inspector::Configuration,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Timestream::Database,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::DocumentDB::Cluster,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Transfer::Server,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::DataSync::Task,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::FSx::FileSystem,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::FSx::Backup,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::WorkSpaces::Workspace,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::WorkSpaces::Directory,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AppRunner::Service,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::AppRunner::Connection,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::GlobalAccelerator::Accelerator,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Connect::Instance,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Amplify::App,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Lex::Bot,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Rekognition::Collection,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Rekognition::StreamProcessor,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Polly::Voice,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Polly::Lexicon,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Polly::SynthesisTask,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::ECR::Repository,https://console.aws.amazon.com/ecr/repositories/private/{account_id}/{repo_name}?region={region},aws_console_url-project,requires account ID + repo name
+AWS::KMS::Key,https://console.aws.amazon.com/kms/home?region={region}#/kms/keys/{key_id},aws_console_url-project,requires key ID or alias
+AWS::SecretsManager::Secret,https://console.aws.amazon.com/secretsmanager/secret?name={secret_name}&region={region},aws_console_url-project,requires secret name
+AWS::StepFunctions::StateMachine,https://console.aws.amazon.com/states/home?region={region}#/statemachines/view/{state_machine_arn},aws_console_url-project,requires state machine ARN
+AWS::XRay::SamplingRule,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Shield::Protection,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,
+AWS::Shield::Subscription,https://console.aws.amazon.com/resource-groups/home?region={region}#/resources?search={arn_or_id},fallback-resource-explorer,

@@ -171,18 +171,27 @@ pub fn request_agent_creation(
     expected_output_format: Option<String>,
     parent_id: AgentId,
 ) -> Result<AgentId, String> {
+    stood::perf_checkpoint!("awsdash.request_agent_creation.start", &format!("parent_id={}, task={}", parent_id, &short_description));
+    let _creation_guard = stood::perf_guard!("awsdash.request_agent_creation");
+
     let (request, response_receiver) =
         AgentCreationRequest::new(short_description, task_description, expected_output_format, parent_id);
 
     // Send the request
-    get_agent_creation_sender()
-        .send(request)
-        .map_err(|e| format!("Failed to send agent creation request: {}", e))?;
+    stood::perf_checkpoint!("awsdash.request_agent_creation.send_request", &format!("request_id={}", request.request_id));
+    stood::perf_timed!("awsdash.request_agent_creation.send", {
+        get_agent_creation_sender()
+            .send(request)
+    })
+    .map_err(|e| format!("Failed to send agent creation request: {}", e))?;
 
     // Wait for response (with timeout)
-    let response = response_receiver
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| format!("Failed to receive agent creation response: {}", e))?;
+    stood::perf_checkpoint!("awsdash.request_agent_creation.wait_response.start");
+    let response = stood::perf_timed!("awsdash.request_agent_creation.recv_timeout", {
+        response_receiver.recv_timeout(std::time::Duration::from_secs(5))
+    })
+    .map_err(|e| format!("Failed to receive agent creation response: {}", e))?;
+    stood::perf_checkpoint!("awsdash.request_agent_creation.wait_response.end", &format!("agent_id={}, success={}", response.agent_id, response.success));
 
     if response.success {
         Ok(response.agent_id)

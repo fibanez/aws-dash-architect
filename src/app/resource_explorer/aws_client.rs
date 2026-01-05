@@ -1,6 +1,7 @@
 use super::{
-    aws_services::*, child_resources::*, credentials::*, global_services::*, normalizers::*,
-    state::*, tag_cache::TagCache,
+    aws_services::*, cache::SharedResourceCache, child_resources::*, credentials::*,
+    global_services::*, normalizers::*, query_timing::*, retry_tracker::retry_tracker,
+    sdk_errors::categorize_error_string, state::*, tag_cache::TagCache,
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -8,6 +9,7 @@ use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, Semaphore};
 use tracing::{error, info, warn};
 
@@ -56,6 +58,8 @@ pub enum QueryStatus {
     InProgress,
     Completed,
     Failed,
+    // Tag fetching status (Phase 1 - during normalization)
+    FetchingTags,
     // Phase 2 enrichment statuses
     EnrichmentStarted,
     EnrichmentInProgress,
@@ -457,14 +461,19 @@ impl AWSResourceClient {
         account: &str,
         region: &str,
     ) -> Result<Vec<ResourceTag>> {
+        let start = Instant::now();
+
         // Check cache first
         if let Some(cached_tags) = self
             .tag_cache
             .get(resource_type, resource_id, account, region)
             .await
         {
+            log_query_op("TAGS", "cache_hit", &format!("{}:{}", resource_type, resource_id));
             return Ok(cached_tags);
         }
+
+        log_query_op("TAGS", "fetch_start", &format!("{}:{} in {}/{}", resource_type, resource_id, account, region));
 
         tracing::debug!(
             "Fetching tags for {}: {} in {}/{}",
@@ -849,6 +858,9 @@ impl AWSResourceClient {
             .set(resource_type, resource_id, account, region, tags.clone())
             .await;
 
+        let elapsed_ms = start.elapsed().as_millis();
+        log_query_op("TAGS", "fetch_done", &format!("{}:{} ({} tags, {}ms)", resource_type, resource_id, tags.len(), elapsed_ms));
+
         Ok(tags)
     }
 
@@ -886,7 +898,7 @@ impl AWSResourceClient {
         scope: &QueryScope,
         result_sender: mpsc::Sender<QueryResult>,
         progress_sender: Option<mpsc::Sender<QueryProgress>>,
-        cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
+        cache: Arc<SharedResourceCache>,
     ) -> Result<()> {
         info!(
             "Starting parallel AWS resource queries for {} accounts, {} regions, {} resource types",
@@ -894,6 +906,36 @@ impl AWSResourceClient {
             scope.regions.len(),
             scope.resource_types.len()
         );
+
+        // Build list of expected queries for tracking
+        let global_registry = GlobalServiceRegistry::new();
+        let mut expected_queries: Vec<String> = Vec::new();
+        let mut seen_globals: HashSet<(String, String)> = HashSet::new();
+
+        for account in &scope.accounts {
+            for resource_type in &scope.resource_types {
+                if global_registry.is_global(&resource_type.resource_type) {
+                    let key = (account.account_id.clone(), resource_type.resource_type.clone());
+                    if !seen_globals.contains(&key) {
+                        seen_globals.insert(key);
+                        expected_queries.push(format!("{}:Global:{}", account.account_id, resource_type.resource_type));
+                    }
+                } else {
+                    for region in &scope.regions {
+                        expected_queries.push(format!("{}:{}:{}", account.account_id, region.region_code, resource_type.resource_type));
+                    }
+                }
+            }
+        }
+
+        // Start phase tracking with expected queries
+        super::query_timing::start_phase("PHASE1", expected_queries);
+
+        // Reset concurrency counters for new phase
+        super::query_timing::reset_concurrency_counters();
+
+        // Clear retry tracker state for new query phase
+        retry_tracker().clear_query_state();
 
         // Create semaphore to limit concurrent requests
         let semaphore = Arc::new(Semaphore::new(
@@ -906,7 +948,6 @@ impl AWSResourceClient {
 
         // Track which global services have been queried per account to avoid duplicates
         let mut queried_global_services: HashSet<(String, String)> = HashSet::new();
-        let global_registry = GlobalServiceRegistry::new();
 
         for account in &scope.accounts {
             for resource_type in &scope.resource_types {
@@ -932,26 +973,28 @@ impl AWSResourceClient {
                         account.account_id, resource_type.resource_type
                     );
 
-                    // Check cache first
-                    {
-                        let cache_read = cache.read().await;
-                        if let Some(cached_resources) = cache_read.get(&cache_key) {
-                            info!("Using cached global resources for {}", cache_key);
+                    // Check cache first (using SharedResourceCache)
+                    if let Some(cached_resources) = cache.get_resources_owned(&cache_key) {
+                        info!("Using cached global resources for {}", cache_key);
 
-                            // Send cached result immediately
-                            let cached_result = QueryResult {
-                                account_id: account.account_id.clone(),
-                                region: "Global".to_string(),
-                                resource_type: resource_type.resource_type.clone(),
-                                resources: Ok(cached_resources.clone()),
-                                cache_key: cache_key.clone(),
-                            };
+                        // Track cache hit in query_timing (so it doesn't appear as MISSING)
+                        let tracking_key = format!("{}:Global:{}", account.account_id, resource_type.resource_type);
+                        super::query_timing::query_start(&tracking_key);
+                        super::query_timing::query_done(&tracking_key, "cached");
 
-                            if let Err(e) = result_sender.send(cached_result).await {
-                                warn!("Failed to send cached global result: {}", e);
-                            }
-                            continue;
+                        // Send cached result immediately
+                        let cached_result = QueryResult {
+                            account_id: account.account_id.clone(),
+                            region: "Global".to_string(),
+                            resource_type: resource_type.resource_type.clone(),
+                            resources: Ok(cached_resources),
+                            cache_key: cache_key.clone(),
+                        };
+
+                        if let Err(e) = result_sender.send(cached_result).await {
+                            warn!("Failed to send cached global result: {}", e);
                         }
+                        continue;
                     }
 
                     // Create query future for global service
@@ -999,7 +1042,7 @@ impl AWSResourceClient {
                         // Execute the query from the global region
                         info!("🔍 [API CALL START] {} - calling AWS API (global)", query_id);
                         let query_result = client
-                            .query_resource_type(&account_id, &query_region, &resource_type_str)
+                            .query_resource_type(&account_id, &query_region, &resource_type_str, progress_sender_clone.as_ref())
                             .await;
                         let elapsed = start_time.elapsed();
                         info!("📊 [API CALL END] {} - completed in {:?} (global)", query_id, elapsed);
@@ -1022,9 +1065,8 @@ impl AWSResourceClient {
                                     resource_count, cache_key_clone
                                 );
 
-                                // Cache the results
-                                let mut cache_write = cache_clone.write().await;
-                                cache_write.insert(cache_key_clone.clone(), resources.clone());
+                                // Cache the results (using SharedResourceCache)
+                                cache_clone.insert_resources_owned(cache_key_clone.clone(), resources.clone());
 
                                 // Send completion progress
                                 if let Some(sender) = &progress_sender_clone {
@@ -1047,6 +1089,26 @@ impl AWSResourceClient {
                                 Ok(resources)
                             }
                             Err(e) => {
+                                let query_id = format!("{}:Global:{}", account_id, resource_type_str);
+                                let error_str = e.to_string();
+
+                                // Categorize the error for retry tracking
+                                let error_category = categorize_error_string(
+                                    &error_str,
+                                    &display_name,
+                                    "query",
+                                );
+
+                                // Record transient errors for visibility
+                                if error_category.is_retryable() {
+                                    retry_tracker().record_transient_error(
+                                        &query_id,
+                                        error_category.clone(),
+                                    );
+                                } else {
+                                    retry_tracker().record_failure(&query_id, error_category);
+                                }
+
                                 error!("Failed to query global service {}: {}", cache_key_clone, e);
 
                                 // Send failure progress
@@ -1094,26 +1156,27 @@ impl AWSResourceClient {
                             account.account_id, region.region_code, resource_type.resource_type
                         );
 
-                        // Check cache first
-                        {
-                            let cache_read = cache.read().await;
-                            if let Some(cached_resources) = cache_read.get(&cache_key) {
-                                info!("Using cached resources for {}", cache_key);
+                        // Check cache first (using SharedResourceCache)
+                        if let Some(cached_resources) = cache.get_resources_owned(&cache_key) {
+                            info!("Using cached resources for {}", cache_key);
 
-                                // Send cached result immediately
-                                let cached_result = QueryResult {
-                                    account_id: account.account_id.clone(),
-                                    region: region.region_code.clone(),
-                                    resource_type: resource_type.resource_type.clone(),
-                                    resources: Ok(cached_resources.clone()),
-                                    cache_key: cache_key.clone(),
-                                };
+                            // Track cache hit in query_timing (so it doesn't appear as MISSING)
+                            super::query_timing::query_start(&cache_key);
+                            super::query_timing::query_done(&cache_key, "cached");
 
-                                if let Err(e) = result_sender.send(cached_result).await {
-                                    warn!("Failed to send cached result: {}", e);
-                                }
-                                continue;
+                            // Send cached result immediately
+                            let cached_result = QueryResult {
+                                account_id: account.account_id.clone(),
+                                region: region.region_code.clone(),
+                                resource_type: resource_type.resource_type.clone(),
+                                resources: Ok(cached_resources),
+                                cache_key: cache_key.clone(),
+                            };
+
+                            if let Err(e) = result_sender.send(cached_result).await {
+                                warn!("Failed to send cached result: {}", e);
                             }
+                            continue;
                         }
 
                         // Create parallel query future
@@ -1164,7 +1227,7 @@ impl AWSResourceClient {
                             // Execute the query
                             info!("🔍 [API CALL START] {} - calling AWS API", query_id);
                             let query_result = client
-                                .query_resource_type(&account_id, &region_code, &resource_type_str)
+                                .query_resource_type(&account_id, &region_code, &resource_type_str, progress_sender_clone.as_ref())
                                 .await;
                             let elapsed = start_time.elapsed();
                             info!("📊 [API CALL END] {} - completed in {:?}", query_id, elapsed);
@@ -1178,12 +1241,8 @@ impl AWSResourceClient {
                                         resource_count, cache_key_clone
                                     );
 
-                                    // Cache the results
-                                    {
-                                        let mut cache_write = cache_clone.write().await;
-                                        cache_write
-                                            .insert(cache_key_clone.clone(), resources.clone());
-                                    }
+                                    // Cache the results (using SharedResourceCache)
+                                    cache_clone.insert_resources_owned(cache_key_clone.clone(), resources.clone());
 
                                     // Send completion progress
                                     if let Some(sender) = &progress_sender_clone {
@@ -1225,6 +1284,23 @@ impl AWSResourceClient {
                                         &region_code,
                                         &role_info,
                                     );
+
+                                    // Categorize the error for retry tracking
+                                    let error_category = categorize_error_string(
+                                        &detailed_error,
+                                        &display_name,
+                                        "query",
+                                    );
+
+                                    // Record transient errors for visibility
+                                    if error_category.is_retryable() {
+                                        retry_tracker().record_transient_error(
+                                            &query_id,
+                                            error_category.clone(),
+                                        );
+                                    } else {
+                                        retry_tracker().record_failure(&query_id, error_category);
+                                    }
 
                                     error!("Parallel query failed: {}", detailed_error);
 
@@ -1280,8 +1356,28 @@ impl AWSResourceClient {
         while (futures.next().await).is_some() {
             completed_count += 1;
             info!("🔄 [FUTURES LOOP] {}/{} futures completed", completed_count, total_queries);
+
+            // Periodic watchdog pulse every 10 completions to track progress
+            if completed_count % 10 == 0 {
+                super::query_timing::watchdog_pulse();
+            }
+
+            // Run stuck query diagnostics if progress seems slow (every 50 completions)
+            if completed_count % 50 == 0 {
+                super::query_timing::diagnose_stuck_operations();
+            }
         }
         info!("🏁 [FUTURES LOOP] All {} futures finished", completed_count);
+
+        // Log concurrency and tag fetch summary before ending phase
+        super::query_timing::log_concurrency_summary();
+        super::query_timing::log_tag_fetch_summary();
+
+        // End phase tracking and log summary with any anomalies
+        super::query_timing::end_phase("PHASE1");
+
+        // Log cache statistics at end of phase
+        cache.log_stats();
 
         // CRITICAL: Explicitly drop senders to close channels.
         // This signals to receivers that no more messages will be sent,
@@ -1312,11 +1408,8 @@ impl AWSResourceClient {
         &self,
         scope: &QueryScope,
         progress_sender: Option<mpsc::Sender<QueryProgress>>,
-        cache: &mut HashMap<String, Vec<ResourceEntry>>,
+        cache: Arc<SharedResourceCache>,
     ) -> Result<Vec<ResourceEntry>> {
-        // Convert to Arc<RwLock> for the new method
-        let cache_arc = Arc::new(tokio::sync::RwLock::new(cache.clone()));
-
         // Create channels for results
         let (result_sender, mut result_receiver) = mpsc::channel::<QueryResult>(1000);
 
@@ -1325,7 +1418,7 @@ impl AWSResourceClient {
             scope,
             result_sender,
             progress_sender,
-            cache_arc.clone(),
+            cache,
         );
 
         // Collect results
@@ -1348,10 +1441,6 @@ impl AWSResourceClient {
             } => {}
         }
 
-        // Update the original cache
-        let final_cache = cache_arc.read().await;
-        *cache = final_cache.clone();
-
         // Extract relationships between resources
         self.extract_all_relationships(&mut all_resources);
 
@@ -1359,12 +1448,27 @@ impl AWSResourceClient {
     }
 
     /// Query a specific resource type for a given account and region
+    ///
+    /// If progress_sender is provided, sends FetchingTags progress updates during normalization.
     async fn query_resource_type(
         &self,
         account: &str,
         region: &str,
         resource_type: &str,
+        progress_sender: Option<&mpsc::Sender<QueryProgress>>,
     ) -> Result<Vec<ResourceEntry>> {
+        // Use "Global" for tracking key if this is a global service
+        // This matches the Phase 1 tracking key format
+        let global_registry = GlobalServiceRegistry::new();
+        let tracking_region = if global_registry.is_global(resource_type) {
+            "Global"
+        } else {
+            region
+        };
+        let query_key = format!("{}:{}:{}", account, tracking_region, resource_type);
+        let query_start_time = Instant::now();
+        super::query_timing::query_start(&query_key);
+
         let raw_resources = match resource_type {
             "AWS::EC2::Instance" => {
                 self.get_ec2_service()
@@ -2239,13 +2343,14 @@ impl AWSResourceClient {
             }
             _ => {
                 warn!("Unsupported resource type: {}", resource_type);
+                super::query_timing::query_failed(&query_key, "unsupported resource type");
                 return Ok(Vec::new());
             }
         };
 
         // Normalize the parent resources (with async tag fetching)
         let mut all_entries = self
-            .normalize_resources(raw_resources, account, region, resource_type)
+            .normalize_resources(raw_resources, account, region, resource_type, progress_sender)
             .await?;
 
         // Query child resources recursively
@@ -2279,6 +2384,9 @@ impl AWSResourceClient {
             // Add all children to the result
             all_entries.extend(all_children);
         }
+
+        let _query_elapsed = query_start_time.elapsed().as_millis();
+        super::query_timing::query_done(&query_key, &format!("{} resources", all_entries.len()));
 
         Ok(all_entries)
     }
@@ -2578,34 +2686,62 @@ impl AWSResourceClient {
     }
 
     /// Normalize raw AWS API responses into ResourceEntry format (async for tag fetching)
+    ///
+    /// If a progress_sender is provided, sends FetchingTags progress updates as resources
+    /// are normalized (which includes tag fetching).
     async fn normalize_resources(
         &self,
         raw_resources: Vec<serde_json::Value>,
         account: &str,
         region: &str,
         resource_type: &str,
+        progress_sender: Option<&mpsc::Sender<QueryProgress>>,
     ) -> Result<Vec<ResourceEntry>> {
         let normalizer = NormalizerFactory::create_normalizer(resource_type)
             .context("No async normalizer available for resource type")?;
 
         let query_timestamp = Utc::now(); // Capture when this query was executed
+        let total = raw_resources.len();
 
-        // Process all resources concurrently for faster tag fetching
-        let futures: Vec<_> = raw_resources
+        // Process all resources concurrently using FuturesUnordered for progress tracking
+        let mut futures: futures::stream::FuturesUnordered<_> = raw_resources
             .into_iter()
             .map(|raw_resource| {
                 normalizer.normalize(raw_resource, account, region, query_timestamp, self)
             })
             .collect();
 
-        let results = futures::future::join_all(futures).await;
-
         let mut normalized_resources = Vec::new();
-        for result in results {
+        let mut processed = 0;
+        let mut last_progress_report = std::time::Instant::now();
+        let progress_interval_ms = 500; // Report progress every 500ms
+
+        use futures::StreamExt;
+        while let Some(result) = futures.next().await {
+            processed += 1;
             match result {
                 Ok(resource) => normalized_resources.push(resource),
                 Err(e) => {
                     warn!("Failed to normalize resource: {}", e);
+                }
+            }
+
+            // Report progress at intervals to avoid flooding
+            if let Some(sender) = progress_sender {
+                let elapsed = last_progress_report.elapsed().as_millis();
+                if elapsed >= progress_interval_ms || processed == total {
+                    let _ = sender
+                        .send(QueryProgress {
+                            account: account.to_string(),
+                            region: region.to_string(),
+                            resource_type: resource_type.to_string(),
+                            status: QueryStatus::FetchingTags,
+                            message: format!("Fetching tags ({}/{})", processed, total),
+                            items_processed: Some(processed),
+                            estimated_total: Some(total),
+                        })
+                        .await;
+                    last_progress_report = std::time::Instant::now();
                 }
             }
         }
@@ -4197,7 +4333,7 @@ impl AWSResourceClient {
         resources: Vec<ResourceEntry>,
         _result_sender: mpsc::Sender<QueryResult>,
         progress_sender: Option<mpsc::Sender<QueryProgress>>,
-        cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ResourceEntry>>>>,
+        cache: Arc<SharedResourceCache>,
     ) {
         let client = self.clone();
 
@@ -4236,11 +4372,13 @@ impl AWSResourceClient {
                 .collect();
 
             if resources_to_enrich.is_empty() {
+                log_query_event("PHASE2: No resources to enrich");
                 return;
             }
 
             let total = resources_to_enrich.len();
-            info!("Starting Phase 2 enrichment for {} resources", total);
+            let _phase2_timer = QueryTimer::new("PHASE2", &format!("{} resources to enrich", total));
+            info!("Starting Phase 2 enrichment for {} resources (parallel)", total);
 
             // Send enrichment started progress
             if let Some(ref sender) = progress_sender {
@@ -4259,19 +4397,16 @@ impl AWSResourceClient {
 
             // Log current cache state before enrichment
             {
-                let cache_read = cache.read().await;
+                let cache_keys = cache.resource_keys();
                 tracing::info!(
                     "Phase 2: Current cache contains {} keys: {:?}",
-                    cache_read.len(),
-                    cache_read.keys().collect::<Vec<_>>()
+                    cache_keys.len(),
+                    cache_keys
                 );
             }
 
-            // Group resources by account/region/type for batch processing
-            // For global services (like S3), use "Global" as the cache key region
-            // because that's how they're stored in the cache, even though the
-            // individual resources may have actual region values.
-            let mut grouped: HashMap<String, Vec<ResourceEntry>> = HashMap::new();
+            // Build list of (cache_key, resource) pairs for parallel processing
+            let mut work_items: Vec<(String, ResourceEntry)> = Vec::with_capacity(total);
             for resource in resources_to_enrich {
                 // Use "Global" for global services to match cache key format
                 let cache_region = if super::global_services::is_global_service(&resource.resource_type) {
@@ -4279,140 +4414,175 @@ impl AWSResourceClient {
                 } else {
                     resource.region.clone()
                 };
-                let key = format!(
+                let cache_key = format!(
                     "{}:{}:{}",
                     resource.account_id, cache_region, resource.resource_type
                 );
-                grouped.entry(key).or_default().push(resource);
+                work_items.push((cache_key, resource));
             }
 
-            // Log summary of cache state at start (detailed per-key logging available at DEBUG level)
+            // Log summary of cache state at start
             {
-                let cache_read = cache.read().await;
-                let total_resources: usize = cache_read.values().map(|r| r.len()).sum();
-                let total_with_details: usize = cache_read.values()
-                    .flat_map(|r| r.iter())
-                    .filter(|r| r.detailed_properties.is_some())
-                    .count();
+                let cache_keys = cache.resource_keys();
+                let mut total_resources = 0usize;
+                let mut total_with_details = 0usize;
+                for key in &cache_keys {
+                    if let Some(resources) = cache.get_resources_owned(key) {
+                        total_resources += resources.len();
+                        total_with_details += resources.iter().filter(|r| r.detailed_properties.is_some()).count();
+                    }
+                }
                 tracing::info!(
                     "Phase 2 START: {} cache keys, {} total resources, {} already enriched",
-                    cache_read.len(), total_resources, total_with_details
+                    cache_keys.len(), total_resources, total_with_details
                 );
             }
 
-            let mut processed = 0;
-            let mut updated_count = 0;
-            let mut failed_count = 0;
+            // Use semaphore to limit concurrent API calls (similar to Phase 1)
+            let semaphore = Arc::new(Semaphore::new(20));
+            let processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let updated_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-            for (cache_key_prefix, resources) in grouped {
-                tracing::debug!(
-                    "Phase 2: Processing {} resources for cache key: {}",
-                    resources.len(),
-                    cache_key_prefix
-                );
-                for mut resource in resources {
-                    // Fetch details based on resource type
-                    let details_result = client.fetch_resource_details(&resource).await;
+            // Create parallel futures for all resources
+            let mut futures: FuturesUnordered<_> = work_items
+                .into_iter()
+                .map(|(cache_key, resource)| {
+                    let client = client.clone();
+                    let semaphore = semaphore.clone();
+                    let cache = cache.clone();
+                    let progress_sender = progress_sender.clone();
+                    let processed = processed.clone();
+                    let updated_count = updated_count.clone();
+                    let failed_count = failed_count.clone();
 
-                    match details_result {
-                        Ok(details) => {
-                            // Merge Phase 2 details with existing raw_properties
-                            // This ensures get_display_properties() shows both Phase 1 and Phase 2 data
-                            let merged = Self::merge_properties(
-                                &resource.raw_properties,
-                                &details,
-                            );
-                            resource.detailed_properties = Some(merged);
-                            resource.detailed_timestamp = Some(Utc::now());
-                            tracing::debug!(
-                                "Phase 2: Got details for {} ({})",
-                                resource.resource_id,
-                                resource.resource_type
-                            );
+                    async move {
+                        // Acquire semaphore permit
+                        let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
-                            // Update cache with enriched resource (use cache_key_prefix from grouping)
-                            {
-                                let mut cache_write = cache.write().await;
-                                if let Some(cached_resources) =
-                                    cache_write.get_mut(&cache_key_prefix)
-                                {
-                                    // Find and update the resource in cache
+                        let resource_id = resource.resource_id.clone();
+                        let resource_type = resource.resource_type.clone();
+                        let account_id = resource.account_id.clone();
+                        let region = resource.region.clone();
+
+                        // Fetch details
+                        let details_result = client.fetch_resource_details(&resource).await;
+
+                        match details_result {
+                            Ok(details) => {
+                                tracing::debug!(
+                                    "Phase 2: Got details for {} ({})",
+                                    resource_id,
+                                    resource_type
+                                );
+
+                                // Update cache with enriched resource (using SharedResourceCache)
+                                // Need to read, modify, and write back since we can't get_mut
+                                if let Some(mut cached_resources) = cache.get_resources_owned(&cache_key) {
                                     if let Some(cached) = cached_resources
                                         .iter_mut()
-                                        .find(|r| r.resource_id == resource.resource_id)
+                                        .find(|r| r.resource_id == resource_id)
                                     {
-                                        // Merge with the cached resource's raw_properties
                                         let merged = Self::merge_properties(
                                             &cached.raw_properties,
                                             &details,
                                         );
-                                        cached.detailed_properties = Some(merged);
-                                        cached.detailed_timestamp = resource.detailed_timestamp;
-                                        updated_count += 1;
+                                        let timestamp = Utc::now();
+
+                                        // Store detailed properties in BOTH places during migration:
+                                        // 1. Legacy: ResourceEntry.detailed_properties
+                                        cached.detailed_properties = Some(merged.clone());
+                                        cached.detailed_timestamp = Some(timestamp);
+
+                                        // 2. New: Separate detailed_properties cache
+                                        let detailed_key = super::cache::SharedResourceCache::resource_key(cached);
+                                        cache.insert_detailed(
+                                            detailed_key,
+                                            super::cache::DetailedData {
+                                                properties: merged,
+                                                timestamp,
+                                            },
+                                        );
+
+                                        // Write back the modified list
+                                        cache.insert_resources_owned(cache_key.clone(), cached_resources);
+
+                                        updated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         tracing::debug!(
                                             "Phase 2: Updated cache for {} in key {}",
-                                            resource.resource_id,
-                                            cache_key_prefix
+                                            resource_id,
+                                            cache_key
                                         );
                                     } else {
-                                        failed_count += 1;
+                                        failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         tracing::warn!(
                                             "Phase 2: Resource {} not found in cache under key {}",
-                                            resource.resource_id,
-                                            cache_key_prefix
+                                            resource_id,
+                                            cache_key
                                         );
                                     }
                                 } else {
-                                    failed_count += 1;
+                                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     tracing::warn!(
-                                        "Phase 2: Cache key {} not found (available keys: {:?})",
-                                        cache_key_prefix,
-                                        cache_write.keys().collect::<Vec<_>>()
+                                        "Phase 2: Cache key {} not found",
+                                        cache_key
                                     );
                                 }
                             }
+                            Err(e) => {
+                                failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                tracing::warn!(
+                                    "Phase 2: Failed to fetch details for {} ({}): {}",
+                                    resource_id,
+                                    resource_type,
+                                    e
+                                );
+                            }
                         }
-                        Err(e) => {
-                            failed_count += 1;
-                            tracing::warn!(
-                                "Phase 2: Failed to fetch details for {} ({}): {}",
-                                resource.resource_id,
-                                resource.resource_type,
-                                e
-                            );
+
+                        let current_processed = processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+                        // Send progress update periodically (every 5 resources or at completion)
+                        if current_processed % 5 == 0 || current_processed == total {
+                            if let Some(ref sender) = progress_sender {
+                                let _ = sender
+                                    .send(QueryProgress {
+                                        account: account_id,
+                                        region,
+                                        resource_type: "Phase 2 Enrichment".to_string(),
+                                        status: QueryStatus::EnrichmentInProgress,
+                                        message: format!("Enriched {}/{} resources", current_processed, total),
+                                        items_processed: Some(current_processed),
+                                        estimated_total: Some(total),
+                                    })
+                                    .await;
+                            }
                         }
                     }
+                })
+                .collect();
 
-                    processed += 1;
+            // Process all futures
+            while futures.next().await.is_some() {}
 
-                    // Send progress update for every resource (not just every 10)
-                    if let Some(ref sender) = progress_sender {
-                        let _ = sender
-                            .send(QueryProgress {
-                                account: resource.account_id.clone(),
-                                region: resource.region.clone(),
-                                resource_type: "Phase 2 Enrichment".to_string(),
-                                status: QueryStatus::EnrichmentInProgress,
-                                message: format!("Enriched {}/{} resources", processed, total),
-                                items_processed: Some(processed),
-                                estimated_total: Some(total),
-                            })
-                            .await;
-                    }
-                }
-            }
+            let final_processed = processed.load(std::sync::atomic::Ordering::Relaxed);
+            let final_updated = updated_count.load(std::sync::atomic::Ordering::Relaxed);
+            let final_failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
 
             // Log summary of cache state at end
             {
-                let cache_read = cache.read().await;
-                let total_resources: usize = cache_read.values().map(|r| r.len()).sum();
-                let total_with_details: usize = cache_read.values()
-                    .flat_map(|r| r.iter())
-                    .filter(|r| r.detailed_properties.is_some())
-                    .count();
+                let cache_keys = cache.resource_keys();
+                let mut total_resources = 0usize;
+                let mut total_with_details = 0usize;
+                for key in &cache_keys {
+                    if let Some(resources) = cache.get_resources_owned(key) {
+                        total_resources += resources.len();
+                        total_with_details += resources.iter().filter(|r| r.detailed_properties.is_some()).count();
+                    }
+                }
                 tracing::info!(
                     "Phase 2 END: {} total resources, {} now enriched (processed={}, updated={}, failed={})",
-                    total_resources, total_with_details, processed, updated_count, failed_count
+                    total_resources, total_with_details, final_processed, final_updated, final_failed
                 );
             }
 
@@ -4431,7 +4601,7 @@ impl AWSResourceClient {
                     .await;
             }
 
-            info!("Phase 2 enrichment completed for {} resources", total);
+            info!("Phase 2 enrichment completed for {} resources (parallel)", total);
         });
     }
 

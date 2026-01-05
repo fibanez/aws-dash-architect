@@ -187,32 +187,63 @@ Available JavaScript APIs:
   Returns: Array<{ id: string, name: string, alias: string|null, email: string|null }>
 - listRegions(): List all AWS regions with their codes and names
   Returns: Array<{ code: string, name: string }>
-- queryResources(options): Query AWS resources across accounts/regions/types
+- loadCache(options): Load AWS resources into cache, returns counts only (~99% context reduction)
   Parameters: {
-    accounts: string[]|null,     // Account IDs (null = random account)
-    regions: string[]|null,      // Region codes (null = us-east-1)
-    resourceTypes: string[],     // CloudFormation types (required)
-    detail: "count"|"summary"|"tags"|"full"  // Detail level (default: "summary")
+    accounts: string[]|null,     // Account IDs (null = common regions)
+    regions: string[]|null,      // Region codes (null = us-east-1, us-west-2, eu-west-1, ap-southeast-1)
+    resourceTypes: string[]      // CloudFormation types (REQUIRED)
   }
-  Detail levels:
-    - "count": Just the count (fastest, minimal context)
-    - "summary": Basic info only - id, name, type, account, region (fast)
-    - "tags": Summary + tags array (for tag-based filtering)
-    - "full": Complete data including policies/encryption (may wait up to 60s for background loading)
   Returns: {
     status: "success"|"partial"|"error",
-    data: Array<resource>,       // Resources at requested detail level (null for count)
-    count: number,               // Total count of resources
-    detailsLoaded: boolean,      // True if detailed properties are included
-    detailsPending: boolean,     // True if background loading is still in progress
+    countByScope: { "account:region:type": count },  // e.g., "123:us-east-1:AWS::EC2::Instance": 45
+    totalCount: number,
     warnings: Array<{ account, region, message }>,
-    errors: Array<{ account, region, code, message }>
+    errors: Array<{ account, region, code, message }>,
+    accountsQueried: string[],
+    regionsQueried: string[],
+    loadTimestampUtc: string
   }
-  **CRITICAL**: Use 'rawProperties' for filtering/sorting by AWS-specific fields!
-    - properties: Minimal normalized fields (id, arn, created_date ONLY)
-    - rawProperties: Full AWS API response (InstanceType, Runtime, Engine, VpcId, etc.)
-    - detailedProperties: Additional Describe API data (policies, encryption settings - for enrichable types)
-  Enrichable types (get detailedProperties): Lambda, S3, IAM, SQS, SNS, DynamoDB, KMS, Cognito, etc.
+  **KEY**: Returns COUNTS not resources - minimizes context usage. Resources stay in V8 cache.
+- getResourceSchema(resourceType): Get ONE example resource to see available properties
+  Parameters: resourceType (string) - e.g., "AWS::EC2::Instance"
+  Returns: {
+    status: "success"|"not_found",
+    resourceType: string,
+    exampleResource: { resourceId, displayName, accountId, region, properties, tags, status },
+    cacheStats: { totalCount, accountCount, regionCount },
+    message: string (if not_found)
+  }
+  **CRITICAL: Use getResourceSchema() FIRST to understand resource structure before filtering**
+- queryCachedResources(options): Query actual resources from cache for filtering/analysis
+  Parameters: {
+    accounts: string[]|null,     // Account IDs to filter (null = all cached accounts)
+    regions: string[]|null,      // Region codes to filter (null = all cached regions)
+    resourceTypes: string[]      // Resource types to query (REQUIRED, can be multiple)
+  }
+  Returns: {
+    status: "success"|"not_found",
+    resources: Array<ResourceEntry>,  // Full resource objects with properties, tags, etc.
+    count: number,
+    accountsWithData: string[],
+    regionsWithData: string[],
+    resourceTypesFound: string[],
+    message: string (if not_found: "Call loadCache() first...")
+  }
+  **WORKFLOW**: (1) loadCache() to populate, (2) getResourceSchema() to see structure, (3) queryCachedResources() to filter
+  **CRITICAL**: ALWAYS call getResourceSchema() FIRST to understand property names before filtering!
+  **CRITICAL**: Properties are MERGED - properties, raw_properties, detailed_properties are combined into single "properties" object
+- showInExplorer(config): Open Explorer window with dynamic configuration
+  Parameters: {
+    accounts: string[],
+    regions: string[],
+    resourceTypes: string[],
+    grouping: { type: "ByAccount"|"ByRegion"|"ByResourceType"|"ByTag", key?: string },
+    tagFilters: { operator: "And"|"Or", filters: [...] },
+    searchFilter: string,
+    title: string
+  }
+  Returns: { status: "success"|"error", message: string, resourcesDisplayed: number }
+  **Opens UI window - use for visualization**
   Examples: AWS::EC2::Instance, AWS::S3::Bucket, AWS::IAM::Role, AWS::Lambda::Function, we support 93 services and 183 resource types
 - queryCloudWatchLogEvents(params): Query CloudWatch Logs for analysis and monitoring
   Parameters: { logGroupName: string, accountId: string, region: string, startTime?: number, endTime?: number, filterPattern?: string, limit?: number, logStreamNames?: string[], startFromHead?: boolean }
@@ -230,34 +261,97 @@ Available JavaScript APIs:
   Default Behavior: Automatically fetches at least 100 events (2 pages) for better coverage
   CloudTrail Delay: Events appear 5-15 minutes after the API call
 
-**PROPERTY ACCESS GUIDELINES** (queryResources):
-The 'properties' field is MINIMAL (only id/arn/created_date). Use 'rawProperties' for AWS-specific fields:
+**RESOURCE QUERY WORKFLOW** (Context-Optimized - TWO EXECUTION PATTERN):
+The workflow minimizes LLM context by separating data loading from analysis.
+CRITICAL: This is a TWO-STEP process requiring TWO separate JavaScript executions.
 
-1. EC2 Instances (AWS::EC2::Instance) - rawProperties fields:
-   InstanceType, State, VpcId, SubnetId, PrivateIpAddress, PublicIpAddress, LaunchTime
-   Example: resources.filter(r => r.rawProperties.InstanceType === 't3.micro')
+**EXECUTION 1: Load Cache + Get Schema** (Returns metadata to LLM)
+Execute this FIRST to understand what data exists and what properties are available:
 
-2. Lambda Functions (AWS::Lambda::Function) - rawProperties fields:
-   FunctionName, Runtime, Handler, MemorySize, Timeout, State, LastModified
-   Example: resources.filter(r => r.rawProperties.Runtime === 'python3.11')
+  (async () => {
+    // Load resources into cache (returns counts only, not full data)
+    const loadResult = await loadCache({
+      accounts: listAccounts().map(a => a.id),
+      regions: ['us-east-1', 'us-west-2'],
+      resourceTypes: ['AWS::EC2::SecurityGroup']
+    });
+    console.log('Loaded:', JSON.stringify(loadResult, null, 2));
+    // Returns: { countByScope: {...}, totalCount: 234 }
 
-3. S3 Buckets (AWS::S3::Bucket) - rawProperties fields:
-   Name, CreationDate
-   Example: resources.filter(r => r.rawProperties.Name.includes('prod'))
+    // Get schema to discover available properties
+    const schema = await getResourceSchema('AWS::EC2::SecurityGroup');
+    console.log('Available properties:', Object.keys(schema.exampleResource.properties));
+    console.log('Example resource:', JSON.stringify(schema.exampleResource, null, 2));
+    // Returns: { exampleResource: { properties: {...}, tags: [...] } }
+    // Properties are MERGED - all fields from Phase 1 and Phase 2 are in "properties"
 
-4. RDS Instances (AWS::RDS::DBInstance) - rawProperties fields:
-   DBInstanceIdentifier, DBInstanceClass, Engine, EngineVersion, DBInstanceStatus
-   Example: resources.filter(r => r.rawProperties.Engine === 'postgres')
+    // Return both results so LLM can see counts and schema structure
+    return {
+      loaded: loadResult,
+      schema: schema.exampleResource
+    };
+  })()
 
-5. IAM Roles (AWS::IAM::Role) - rawProperties fields:
-   RoleName, Path, Arn, CreateDate, MaxSessionDuration
-   Example: resources.filter(r => r.rawProperties.Path === '/service-role/')
+**After Execution 1**: You (the LLM) will see:
+- How many resources were loaded (totalCount)
+- What properties are available (from schema.properties)
+- Example values for each property
+- Nested structure (e.g., IpPermissions array with FromPort, ToPort, IpRanges fields)
 
-**Common Patterns**:
-❌ WRONG: resources.filter(r => r.properties.InstanceType === 't3.micro')
-✅ CORRECT: resources.filter(r => r.rawProperties.InstanceType === 't3.micro')
-✅ Use 'status' field: resources.filter(r => r.status === 'running')
-✅ Use 'tags' array: resources.filter(r => r.tags.some(t => t.key === 'Environment'))
+**EXECUTION 2: Query + Filter + Process** (Write this AFTER seeing Execution 1 results)
+NOW you know the schema structure, so write JavaScript to query and filter:
+
+  (async () => {
+    // Query cached resources (already loaded in Execution 1)
+    const sgs = await queryCachedResources({
+      accounts: null,  // All cached accounts
+      regions: null,   // All cached regions
+      resourceTypes: ['AWS::EC2::SecurityGroup']
+    });
+    console.log(`Querying ${sgs.count} security groups`);
+
+    // Filter using properties discovered from schema
+    // You know from Execution 1 that sg.properties.IpPermissions exists
+    const openSSH = sgs.resources.filter(sg => {
+      const rules = sg.properties.IpPermissions || [];
+      return rules.some(rule => {
+        const fromPort = rule.FromPort || 0;
+        const toPort = rule.ToPort || 65535;
+        const hasPort22 = fromPort <= 22 && 22 <= toPort;
+        const openToWorld = (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0') ||
+                            (rule.Ipv6Ranges || []).some(r => r.CidrIpv6 === '::/0');
+        return hasPort22 && openToWorld;
+      });
+    });
+    console.log(`Found ${openSSH.length} security groups with SSH open to world`);
+
+    // Return filtered/aggregated results (NOT raw arrays)
+    // If > 10 results, use showInExplorer() instead
+    if (openSSH.length > 10) {
+      showInExplorer({
+        title: 'Security Groups with Public SSH',
+        resources: openSSH,
+        accounts: [...new Set(openSSH.map(r => r.accountId))],
+        regions: [...new Set(openSSH.map(r => r.region))],
+        resourceTypes: ['AWS::EC2::SecurityGroup']
+      });
+      return { count: openSSH.length, message: 'Results in Explorer window' };
+    }
+
+    // For <= 10 results, return brief summary
+    return openSSH.map(sg => ({
+      id: sg.resourceId,
+      name: sg.displayName,
+      account: sg.accountId,
+      region: sg.region,
+      vpcId: sg.properties.VpcId
+    }));
+  })()
+
+**WHY TWO EXECUTIONS?**
+- Execution 1: You discover what properties exist (e.g., "IpPermissions", "FromPort")
+- Execution 2: You write correct filter logic using those exact property names
+- Trying to do both in one execution means guessing at property structure = errors
 
 Input Parameters:
 - code: JavaScript code string to execute
@@ -268,6 +362,12 @@ Output:
 - stdout: Console output (console.log/warn/debug)
 - stderr: Error messages (console.error + exceptions)
 - execution_time_ms: Time taken to execute
+
+**IMPORTANT - Logging Objects**:
+When logging objects with console.log(), they display as '[object Object]'.
+Use JSON.stringify() to see actual content:
+  ❌ console.log('Result:', result);           // Shows: Result: [object Object]
+  ✅ console.log('Result:', JSON.stringify(result, null, 2));  // Shows actual JSON
 
 Examples:
 1. List all accounts:
@@ -285,14 +385,32 @@ Examples:
 5. Process data with console output:
    {"code": "const regions = listRegions(); console.log(`Found ${regions.length} regions`); regions.map(r => r.name);"}
 
-6. Query EC2 instances:
-   {"code": "const instances = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); instances;"}
+5b. Log object with JSON.stringify:
+   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); console.log('Load result:', JSON.stringify(result, null, 2)); result;"}
 
-7. Find t3.micro instances:
-   {"code": "const instances = queryResources({ accounts: null, regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance'] }); instances.filter(i => i.rawProperties.InstanceType === 't3.micro');"}
+6. Load EC2 instances into cache (get counts):
+   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); result;"}
 
-8. Query multiple resource types:
-   {"code": "const resources = queryResources({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance', 'AWS::S3::Bucket'] }); resources;"}
+7. Discover EC2 instance schema:
+   {"code": "const schema = await getResourceSchema('AWS::EC2::Instance'); schema.exampleResource;"}
+
+8. Load multiple resource types:
+   {"code": "const result = await loadCache({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance', 'AWS::S3::Bucket'] }); result.countByScope;"}
+
+8b. Query cached resources and filter (CORRECT - uses merged properties):
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const schema = await getResourceSchema('AWS::EC2::Instance'); console.log('Properties:', Object.keys(schema.exampleResource.properties)); const result = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); result.resources.filter(i => i.properties.InstanceType === 't3.micro');"}
+
+8c. Complete workflow - find security groups with port 22 open to world:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const schema = await getResourceSchema('AWS::EC2::SecurityGroup'); console.log('Available properties:', Object.keys(schema.exampleResource.properties)); const sgs = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const openSSH = sgs.resources.filter(sg => { const rules = sg.properties.IpPermissions || []; return rules.some(rule => { const fromPort = rule.FromPort || 0; const toPort = rule.ToPort || 65535; const hasPort22 = fromPort <= 22 && 22 <= toPort; const openIPv4 = (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0'); const openIPv6 = (rule.Ipv6Ranges || []).some(r => r.CidrIpv6 === '::/0'); return hasPort22 && (openIPv4 || openIPv6); }); }); openSSH.map(sg => ({ id: sg.resourceId, name: sg.displayName, account: sg.accountId, region: sg.region, vpcId: sg.properties.VpcId }));"}
+
+8d. Aggregate instance counts by type and region:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const instances = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const byTypeAndRegion = instances.resources.reduce((acc, i) => { const key = `${i.region}:${i.properties.InstanceType}`; acc[key] = (acc[key] || 0) + 1; return acc; }, {}); byTypeAndRegion;"}
+
+8e. Find S3 buckets without encryption:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); const schema = await getResourceSchema('AWS::S3::Bucket'); const buckets = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); const unencrypted = buckets.resources.filter(b => !b.properties.BucketEncryption); unencrypted.map(b => ({ name: b.resourceId, account: b.accountId }));"}
+
+8f. Find IAM roles with specific trust relationship:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::IAM::Role'] }); const roles = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::IAM::Role'] }); const ec2Roles = roles.resources.filter(r => { const policy = r.properties.AssumeRolePolicyDocument; return policy && JSON.stringify(policy).includes('ec2.amazonaws.com'); }); ec2Roles.map(r => ({ name: r.resourceId, account: r.accountId }));"}
 
 9. Query CloudWatch Logs for Lambda errors:
    {"code": "const errors = queryCloudWatchLogEvents({ logGroupName: '/aws/lambda/my-function', accountId: '123456789012', region: 'us-east-1', filterPattern: 'ERROR', startTime: Date.now() - (60 * 60 * 1000), limit: 100 }); errors.events;"}
@@ -306,17 +424,17 @@ Examples:
 12. Find CloudTrail security events (failed API calls):
    {"code": "const events = getCloudTrailEvents({ accountId: '123456789012', region: 'us-east-1', startTime: Date.now() - (24 * 60 * 60 * 1000) }); events.events.filter(e => e.errorCode).map(e => ({ event: e.eventName, error: e.errorCode, user: e.username }));"}
 
-13. Find Lambda functions by runtime:
-   {"code": "const fns = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::Lambda::Function'] }); fns.filter(f => f.rawProperties.Runtime === 'python3.11');"}
+13. Load Lambda functions and get schema:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::Lambda::Function'] }); const schema = await getResourceSchema('AWS::Lambda::Function'); schema.exampleResource.properties;"}
 
-14. Find RDS PostgreSQL databases:
-   {"code": "const dbs = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::RDS::DBInstance'] }); dbs.filter(d => d.rawProperties.Engine === 'postgres');"}
+14. Load RDS databases and check count:
+   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::RDS::DBInstance'] }); result.totalCount;"}
 
-15. Sort instances by launch time:
-   {"code": "const instances = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); instances.sort((a, b) => new Date(a.rawProperties.LaunchTime) - new Date(b.rawProperties.LaunchTime));"}
+15. Load instances across all accounts:
+   {"code": "const result = await loadCache({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1', 'us-west-2'], resourceTypes: ['AWS::EC2::Instance'] }); result;"}
 
-16. Filter S3 buckets by creation date:
-   {"code": "const buckets = queryResources({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); buckets.filter(b => new Date(b.rawProperties.CreationDate) > new Date('2024-01-01'));"}
+16. Visualize S3 buckets in Explorer:
+   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); showInExplorer({ resourceTypes: ['AWS::S3::Bucket'], grouping: { type: 'ByAccount' }, title: 'S3 Buckets by Account' });"}
 
 Return Values:
 - Use the last expression as the return value (no 'return' statement needed)
@@ -331,11 +449,20 @@ Return Values:
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "JavaScript code to execute. Use last expression as return value (no 'return' statement needed).",
+                    "description": "JavaScript code to execute. For async operations, use IIFE pattern: (async () => { /* code */ return result; })(). CRITICAL: Include explicit 'return' statement in IIFE to avoid returning empty object {}.",
                     "examples": [
+                        // Basic queries
                         "const accounts = listAccounts(); accounts;",
-                        "console.log('Hello'); 42;",
-                        "const accounts = listAccounts(); accounts.filter(a => a.alias === 'prod');"
+                        "const regions = listRegions(); regions.filter(r => r.code.startsWith('us-'));",
+
+                        // EXECUTION 1: Load cache + get schema (discover what properties exist)
+                        "(async () => { const loadResult = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const schema = await getResourceSchema('AWS::EC2::SecurityGroup'); return { loaded: loadResult, schema: schema.exampleResource }; })()",
+
+                        // EXECUTION 2: Query + filter (write THIS after seeing Execution 1 results)
+                        "(async () => { const sgs = await queryCachedResources({ resource_types: ['AWS::EC2::SecurityGroup'] }); const vulnerable = sgs.resources.filter(sg => { const rules = sg.properties.IpPermissions || []; return rules.some(rule => rule.FromPort === 22 && (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0')); }); if (vulnerable.length > 10) { showInExplorer({ title: 'Vulnerable SGs', resources: vulnerable, accounts: [...new Set(vulnerable.map(r => r.accountId))], regions: [...new Set(vulnerable.map(r => r.region))], resourceTypes: ['AWS::EC2::SecurityGroup'] }); return { count: vulnerable.length, message: 'Results in Explorer' }; } return vulnerable.map(sg => ({ id: sg.properties.GroupId, name: sg.properties.GroupName, account: sg.accountId, region: sg.region })); })()",
+
+                        // Context-efficient aggregation: Return counts, not full arrays
+                        "(async () => { const buckets = await queryCachedResources({ resource_types: ['AWS::S3::Bucket'] }); const byEncryption = buckets.resources.reduce((acc, b) => { const enc = b.properties.BucketEncryption?.Rules?.[0]?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm || 'NONE'; acc[enc] = (acc[enc] || 0) + 1; return acc; }, {}); return byEncryption; })()"
                     ]
                 }
             },

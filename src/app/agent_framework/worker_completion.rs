@@ -59,7 +59,11 @@ fn register_pending_worker(worker_id: AgentId) -> Arc<Condvar> {
 /// Called by AgentManagerWindow when a worker completes.
 /// Notifies any thread waiting for this worker's result.
 pub fn send_worker_completion(completion: WorkerCompletion) {
+    stood::perf_checkpoint!("awsdash.worker_completion.send.start", &format!("worker_id={}", completion.worker_id));
     let worker_id = completion.worker_id;
+    let execution_time_ms = completion.execution_time.as_millis();
+    let is_success = completion.result.is_ok();
+
     let mut registry = COMPLETION_REGISTRY.lock().unwrap();
 
     if let Some((result_slot, condvar)) = registry.get_mut(&worker_id) {
@@ -69,12 +73,14 @@ pub fn send_worker_completion(completion: WorkerCompletion) {
         // Notify waiting thread
         condvar.notify_one();
 
+        stood::perf_checkpoint!("awsdash.worker_completion.send.notified", &format!("worker_id={}, success={}, execution_time_ms={}", worker_id, is_success, execution_time_ms));
         tracing::info!(
             target: "agent::worker_completion",
             worker_id = %worker_id,
             "Worker completion sent and waiting thread notified"
         );
     } else {
+        stood::perf_checkpoint!("awsdash.worker_completion.send.no_waiter", &format!("worker_id={}", worker_id));
         tracing::warn!(
             target: "agent::worker_completion",
             worker_id = %worker_id,
@@ -98,6 +104,9 @@ pub fn send_worker_completion(completion: WorkerCompletion) {
 /// * `Ok(response)` - Worker completed successfully with response text
 /// * `Err(error)` - Worker failed with error message or timeout
 pub fn wait_for_worker_completion(worker_id: AgentId, timeout: Duration) -> Result<String, String> {
+    stood::perf_checkpoint!("awsdash.worker_completion.wait.start", &format!("worker_id={}, timeout_secs={}", worker_id, timeout.as_secs()));
+    let _wait_guard = stood::perf_guard!("awsdash.worker_completion.wait", &format!("worker_id={}", worker_id));
+
     tracing::info!(
         target: "agent::worker_completion",
         worker_id = %worker_id,
@@ -109,6 +118,7 @@ pub fn wait_for_worker_completion(worker_id: AgentId, timeout: Duration) -> Resu
     let condvar = register_pending_worker(worker_id);
 
     // Wait for completion with timeout
+    stood::perf_checkpoint!("awsdash.worker_completion.wait.condvar_wait.start", &format!("worker_id={}", worker_id));
     let result = {
         let registry = COMPLETION_REGISTRY.lock().unwrap();
 
@@ -124,6 +134,7 @@ pub fn wait_for_worker_completion(worker_id: AgentId, timeout: Duration) -> Resu
 
         // Check if we timed out
         if timeout_result.timed_out() {
+            stood::perf_checkpoint!("awsdash.worker_completion.wait.timeout", &format!("worker_id={}", worker_id));
             // Clean up registry entry
             guard.remove(&worker_id);
             return Err(format!(
@@ -132,12 +143,16 @@ pub fn wait_for_worker_completion(worker_id: AgentId, timeout: Duration) -> Resu
             ));
         }
 
+        stood::perf_checkpoint!("awsdash.worker_completion.wait.condvar_wait.notified", &format!("worker_id={}", worker_id));
+
         // Extract result and clean up registry
         guard
             .remove(&worker_id)
             .and_then(|(result, _)| result)
             .expect("Result should be present after condvar notification")
     };
+
+    stood::perf_checkpoint!("awsdash.worker_completion.wait.complete", &format!("worker_id={}, success={}, execution_time_ms={}", worker_id, result.result.is_ok(), result.execution_time.as_millis()));
 
     tracing::info!(
         target: "agent::worker_completion",

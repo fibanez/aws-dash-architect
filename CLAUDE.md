@@ -138,6 +138,36 @@ ui.label("  ├─ Child");                  // NO - box-drawing
 - Purpose: General application events, initialization, errors
 - Usage: Troubleshoot application startup, configuration issues
 
+**Query Timing Log** (Resource Explorer):
+- Location: `$HOME/.local/share/awsdash/logs/query_timing.log`
+- Purpose: Detailed timing log for Resource Explorer queries and cache operations
+- Content includes:
+  - Phase 1 (resource listing) and Phase 2 (enrichment) execution timing
+  - Expected queries at start of each phase
+  - Cache hits/misses with timing (`[CACHE] GET_HIT`, `[CACHE] GET_MISS`)
+  - Cache insertions and evictions (`[CACHE] INSERT`, `[CACHE EVICT]`)
+  - Resource query start/end with duration (`[>] START`, `[<] DONE`)
+  - Tag fetch operations (`[TAGS] fetch_start`, `[TAGS] fetch_done`)
+- Usage: Troubleshoot slow queries, missing resources, spinner stuck issues, cache behavior
+
+**How to Monitor Query Timing**:
+```bash
+# Tail the query timing log in real-time
+tail -f ~/.local/share/awsdash/logs/query_timing.log
+
+# Find phase boundaries
+grep -E "PHASE1|PHASE2" ~/.local/share/awsdash/logs/query_timing.log
+
+# Check for cache misses (uncached queries)
+grep "GET_MISS" ~/.local/share/awsdash/logs/query_timing.log
+
+# Find slow queries (look for high ms values)
+grep "\[<\] DONE" ~/.local/share/awsdash/logs/query_timing.log | sort -t'(' -k2 -n
+
+# Check which resource types completed
+grep "\[<\] DONE" ~/.local/share/awsdash/logs/query_timing.log
+```
+
 **Per-Agent Logs** (Agent Framework):
 - Location: `$HOME/.local/share/awsdash/logs/agents/agent-{uuid}.log`
 - Purpose: Detailed per-agent conversation and activity tracking
@@ -149,6 +179,36 @@ ui.label("  ├─ Child");                  // NO - box-drawing
   - Agent lifecycle events (creation, rename, termination)
 - Usage: Debug agent behavior, review conversations, analyze tool usage
 - Find agent log path: Look for "Agent log file:" in agent UI or check logs directory
+
+**Agent Performance Timing Log** (Debug builds only):
+- Location: `$HOME/.local/share/awsdash/logs/agent_perf_timing.log`
+- Purpose: Detailed timing instrumentation for agent operations
+- Only generated in debug builds (zero overhead in release)
+- Key metrics tracked:
+  - `stood.bedrock.invoke_model` - Model API call duration
+  - `stood.bedrock.chat_with_tools` - Full chat cycle with tool handling
+  - `stood.event_loop.cycle` - Agent event loop cycle time
+  - `MODEL_INVOCATION.agent_execute` - Total agent execution time
+  - `awsdash.v8.execute` - JavaScript tool execution time
+  - `awsdash.start_task.execute` - Worker task spawn and completion time
+- Format: `[timestamp] [thread] operation_name: duration (context)`
+- Usage: Analyze model response times, identify bottlenecks, compare model performance
+
+**How to Analyze Agent Performance**:
+```bash
+# View recent timing entries
+tail -100 ~/.local/share/awsdash/logs/agent_perf_timing.log
+
+# Find model invocation times
+grep "invoke_model" ~/.local/share/awsdash/logs/agent_perf_timing.log
+
+# Find total agent execution times
+grep "MODEL_INVOCATION.agent_execute" ~/.local/share/awsdash/logs/agent_perf_timing.log
+
+# Calculate average invoke_model time
+grep "invoke_model" ~/.local/share/awsdash/logs/agent_perf_timing.log | \
+  awk -F'=' '{gsub(/ms/,"",$2); sum+=$2; count++} END {print "Average:", sum/count, "ms"}'
+```
 
 **How to Monitor Agent Logs**:
 ```bash

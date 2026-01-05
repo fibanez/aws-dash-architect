@@ -1,4 +1,5 @@
 use crate::app::aws_identity::AwsIdentityCenter;
+use crate::app::resource_explorer::query_timing;
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
@@ -6,6 +7,7 @@ use aws_types::region::Region;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -83,6 +85,7 @@ impl CredentialCoordinator {
         &self,
         account_id: &str,
     ) -> Result<AccountCredentials> {
+        let start = Instant::now();
         debug!(
             "🔑 CREDS: get_credentials_for_account ENTRY for account: {}",
             account_id
@@ -102,6 +105,14 @@ impl CredentialCoordinator {
                     account_id
                 );
                 debug!("Using cached credentials for account: {}", account_id);
+                // Log timing - cache hit
+                query_timing::credential_fetch_start(account_id, true);
+                query_timing::credential_fetch_end(
+                    account_id,
+                    start.elapsed().as_millis(),
+                    true,
+                    true, // from_cache
+                );
                 return Ok(cached_creds);
             } else {
                 debug!("🔑 CREDS: Cached credentials for account {} using role {} are expired, requesting fresh credentials", account_id, cached_creds.role_name);
@@ -118,10 +129,20 @@ impl CredentialCoordinator {
             "🔑 CREDS: Requesting fresh credentials for account: {}",
             account_id
         );
+        // Log timing - cache miss, starting fresh fetch
+        query_timing::credential_fetch_start(account_id, false);
+
         let fresh_creds = self
             .request_fresh_credentials(account_id)
             .await
             .with_context(|| {
+                // Log failure
+                query_timing::credential_fetch_end(
+                    account_id,
+                    start.elapsed().as_millis(),
+                    false,
+                    false, // not from_cache
+                );
                 format!("Failed to get fresh credentials for account {}", account_id)
             })?;
 
@@ -131,6 +152,14 @@ impl CredentialCoordinator {
         );
         // Cache the credentials
         self.cache_credentials(account_id, &fresh_creds).await;
+
+        // Log timing - success
+        query_timing::credential_fetch_end(
+            account_id,
+            start.elapsed().as_millis(),
+            true,
+            false, // not from_cache
+        );
 
         debug!("🔑 CREDS: get_credentials_for_account EXIT successfully for account: {} using role: {}", account_id, fresh_creds.role_name);
         Ok(fresh_creds)
@@ -169,17 +198,33 @@ impl CredentialCoordinator {
             "🔑 CREDS: Acquiring Identity Center lock for account: {}",
             account_id
         );
+
+        // Time the lock acquisition
+        let lock_start = Instant::now();
         let identity_center_clone = {
             let identity_center = self
                 .identity_center
                 .lock()
-                .map_err(|e| anyhow::anyhow!("Failed to acquire lock on Identity Center: {}", e))?;
+                .map_err(|e| {
+                    query_timing::identity_center_lock_timing(
+                        account_id,
+                        lock_start.elapsed().as_millis(),
+                        false,
+                    );
+                    anyhow::anyhow!("Failed to acquire lock on Identity Center: {}", e)
+                })?;
             debug!(
                 "🔑 CREDS: Successfully acquired Identity Center lock, cloning for account: {}",
                 account_id
             );
             identity_center.clone()
         };
+        // Log lock acquisition time
+        query_timing::identity_center_lock_timing(
+            account_id,
+            lock_start.elapsed().as_millis(),
+            true,
+        );
         debug!(
             "🔑 CREDS: Released Identity Center lock for account: {}",
             account_id
@@ -193,15 +238,32 @@ impl CredentialCoordinator {
             "Requesting credentials for account {} with role '{}'",
             account_id, self.default_role_name
         );
+
+        // Time the Identity Center API call
+        let api_start = Instant::now();
         let role_credentials = identity_center_clone
             .get_role_credentials(account_id, &self.default_role_name)
             .await
             .with_context(|| {
+                query_timing::identity_center_api_timing(
+                    account_id,
+                    &self.default_role_name,
+                    api_start.elapsed().as_millis(),
+                    false,
+                );
                 format!(
                     "Failed to get role credentials for account {} with role {}",
                     account_id, self.default_role_name
                 )
             })?;
+
+        // Log successful API call
+        query_timing::identity_center_api_timing(
+            account_id,
+            &self.default_role_name,
+            api_start.elapsed().as_millis(),
+            true,
+        );
 
         debug!(
             "🔑 CREDS: Identity Center returned credentials for account: {}",
@@ -225,6 +287,11 @@ impl CredentialCoordinator {
         account_id: &str,
         region: &str,
     ) -> Result<aws_config::SdkConfig> {
+        let total_start = Instant::now();
+
+        // Track concurrency
+        query_timing::config_creation_start(account_id, region);
+
         debug!(
             "🔑 CREDS: create_aws_config_for_account ENTRY for account: {} in region: {}",
             account_id, region
@@ -234,16 +301,48 @@ impl CredentialCoordinator {
             "🔑 CREDS: Calling get_credentials_for_account for {}",
             account_id
         );
-        let creds = self.get_credentials_for_account(account_id).await?;
+
+        // Time credential fetch
+        let cred_start = Instant::now();
+        let creds = match self.get_credentials_for_account(account_id).await {
+            Ok(creds) => creds,
+            Err(e) => {
+                let cred_ms = cred_start.elapsed().as_millis();
+                query_timing::config_creation_end(
+                    account_id,
+                    region,
+                    cred_ms,
+                    0,
+                    total_start.elapsed().as_millis(),
+                    false,
+                );
+                return Err(e);
+            }
+        };
+        let cred_fetch_ms = cred_start.elapsed().as_millis();
+
         debug!("🔑 CREDS: Got credentials for account {}", account_id);
 
         let aws_credentials = creds.to_aws_credentials();
 
+        // Time config load
+        let config_load_start = Instant::now();
         let config = aws_config::defaults(BehaviorVersion::latest())
             .region(Region::new(region.to_string()))
             .credentials_provider(aws_credentials)
             .load()
             .await;
+        let config_load_ms = config_load_start.elapsed().as_millis();
+
+        // Log timing
+        query_timing::config_creation_end(
+            account_id,
+            region,
+            cred_fetch_ms,
+            config_load_ms,
+            total_start.elapsed().as_millis(),
+            true,
+        );
 
         debug!(
             "Successfully created AWS config for account: {} in region: {}",

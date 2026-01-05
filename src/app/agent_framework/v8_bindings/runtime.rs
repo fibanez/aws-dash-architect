@@ -104,11 +104,25 @@ impl V8Runtime {
     pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
         let start_time = Instant::now();
 
+        // Create a truncated code preview for logging
+        let code_preview = if code.len() > 100 {
+            format!("{}...", &code[..100].replace('\n', " "))
+        } else {
+            code.replace('\n', " ")
+        };
+        stood::perf_checkpoint!("awsdash.v8.execute.start", &format!("code_len={}, preview={}", code.len(), code_preview));
+        let _v8_guard = stood::perf_guard!("awsdash.v8.execute");
+
         // Create isolate with memory limits
+        stood::perf_checkpoint!("awsdash.v8.isolate.create.start");
         let mut params = v8::CreateParams::default();
         params = params.heap_limits(0, self.config.max_heap_size_bytes);
 
-        let mut isolate = v8::Isolate::new(params);
+        let isolate_result = stood::perf_timed!("awsdash.v8.isolate_new", {
+            v8::Isolate::new(params)
+        });
+        let mut isolate = isolate_result;
+        stood::perf_checkpoint!("awsdash.v8.isolate.create.end");
 
         // Get thread-safe handle for timeout enforcement
         let isolate_handle = isolate.thread_safe_handle();
@@ -122,29 +136,37 @@ impl V8Runtime {
         });
 
         // Execute JavaScript in proper scope hierarchy
+        stood::perf_checkpoint!("awsdash.v8.scope_setup.start");
         let result = {
             let scope = pin!(v8::HandleScope::new(&mut isolate));
             let scope = &mut scope.init();
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
+            stood::perf_checkpoint!("awsdash.v8.scope_setup.end");
 
             // Create console buffers and register console functions
-            let console_buffers = if self.config.capture_console {
-                let buffers = ConsoleBuffers::new();
-                register_console(scope, buffers.clone());
-                Some(buffers)
-            } else {
-                None
-            };
+            let console_buffers = stood::perf_timed!("awsdash.v8.console_setup", {
+                if self.config.capture_console {
+                    let buffers = ConsoleBuffers::new();
+                    register_console(scope, buffers.clone());
+                    Some(buffers)
+                } else {
+                    None
+                }
+            });
 
             // Register function bindings (listAccounts, etc.)
-            if let Err(e) = register_bindings(scope) {
+            stood::perf_checkpoint!("awsdash.v8.bindings.start");
+            if let Err(e) = stood::perf_timed!("awsdash.v8.register_bindings", {
+                register_bindings(scope)
+            }) {
                 let (stdout, mut stderr) = if let Some(ref buffers) = console_buffers {
                     (buffers.get_stdout(), buffers.get_stderr())
                 } else {
                     (String::new(), String::new())
                 };
                 stderr.push_str(&format!("Failed to register bindings: {}", e));
+                stood::perf_checkpoint!("awsdash.v8.bindings.error", &e.to_string());
                 return Ok(ExecutionResult {
                     success: false,
                     result: None,
@@ -153,15 +175,19 @@ impl V8Runtime {
                     execution_time_ms: start_time.elapsed().as_millis() as u64,
                 });
             }
+            stood::perf_checkpoint!("awsdash.v8.bindings.end");
 
             // Compile JavaScript
+            stood::perf_checkpoint!("awsdash.v8.compile.start");
             let code_str = v8::String::new(scope, code)
                 .ok_or_else(|| anyhow!("Failed to create V8 string from code"))?;
 
             let scope = pin!(v8::TryCatch::new(scope));
             let scope = &mut scope.init();
 
-            let script = match v8::Script::compile(scope, code_str, None) {
+            let script = match stood::perf_timed!("awsdash.v8.script_compile", {
+                v8::Script::compile(scope, code_str, None)
+            }) {
                 Some(script) => script,
                 None => {
                     // Extract console output before returning
@@ -198,9 +224,13 @@ impl V8Runtime {
                     });
                 }
             };
+            stood::perf_checkpoint!("awsdash.v8.compile.end");
 
             // Execute JavaScript
-            let result = match script.run(scope) {
+            stood::perf_checkpoint!("awsdash.v8.run.start");
+            let result = match stood::perf_timed!("awsdash.v8.script_run", {
+                script.run(scope)
+            }) {
                 Some(result) => result,
                 None => {
                     // Extract console output before returning
@@ -237,18 +267,23 @@ impl V8Runtime {
                     });
                 }
             };
+            stood::perf_checkpoint!("awsdash.v8.run.end");
 
             // Extract result as JSON using v8::json::stringify
             // This properly serializes JavaScript objects/arrays as JSON
             // instead of using JavaScript's toString() which gives "[object Object]"
-            let result_json = if let Some(json_value) = v8::json::stringify(scope, result) {
-                json_value.to_rust_string_lossy(scope)
-            } else {
-                // If JSON serialization fails (e.g., circular references, BigInt),
-                // fall back to toString()
-                let result_str = result.to_string(scope).unwrap();
-                result_str.to_rust_string_lossy(scope)
-            };
+            stood::perf_checkpoint!("awsdash.v8.stringify.start");
+            let result_json = stood::perf_timed!("awsdash.v8.json_stringify", {
+                if let Some(json_value) = v8::json::stringify(scope, result) {
+                    json_value.to_rust_string_lossy(scope)
+                } else {
+                    // If JSON serialization fails (e.g., circular references, BigInt),
+                    // fall back to toString()
+                    let result_str = result.to_string(scope).unwrap();
+                    result_str.to_rust_string_lossy(scope)
+                }
+            });
+            stood::perf_checkpoint!("awsdash.v8.stringify.end");
 
             Ok::<(String, Option<ConsoleBuffers>), anyhow::Error>((result_json, console_buffers))
         }?;
@@ -263,6 +298,7 @@ impl V8Runtime {
             (String::new(), String::new())
         };
 
+        stood::perf_checkpoint!("awsdash.v8.execute.end", &format!("execution_time_ms={}", execution_time_ms));
         Ok(ExecutionResult {
             success: true,
             result: Some(result),

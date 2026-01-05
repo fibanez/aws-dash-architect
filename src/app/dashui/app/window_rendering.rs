@@ -46,15 +46,16 @@ impl DashApp {
 
             if let Some(aws_identity) = aws_identity {
                 // Check if this is a new successful login
+                // Use try_lock() to avoid blocking UI when login thread holds the mutex
                 let was_logged_in_before =
                     if let Some(existing_identity) = &self.aws_identity_center {
-                        if let Ok(identity) = existing_identity.lock() {
+                        if let Ok(identity) = existing_identity.try_lock() {
                             matches!(
                                 identity.login_state,
                                 crate::app::aws_identity::LoginState::LoggedIn
                             )
                         } else {
-                            false
+                            false // Lock held - assume not logged in yet
                         }
                     } else {
                         false
@@ -73,10 +74,11 @@ impl DashApp {
                 }
 
                 // Check if credentials are actually available (prevents race condition)
-                let has_credentials = if let Ok(identity) = aws_identity.lock() {
+                // Use try_lock() to avoid blocking UI when login thread holds the mutex
+                let has_credentials = if let Ok(identity) = aws_identity.try_lock() {
                     identity.default_role_credentials.is_some()
                 } else {
-                    false
+                    false // Lock held by login thread - assume not ready yet
                 };
 
                 if has_credentials {
@@ -104,13 +106,14 @@ impl DashApp {
                 }
 
                 // Check if we just completed login
-                let is_logged_in_now = if let Ok(identity) = aws_identity.lock() {
+                // Use try_lock() to avoid blocking UI when login thread holds the mutex
+                let is_logged_in_now = if let Ok(identity) = aws_identity.try_lock() {
                     matches!(
                         identity.login_state,
                         crate::app::aws_identity::LoginState::LoggedIn
                     )
                 } else {
-                    false
+                    false // Lock held by login thread - assume not logged in yet
                 };
 
                 // Log when transitioning from not logged in to logged in
@@ -137,6 +140,9 @@ impl DashApp {
                 set_global_explorer_state(None);
                 set_global_bookmark_manager(None);
                 tracing::info!("ResourceExplorer cleared on logout");
+
+                // Reset log groups initialization check for next login
+                self.reset_log_groups_init_check();
             }
 
             // Check if the accounts window is open and set focus
@@ -200,8 +206,24 @@ impl DashApp {
             self.resource_explorer
                 .set_aws_identity_center(self.aws_identity_center.clone());
 
-            // Show the resource explorer window
-            self.resource_explorer.show(ctx);
+            // Show the resource explorer window and handle the action
+            let window_action = self.resource_explorer.show(ctx);
+
+            // Handle window action (Minimize vs Terminate)
+            match window_action {
+                crate::app::resource_explorer::WindowAction::None => {
+                    // Window is still open, nothing to do
+                }
+                crate::app::resource_explorer::WindowAction::Minimize => {
+                    // Window was minimized - state is preserved, window is hidden
+                    tracing::info!("Explorer window minimized (state preserved)");
+                }
+                crate::app::resource_explorer::WindowAction::Terminate => {
+                    // Window was terminated - clear state (cache is preserved)
+                    tracing::info!("Explorer window terminated (clearing state)");
+                    self.resource_explorer.reset_state();
+                }
+            }
 
             // Handle any pending actions from the resource explorer
             let actions = self.resource_explorer.take_pending_actions();
@@ -231,6 +253,132 @@ impl DashApp {
                             // Add to the list of open windows
                             self.cloudwatch_logs_windows.push(new_window);
                         }
+                    }
+                    crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsole {
+                        resource_type,
+                        resource_id,
+                        resource_name,
+                        resource_arn,
+                        account_id,
+                        region,
+                    } => {
+                        let aws_identity = self.aws_identity_center.clone();
+                        std::thread::spawn(move || {
+                            let Some(aws_identity) = aws_identity else {
+                                tracing::warn!("AWS Console requested but no identity center available");
+                                return;
+                            };
+
+                            let mut identity_center = match aws_identity.lock() {
+                                Ok(identity) => identity,
+                                Err(_) => {
+                                    tracing::warn!("Failed to lock AWS identity center for console launch");
+                                    return;
+                                }
+                            };
+
+                            let destination =
+                                crate::app::resource_explorer::console_links::build_console_destination(
+                                    &resource_type,
+                                    &resource_id,
+                                    &region,
+                                    resource_arn.as_deref(),
+                                );
+                            let role_name = identity_center.default_role_name.clone();
+                            let console_url = match identity_center.generate_console_signin_url(
+                                &account_id,
+                                &role_name,
+                                &destination,
+                            ) {
+                                Ok(url) => url,
+                                Err(err) => {
+                                    tracing::warn!("Failed to generate AWS console URL: {}", err);
+                                    return;
+                                }
+                            };
+
+                            let title = format!("AWS Console: {}", resource_name);
+                            if let Err(err) =
+                                crate::app::webview::spawn_webview_process(console_url, title)
+                            {
+                                tracing::warn!("Failed to spawn AWS console webview: {}", err);
+                            }
+                        });
+                    }
+                    crate::app::resource_explorer::ResourceExplorerAction::RequestAwsConsoleRoles {
+                        request_id,
+                        account_id,
+                    } => {
+                        let aws_identity = self.aws_identity_center.clone();
+                        let updates = self.resource_explorer.console_role_menu_updates();
+                        std::thread::spawn(move || {
+                            let result = match aws_identity {
+                                Some(aws_identity) => match aws_identity.lock() {
+                                    Ok(identity_center) => {
+                                        identity_center.fetch_console_menu_roles(&account_id)
+                                    }
+                                    Err(_) => Err("Failed to lock AWS Identity Center".to_string()),
+                                },
+                                None => Err("AWS Identity Center not available".to_string()),
+                            };
+
+                            if let Ok(mut queue) = updates.lock() {
+                                queue.push(crate::app::resource_explorer::ConsoleRoleMenuUpdate {
+                                    request_id,
+                                    account_id,
+                                    result,
+                                });
+                            }
+                        });
+                    }
+                    crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsoleWithRole {
+                        resource_type,
+                        resource_id,
+                        resource_name,
+                        resource_arn,
+                        account_id,
+                        region,
+                        role_name,
+                    } => {
+                        let aws_identity = self.aws_identity_center.clone();
+                        std::thread::spawn(move || {
+                            let Some(aws_identity) = aws_identity else {
+                                tracing::warn!("AWS Console requested but no identity center available");
+                                return;
+                            };
+
+                            let identity_center = match aws_identity.lock() {
+                                Ok(identity) => identity,
+                                Err(_) => {
+                                    tracing::warn!("Failed to lock AWS identity center for console launch");
+                                    return;
+                                }
+                            };
+
+                            let destination =
+                                crate::app::resource_explorer::console_links::build_console_destination(
+                                    &resource_type,
+                                    &resource_id,
+                                    &region,
+                                    resource_arn.as_deref(),
+                                );
+                            let console_url = match identity_center
+                                .generate_console_signin_url_ephemeral(&account_id, &role_name, &destination)
+                            {
+                                Ok(url) => url,
+                                Err(err) => {
+                                    tracing::warn!("Failed to generate AWS console URL: {}", err);
+                                    return;
+                                }
+                            };
+
+                            let title = format!("AWS Console: {}", resource_name);
+                            if let Err(err) =
+                                crate::app::webview::spawn_webview_process(console_url, title)
+                            {
+                                tracing::warn!("Failed to spawn AWS console webview: {}", err);
+                            }
+                        });
                     }
                     crate::app::resource_explorer::ResourceExplorerAction::OpenCloudTrailEvents {
                         resource_type,

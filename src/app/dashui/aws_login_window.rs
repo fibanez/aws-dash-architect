@@ -643,9 +643,13 @@ impl AwsLoginWindow {
         bring_to_front: bool,
     ) {
         // Clone the AWS Identity Center state for UI display
-        let accounts = {
-            let identity_center = aws_identity.lock().unwrap();
-            identity_center.accounts.clone()
+        // Use try_lock() to avoid blocking UI when login thread holds the mutex
+        let accounts = match aws_identity.try_lock() {
+            Ok(identity_center) => identity_center.accounts.clone(),
+            Err(_) => {
+                // Lock held by background thread - skip rendering this frame
+                return;
+            }
         };
 
         let mut window_open = self.accounts_window_open;

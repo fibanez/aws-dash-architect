@@ -177,6 +177,10 @@ pub struct DashApp {
     #[serde(skip)]
     /// Current compliance validation status
     compliance_status: Option<crate::app::dashui::menu::ComplianceStatus>,
+    #[serde(skip)]
+    /// Track if we've checked log group initialization after login
+    /// This ensures we only attempt log group init once per login session
+    log_groups_init_checked: bool,
 }
 
 impl Default for DashApp {
@@ -224,6 +228,7 @@ impl Default for DashApp {
             pending_widget_actions: Vec::new(),
             fonts_configured: false,
             compliance_status: None,
+            log_groups_init_checked: false,
         }
     }
 }
@@ -236,6 +241,9 @@ impl eframe::App for DashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Frame timing instrumentation
         let frame_start = std::time::Instant::now();
+
+        // ========== PHASE 1: Setup ==========
+        let phase1_start = std::time::Instant::now();
 
         // Configure fonts with enhanced emoji support
         self.configure_fonts(ctx);
@@ -268,6 +276,11 @@ impl eframe::App for DashApp {
             }
         }
 
+        let phase1_duration = phase1_start.elapsed();
+
+        // ========== PHASE 2: Input & Widget Processing ==========
+        let phase2_start = std::time::Instant::now();
+
         // Handle UI changes and input
         self.check_ui_dimension_changes(ctx);
 
@@ -281,6 +294,11 @@ impl eframe::App for DashApp {
 
         // Process pending scroll requests
         self.process_pending_scroll_requests(ctx);
+
+        let phase2_duration = phase2_start.elapsed();
+
+        // ========== PHASE 3: Polling & Background Tasks ==========
+        let phase3_start = std::time::Instant::now();
 
         // Handle downloads
         self.handle_downloads();
@@ -301,17 +319,30 @@ impl eframe::App for DashApp {
         // Poll CloudFormation stack status and events for active deployments
         self.poll_deployment_status();
 
+        // Check if we need to initialize log groups after login
+        self.check_log_groups_init_after_login();
+
         // Poll agent responses BEFORE rendering windows
         // This ensures agents are polled every frame regardless of window visibility
         if let Some(agent_window) = &mut self.agent_manager_window {
             agent_window.poll_agent_responses_global();
         }
 
+        let phase3_duration = phase3_start.elapsed();
+
+        // ========== PHASE 4: Core UI Rendering ==========
+        let phase4_start = std::time::Instant::now();
+
         // Render UI components
         self.render_top_menu_bar(ctx);
         self.render_navigation_status_bar(ctx);
         self.render_central_panel(ctx);
         self.render_debug_panel(ctx);
+
+        let phase4_duration = phase4_start.elapsed();
+
+        // ========== PHASE 5: Window Handling ==========
+        let phase5_start = std::time::Instant::now();
 
         // Handle different windows
         // Resource/template editor windows removed
@@ -330,14 +361,25 @@ impl eframe::App for DashApp {
         self.handle_parameter_dialog(ctx);
         self.handle_deployment_progress_window(ctx);
         self.handle_notification_details_window(ctx);
+
+        let pre_explorer = std::time::Instant::now();
         self.handle_resource_explorer_window(ctx);
+        let explorer_duration = pre_explorer.elapsed();
+
         self.handle_window_selector(ctx);
+
+        let phase5_duration = phase5_start.elapsed();
+
+        // ========== PHASE 6: Overlay & Finalization ==========
+        let phase6_start = std::time::Instant::now();
 
         // Render hint overlay on top of everything
         self.render_hint_overlay(ctx);
 
         // Handle continuous repainting
         self.handle_continuous_repainting(ctx);
+
+        let phase6_duration = phase6_start.elapsed();
 
         // Frame timing instrumentation
         let frame_duration = frame_start.elapsed();
@@ -346,6 +388,13 @@ impl eframe::App for DashApp {
                 "⏱️ SLOW FRAME: {:?} (target: 16ms for 60fps)",
                 frame_duration
             );
+            // Log breakdown for slow frames
+            if frame_duration.as_millis() > 30 {
+                log::warn!(
+                    "  ⏱️ BREAKDOWN: setup={:?} input={:?} polling={:?} core_ui={:?} windows={:?} (explorer={:?}) overlay={:?}",
+                    phase1_duration, phase2_duration, phase3_duration, phase4_duration, phase5_duration, explorer_duration, phase6_duration
+                );
+            }
         }
     }
 }

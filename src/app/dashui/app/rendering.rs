@@ -51,6 +51,11 @@ impl DashApp {
                             "Agent logging setting changed to: {}",
                             self.agent_logging_enabled
                         );
+
+                        // Pre-create log groups when agent logging is enabled
+                        if self.agent_logging_enabled {
+                            self.initialize_agent_telemetry_log_groups();
+                        }
                     }
                     menu::MenuAction::ShowComplianceDetails => {
                         // Open the Guard Violations window
@@ -366,16 +371,126 @@ impl DashApp {
     }
 
     /// Check if user is logged in to AWS
+    /// Uses try_lock() to avoid blocking UI when login thread holds the mutex
     pub(super) fn is_aws_logged_in(&self) -> bool {
         if let Some(aws_identity) = &self.aws_identity_center {
-            if let Ok(identity) = aws_identity.lock() {
+            if let Ok(identity) = aws_identity.try_lock() {
                 return matches!(
                     identity.login_state,
                     crate::app::aws_identity::LoginState::LoggedIn
                 );
             }
+            // Lock held by login thread - return false (not logged in yet)
         }
         false
+    }
+
+    /// Initialize CloudWatch log groups for agent telemetry
+    ///
+    /// Pre-creates the log groups at startup/toggle to avoid ~1 second delay
+    /// per agent during creation. Uses the IAM role name for naming.
+    pub(super) fn initialize_agent_telemetry_log_groups(&self) {
+        use crate::app::agent_framework::telemetry_init;
+
+        // Skip if already initialized
+        if telemetry_init::are_log_groups_initialized() {
+            tracing::debug!("Agent telemetry log groups already initialized");
+            return;
+        }
+
+        // Need AWS credentials to create log groups
+        let Some(aws_identity) = &self.aws_identity_center else {
+            tracing::warn!("Cannot initialize log groups: AWS identity not available");
+            return;
+        };
+
+        let Ok(mut identity) = aws_identity.lock() else {
+            tracing::warn!("Cannot initialize log groups: Failed to lock AWS identity");
+            return;
+        };
+
+        // Get Bedrock credentials (includes region from Home Dash Account)
+        let bedrock_creds = match identity.get_bedrock_credentials() {
+            Ok(creds) => creds,
+            Err(e) => {
+                tracing::warn!("Cannot initialize log groups: Failed to get Bedrock credentials: {}", e);
+                return;
+            }
+        };
+
+        let role_name = identity.get_default_role_name();
+        let region = bedrock_creds.region.clone();
+
+        tracing::info!(
+            "Pre-creating agent telemetry log groups for role: {} in region: {}",
+            role_name,
+            region
+        );
+
+        // Spawn a background task to create log groups
+        // We don't block the UI thread for this
+        let role_name_clone = role_name.clone();
+        let region_clone = region.clone();
+        let access_key = bedrock_creds.credentials.access_key_id.clone();
+        let secret_key = bedrock_creds.credentials.secret_access_key.clone();
+        let session_token = bedrock_creds.credentials.session_token.clone();
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async move {
+                match telemetry_init::initialize_log_groups(
+                    &role_name_clone,
+                    &region_clone,
+                    &access_key,
+                    &secret_key,
+                    session_token.as_deref(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        tracing::info!("Agent telemetry log groups initialized successfully");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize agent telemetry log groups: {}", e);
+                    }
+                }
+            });
+        });
+    }
+
+    /// Check and initialize log groups after login if agent logging is enabled
+    ///
+    /// This should be called once per frame in the update loop.
+    /// It detects when the user has just logged in and triggers log group creation
+    /// if agent logging is enabled.
+    pub(super) fn check_log_groups_init_after_login(&mut self) {
+        // Skip if we've already checked this login session
+        if self.log_groups_init_checked {
+            return;
+        }
+
+        // Only proceed if logged in
+        if !self.is_aws_logged_in() {
+            return;
+        }
+
+        // Mark as checked for this session
+        self.log_groups_init_checked = true;
+
+        // Only initialize if agent logging is enabled
+        if self.agent_logging_enabled {
+            tracing::info!("Login detected with agent logging enabled - initializing log groups");
+            self.initialize_agent_telemetry_log_groups();
+        } else {
+            tracing::debug!("Login detected but agent logging is disabled - skipping log group init");
+        }
+    }
+
+    /// Reset log groups check flag (call on logout)
+    pub(super) fn reset_log_groups_init_check(&mut self) {
+        self.log_groups_init_checked = false;
+        crate::app::agent_framework::telemetry_init::reset_initialization();
+        tracing::debug!("Log groups init check reset");
     }
 
     /// Show a notification that the user must login to AWS first
