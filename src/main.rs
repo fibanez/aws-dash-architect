@@ -82,7 +82,59 @@ fn init_perf_timing_path() {
     }
 }
 
+fn setup_panic_handler() {
+    // Install a panic handler that writes to a crash log file
+    // This catches panics even if normal logging hasn't been initialized yet
+    std::panic::set_hook(Box::new(|panic_info| {
+        let crash_msg = format!(
+            "AWS Dash crashed!\n\
+             Panic occurred at: {}\n\
+             Details: {}\n\
+             Backtrace:\n{:?}\n",
+            panic_info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "unknown location".to_string()),
+            panic_info
+                .payload()
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic_info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("unknown panic"),
+            std::backtrace::Backtrace::force_capture()
+        );
+
+        // Try to write to crash log file
+        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "", "awsdash") {
+            let log_dir = proj_dirs.data_dir().join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let crash_log_path = log_dir.join("crash.log");
+
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&crash_log_path)
+            {
+                use std::io::Write;
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let _ = writeln!(file, "\n=== CRASH at {} ===\n{}", timestamp, crash_msg);
+            }
+
+            // Also write to stderr (visible in console builds)
+            eprintln!("\n{}", crash_msg);
+            eprintln!("Crash log written to: {:?}", crash_log_path);
+        } else {
+            // Fallback: at least print to stderr
+            eprintln!("\n{}", crash_msg);
+        }
+    }));
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up panic handler BEFORE anything else to catch early crashes
+    // This writes panic info to a file even if logging isn't initialized yet
+    setup_panic_handler();
+
     let args: Vec<String> = std::env::args().collect();
     if let Some((url, title)) = awsdash::app::webview::parse_webview_args(&args) {
         awsdash::app::webview::run_webview(url, title)?;

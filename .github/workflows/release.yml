@@ -115,10 +115,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build
+      - name: Build release (no console)
         run: cargo build --release
 
-      - name: Package
+      - name: Build debug version with console enabled
+        run: cargo build
+        continue-on-error: true
+
+      - name: Package release
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release
@@ -127,11 +131,55 @@ jobs:
           Copy-Item LICENSE-APACHE release/
           Compress-Archive -Path release/* -DestinationPath awsdash-windows-x86_64.zip
 
-      - name: Upload artifact
+      - name: Package console version (if exists)
+        shell: pwsh
+        run: |
+          if (Test-Path "target/debug/awsdash.exe") {
+            New-Item -ItemType Directory -Force -Path release-console
+            Copy-Item target/debug/awsdash.exe release-console/awsdash-console.exe
+            Copy-Item README.md release-console/
+            Copy-Item LICENSE-APACHE release-console/
+
+            # Create diagnostic README
+            @"
+# AWS Dash - Console Debug Version
+
+This is a DEBUG version with console output enabled for troubleshooting.
+
+## Usage
+1. Open Command Prompt or PowerShell
+2. Navigate to this directory
+3. Run: .\awsdash-console.exe
+4. If the app crashes, you'll see error messages in the console window
+
+## Log Location
+If the app starts successfully, logs are written to:
+%LOCALAPPDATA%\awsdash\logs\awsdash.log
+
+## Troubleshooting
+- The console window will stay open if there's a crash
+- Look for panic messages or error output in the console
+- This version is slower than the release build (has debug symbols)
+
+"@ | Out-File -FilePath release-console/README-DEBUG.txt -Encoding utf8
+
+            Compress-Archive -Path release-console/* -DestinationPath awsdash-windows-x86_64-console-debug.zip
+          } else {
+            Write-Host "Debug build not found at target/debug/awsdash.exe"
+          }
+
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: awsdash-windows-x86_64
           path: awsdash-windows-x86_64.zip
+
+      - name: Upload console debug artifact
+        uses: actions/upload-artifact@v4
+        if: hashFiles('awsdash-windows-x86_64-console-debug.zip') != ''
+        with:
+          name: awsdash-windows-x86_64-console-debug
+          path: awsdash-windows-x86_64-console-debug.zip
 
   build-macos-arm:
     runs-on: macos-14  # ARM runner (M1/M2)
@@ -216,4 +264,5 @@ jobs:
             artifacts/awsdash-linux-x86_64/awsdash-linux-x86_64.tar.gz
             artifacts/awsdash-linux-appimage/AWSDash-x86_64.AppImage
             artifacts/awsdash-windows-x86_64/awsdash-windows-x86_64.zip
+            artifacts/awsdash-windows-x86_64-console-debug/awsdash-windows-x86_64-console-debug.zip
             artifacts/awsdash-macos-arm64/awsdash-macos-arm64.zip
