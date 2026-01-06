@@ -176,10 +176,12 @@ jobs:
 
       - name: Upload console debug artifact
         uses: actions/upload-artifact@v4
-        if: hashFiles('awsdash-windows-x86_64-console-debug.zip') != ''
+        if: success()
+        continue-on-error: true
         with:
           name: awsdash-windows-x86_64-console-debug
           path: awsdash-windows-x86_64-console-debug.zip
+          if-no-files-found: warn
 
   build-macos-arm:
     runs-on: macos-14  # ARM runner (M1/M2)
