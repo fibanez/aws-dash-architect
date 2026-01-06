@@ -118,9 +118,38 @@ jobs:
       - name: Build release (no console)
         run: cargo build --release
 
-      - name: Build debug version with console enabled
-        run: cargo build
-        continue-on-error: true
+      - name: Save release build (no console)
+        shell: pwsh
+        run: |
+          Copy-Item target/release/awsdash.exe target/awsdash-release.exe
+          Write-Host "Saved no-console release build"
+
+      - name: Build console debug version
+        shell: pwsh
+        run: |
+          # Temporarily comment out windows_subsystem to enable console
+          $mainRs = Get-Content src/main.rs -Raw
+          $modifiedRs = $mainRs -replace '#!\[cfg_attr\(not\(debug_assertions\), windows_subsystem = "windows"\)\]', '// CONSOLE DEBUG BUILD: windows_subsystem disabled'
+          $modifiedRs | Set-Content src/main.rs -NoNewline
+
+          # Build with release optimizations but console enabled
+          cargo build --release --bin awsdash
+
+          # Save the console build
+          if (Test-Path "target/release/awsdash.exe") {
+            Copy-Item target/release/awsdash.exe target/awsdash-console.exe
+            Write-Host "Console debug build created successfully"
+          } else {
+            Write-Host "ERROR: Console debug build failed - awsdash.exe not found"
+            exit 1
+          }
+
+          # Restore original main.rs
+          $mainRs | Set-Content src/main.rs -NoNewline
+
+          # Restore the no-console release build
+          Copy-Item target/awsdash-release.exe target/release/awsdash.exe
+          Write-Host "Restored no-console release build"
 
       - name: Package release
         shell: pwsh
@@ -131,19 +160,19 @@ jobs:
           Copy-Item LICENSE-APACHE release/
           Compress-Archive -Path release/* -DestinationPath awsdash-windows-x86_64.zip
 
-      - name: Package console version (if exists)
+      - name: Package console version
         shell: pwsh
         run: |
-          if (Test-Path "target/debug/awsdash.exe") {
+          if (Test-Path "target/awsdash-console.exe") {
             New-Item -ItemType Directory -Force -Path release-console
-            Copy-Item target/debug/awsdash.exe release-console/awsdash-console.exe
+            Copy-Item target/awsdash-console.exe release-console/awsdash-console.exe
             Copy-Item README.md release-console/
             Copy-Item LICENSE-APACHE release-console/
 
             $readme = @(
-              "# AWS Dash - Console Debug Version",
+              "# AWS Dash - Console Version",
               "",
-              "This is a DEBUG version with console output enabled for troubleshooting.",
+              "This is a console-enabled version for troubleshooting startup issues.",
               "",
               "## Usage",
               "1. Open Command Prompt or PowerShell",
@@ -151,21 +180,23 @@ jobs:
               "3. Run: .\awsdash-console.exe",
               "4. If the app crashes, you will see error messages in the console window",
               "",
-              "## Log Location",
-              "If the app starts successfully, logs are written to:",
-              "%LOCALAPPDATA%\awsdash\logs\awsdash.log",
+              "## Log Locations",
+              "- Application log: %LOCALAPPDATA%\awsdash\logs\awsdash.log",
+              "- Crash log: %LOCALAPPDATA%\awsdash\logs\crash.log",
               "",
-              "## Troubleshooting",
-              "- The console window will stay open if there is a crash",
-              "- Look for panic messages or error output in the console",
-              "- This version is slower than the release build (has debug symbols)",
+              "## What This Version Does",
+              "- Shows panic/crash messages in the console window",
+              "- Writes detailed crash information to crash.log",
+              "- Same performance as regular release build",
+              "- Only difference: console window is visible for error output",
               ""
             )
             $readme | Out-File -FilePath release-console/README-DEBUG.txt -Encoding utf8
 
             Compress-Archive -Path release-console/* -DestinationPath awsdash-windows-x86_64-console-debug.zip
           } else {
-            Write-Host "Debug build not found at target/debug/awsdash.exe"
+            Write-Host "ERROR: Console build not found at target/awsdash-console.exe"
+            exit 1
           }
 
       - name: Upload release artifact
