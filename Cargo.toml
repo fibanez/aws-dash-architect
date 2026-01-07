@@ -30,11 +30,12 @@ egui = "=0.32.3"  # Pinned to 0.32.3 for compatibility with egui_code_editor
 eframe = { version = "=0.32.3", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers
     "default_fonts", # Embed the default egui fonts
-    "glow",          # Use the glow rendering backend
+    "wgpu",          # Use the wgpu rendering backend (DirectX 12/Vulkan/Metal)
     "persistence",   # Enable restoring app state
     "wayland",       # To support Linux
     "x11",           # Support older Linux distributions
 ] }
+wgpu = { version = "25", features = ["dx12", "metal", "vulkan", "gles"] }  # Enable all wgpu backends
 catppuccin-egui = { version = "5.6.0", default-features = false, features = ["egui32"] }
 egui_extras = { version = "=0.32.3", features = ["image", "svg"] }
 egui_code_editor = "0.2.17"
