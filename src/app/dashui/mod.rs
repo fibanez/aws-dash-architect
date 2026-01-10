@@ -117,9 +117,9 @@ pub use navigable_widgets::{
 };
 pub use navigation_state::NavigationState;
 pub use verification_window::VerificationWindow;
-pub use window_maximize::{WindowMaximizeState, maximize_button, MENU_BAR_HEIGHT};
 pub use window_focus::{
     FocusableWindow, IdentityShowParams, PositionShowParams, ProjectShowParams, SimpleShowParams,
     ThemeShowParams, WindowFocusManager,
 };
+pub use window_maximize::{maximize_button, WindowMaximizeState, MENU_BAR_HEIGHT};
 pub use window_selector::{WindowInfo, WindowSelector, WindowType};

@@ -187,7 +187,7 @@ fn query_cloudwatch_log_events_callback(
 }
 
 /// Execute CloudWatch Logs query using tokio runtime
-fn execute_query(args: QueryCloudWatchLogEventsArgs) -> Result<CloudWatchLogsQueryResult> {
+pub fn execute_query(args: QueryCloudWatchLogEventsArgs) -> Result<CloudWatchLogsQueryResult> {
     // Use block_in_place to avoid nested runtime error
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
@@ -196,7 +196,7 @@ fn execute_query(args: QueryCloudWatchLogEventsArgs) -> Result<CloudWatchLogsQue
 }
 
 /// Internal async implementation of CloudWatch Logs query
-async fn query_cloudwatch_logs_internal(
+pub async fn query_cloudwatch_logs_internal(
     args: QueryCloudWatchLogEventsArgs,
 ) -> Result<CloudWatchLogsQueryResult> {
     info!(
@@ -205,7 +205,7 @@ async fn query_cloudwatch_logs_internal(
     );
 
     // Get global AWS client for credential coordinator
-    let aws_client = crate::app::agent_framework::tools_registry::get_global_aws_client()
+    let aws_client = crate::app::agent_framework::utils::registry::get_global_aws_client()
         .ok_or_else(|| anyhow!("AWS client not initialized"))?;
 
     let credential_coordinator = aws_client.get_credential_coordinator();

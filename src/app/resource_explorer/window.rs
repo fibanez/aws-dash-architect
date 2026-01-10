@@ -1,11 +1,11 @@
+#[cfg(debug_assertions)]
+use super::verification_window::VerificationWindow;
 use super::{
     aws_client::*, bookmarks::*, dialogs::*, instances::pane_renderer::PaneAction,
     instances::pane_renderer::PaneRenderer, retry_tracker::retry_tracker,
     sdk_errors::ErrorCategory, state::*, status::global_status, tree::*, widgets::*,
 };
-#[cfg(debug_assertions)]
-use super::verification_window::VerificationWindow;
-use crate::app::agent_framework::tools_registry::set_global_aws_client;
+use crate::app::agent_framework::utils::registry::set_global_aws_client;
 use crate::app::aws_identity::AwsIdentityCenter;
 use egui::{Color32, Context, Ui, Window};
 use egui_dnd::dnd;
@@ -186,7 +186,11 @@ impl ResourceExplorerWindow {
             ErrorCategory::ServiceUnavailable { service, .. } => {
                 format!("Service Unavailable: {}", service)
             }
-            ErrorCategory::NonRetryable { code, message, is_permission_error } => {
+            ErrorCategory::NonRetryable {
+                code,
+                message,
+                is_permission_error,
+            } => {
                 if *is_permission_error {
                     format!("Permission Denied: {}", code)
                 } else if code == "Error" && !message.is_empty() {
@@ -206,7 +210,10 @@ impl ResourceExplorerWindow {
             ErrorCategory::Throttled { .. } => Color32::from_rgb(255, 200, 100),
             ErrorCategory::Timeout { .. } => Color32::from_rgb(255, 180, 80),
             ErrorCategory::ServiceUnavailable { .. } => Color32::from_rgb(255, 160, 60),
-            ErrorCategory::NonRetryable { is_permission_error, .. } => {
+            ErrorCategory::NonRetryable {
+                is_permission_error,
+                ..
+            } => {
                 if *is_permission_error {
                     Color32::from_rgb(255, 100, 100) // Red for permissions
                 } else {
@@ -230,8 +237,7 @@ impl ResourceExplorerWindow {
 
             // Clear filters
             state.tag_filter_group = TagFilterGroup::new();
-            state.property_filter_group =
-                crate::app::resource_explorer::PropertyFilterGroup::new();
+            state.property_filter_group = crate::app::resource_explorer::PropertyFilterGroup::new();
             state.search_filter.clear();
 
             // Reset loading state
@@ -1314,8 +1320,12 @@ impl ResourceExplorerWindow {
         #[cfg(debug_assertions)]
         {
             // Get credential coordinator from AWS client if available
-            let credential_coordinator = self.aws_client.as_ref().map(|c| c.get_credential_coordinator());
-            self.verification_window.show(ctx, &self.state, credential_coordinator.as_ref());
+            let credential_coordinator = self
+                .aws_client
+                .as_ref()
+                .map(|c| c.get_credential_coordinator());
+            self.verification_window
+                .show(ctx, &self.state, credential_coordinator.as_ref());
         }
 
         action
@@ -2270,21 +2280,22 @@ impl ResourceExplorerWindow {
                 ui.vertical(|ui| {
                     // Header with explanation
                     ui.label(
-                        egui::RichText::new("The following queries failed to complete")
-                            .strong()
+                        egui::RichText::new("The following queries failed to complete").strong(),
                     );
                     ui.add_space(4.0);
                     ui.label(
                         "Queries may fail due to various reasons including service unavailability \
-                         in a region, permissions issues, network errors, or rate limiting."
+                         in a region, permissions issues, network errors, or rate limiting.",
                     );
                     ui.add_space(8.0);
 
                     ui.separator();
 
                     // Group failed queries by service type for clarity
-                    let mut by_service: std::collections::HashMap<String, Vec<(String, String, ErrorCategory)>> =
-                        std::collections::HashMap::new();
+                    let mut by_service: std::collections::HashMap<
+                        String,
+                        Vec<(String, String, ErrorCategory)>,
+                    > = std::collections::HashMap::new();
 
                     for (query_key, error_category) in &self.last_failed_queries {
                         let parts: Vec<&str> = query_key.split(':').collect();
@@ -2299,10 +2310,11 @@ impl ResourceExplorerWindow {
                                 .unwrap_or(&resource_type)
                                 .replace("::", " ");
 
-                            by_service
-                                .entry(short_name)
-                                .or_default()
-                                .push((account, region, error_category.clone()));
+                            by_service.entry(short_name).or_default().push((
+                                account,
+                                region,
+                                error_category.clone(),
+                            ));
                         }
                     }
 
@@ -2317,21 +2329,33 @@ impl ResourceExplorerWindow {
                             for service in &services {
                                 if let Some(locations) = by_service.get(service) {
                                     egui::CollapsingHeader::new(
-                                        egui::RichText::new(format!("{} ({} regions)", service, locations.len()))
-                                            .color(Color32::from_rgb(255, 180, 100))
+                                        egui::RichText::new(format!(
+                                            "{} ({} regions)",
+                                            service,
+                                            locations.len()
+                                        ))
+                                        .color(Color32::from_rgb(255, 180, 100)),
                                     )
                                     .default_open(services.len() == 1) // Auto-expand if only one service
                                     .show(ui, |ui| {
                                         for (account, region, error_category) in locations {
-                                            let error_label = Self::error_category_label(error_category);
-                                            let error_color = Self::error_category_color(error_category);
+                                            let error_label =
+                                                Self::error_category_label(error_category);
+                                            let error_color =
+                                                Self::error_category_color(error_category);
 
                                             ui.horizontal(|ui| {
-                                                ui.label(format!("  {} (Account: {})", region, account));
+                                                ui.label(format!(
+                                                    "  {} (Account: {})",
+                                                    region, account
+                                                ));
                                                 ui.label(
-                                                    egui::RichText::new(format!("[{}]", error_label))
-                                                        .color(error_color)
-                                                        .small()
+                                                    egui::RichText::new(format!(
+                                                        "[{}]",
+                                                        error_label
+                                                    ))
+                                                    .color(error_color)
+                                                    .small(),
                                                 );
                                             });
                                         }
@@ -2373,7 +2397,7 @@ impl ResourceExplorerWindow {
                                 self.show_service_availability_dialog = false;
                                 self.last_failed_queries.clear(); // Clear to hide the indicator
                                 self.last_failed_queries_snapshotted = false; // Reset snapshot flag
-                                // Also clear state's failed queries to prevent re-snapshot
+                                                                              // Also clear state's failed queries to prevent re-snapshot
                                 if let Ok(mut state) = self.state.try_write() {
                                     state.phase1_failed_queries.clear();
                                 }
@@ -3370,11 +3394,8 @@ impl ResourceExplorerWindow {
                         .iter()
                         .map(|rt| {
                             // Extract service name from CloudFormation type (AWS::EC2::Instance -> EC2)
-                            let service_name = rt
-                                .split("::")
-                                .nth(1)
-                                .unwrap_or("Unknown")
-                                .to_string();
+                            let service_name =
+                                rt.split("::").nth(1).unwrap_or("Unknown").to_string();
 
                             ResourceTypeSelection {
                                 resource_type: rt.clone(),
@@ -3771,7 +3792,10 @@ impl ResourceExplorerWindow {
                             // This ensures Phase 2 only enriches visible resources (e.g., S3 buckets
                             // in selected regions only, not all buckets from the global query)
                             let cached_queries = state.cached_queries.clone();
-                            Self::refresh_resources_from_cache_filtered(&mut state, &cached_queries);
+                            Self::refresh_resources_from_cache_filtered(
+                                &mut state,
+                                &cached_queries,
+                            );
 
                             state.finish_loading_task(&cache_key);
 
@@ -4024,17 +4048,24 @@ impl ResourceExplorerWindow {
                                 let mut filtered_resources = Vec::new();
                                 for resource in &resources {
                                     // Check account match
-                                    let account_matches = scope.accounts.iter()
+                                    let account_matches = scope
+                                        .accounts
+                                        .iter()
                                         .any(|a| a.account_id == resource.account_id);
 
                                     // True global resources match any region; S3 buckets filtered by actual region
                                     let is_true_global = resource.region == "Global"
                                         && resource.resource_type != "AWS::S3::Bucket";
                                     let region_matches = is_true_global
-                                        || scope.regions.iter().any(|r| r.region_code == resource.region);
+                                        || scope
+                                            .regions
+                                            .iter()
+                                            .any(|r| r.region_code == resource.region);
 
                                     // Check resource type match
-                                    let type_matches = scope.resource_types.iter()
+                                    let type_matches = scope
+                                        .resource_types
+                                        .iter()
                                         .any(|rt| rt.resource_type == resource.resource_type);
 
                                     if account_matches && region_matches && type_matches {
@@ -4118,8 +4149,8 @@ impl ResourceExplorerWindow {
         // S3 buckets are hybrid-global: queried globally but have actual regions.
         // They are filtered by their actual bucket region to only show buckets
         // in selected regions (user expectation: select us-east-1, see us-east-1 buckets).
-        let is_true_global_resource = resource.region == "Global"
-            && resource.resource_type != "AWS::S3::Bucket";
+        let is_true_global_resource =
+            resource.region == "Global" && resource.resource_type != "AWS::S3::Bucket";
 
         let region_matches = is_true_global_resource
             || scope
@@ -4241,7 +4272,9 @@ impl ResourceExplorerWindow {
 
         // Debug: log cache keys and resources at Phase 2 start
         let cache_keys = cache_for_phase2.resource_keys();
-        let s3_resources_with_details: usize = state.resources.iter()
+        let s3_resources_with_details: usize = state
+            .resources
+            .iter()
             .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
             .count();
 

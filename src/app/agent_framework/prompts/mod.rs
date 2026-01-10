@@ -18,10 +18,14 @@
 
 pub mod task_manager;
 pub mod task_worker;
+pub mod page_builder_prompt;
+pub mod page_builder_worker;
 
 // Re-export prompts as constants
 pub use task_manager::TASK_MANAGER_PROMPT;
 pub use task_worker::TASK_WORKER_PROMPT;
+pub use page_builder_prompt::PAGE_BUILDER_PROMPT;
+pub use page_builder_worker::PAGE_BUILDER_WORKER_PROMPT;
 
 #[cfg(test)]
 mod tests {
@@ -40,7 +44,16 @@ mod tests {
     }
 
     #[test]
+    fn test_page_builder_prompt_exists() {
+        assert!(!PAGE_BUILDER_PROMPT.is_empty());
+        assert!(PAGE_BUILDER_PROMPT.contains("Page Builder Agent"));
+        assert!(PAGE_BUILDER_PROMPT.contains("dashApp API"));
+    }
+
+    #[test]
     fn test_prompts_are_different() {
         assert_ne!(TASK_MANAGER_PROMPT, TASK_WORKER_PROMPT);
+        assert_ne!(TASK_MANAGER_PROMPT, PAGE_BUILDER_PROMPT);
+        assert_ne!(TASK_WORKER_PROMPT, PAGE_BUILDER_PROMPT);
     }
 }

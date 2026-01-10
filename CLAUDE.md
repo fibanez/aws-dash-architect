@@ -2,24 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Stood Library Source Code
+## Stood Library
 
-The `stood` library source code is available locally for reference:
+The `stood` library is the AI agent framework used by the agent_framework module:
 
-- **Location**: `./stood-source/` (cloned from https://github.com/fibanez/stood.git)
-- **Purpose**: AI agent framework used by the agent_framework module
-- **Key files**:
-  - `stood-source/src/agent/` - Agent implementation and execution loop
-  - `stood-source/src/conversation/` - Conversation and message types (Role, Message, etc.)
-  - `stood-source/src/tools/` - Tool trait and implementations
-  - `stood-source/src/llm/` - LLM providers (Bedrock, etc.)
+- **Repository**: https://github.com/fibanez/stood.git
+- **Purpose**: AI agent framework with LLM integration, tools, and conversation management
+- **Key components**:
+  - Agent implementation and execution loop
+  - Conversation and message types (Role, Message, etc.)
+  - Tool trait and implementations
+  - LLM providers (Bedrock, etc.)
+  - Callback system for monitoring agent execution
 
-When debugging agent framework issues, reference the stood source to understand:
+When debugging agent framework issues, reference the stood repository to understand:
 - How `agent.execute()` works
 - The conversation message structure and `Role` enum
 - How tools are registered and called
-
-**Note**: This folder is git-ignored and not part of the aws-dash repository.
+- How callbacks work for tracking tool execution and model usage
 
 ## CRITICAL: EMOJI/UNICODE RESTRICTIONS IN EGUI
 
@@ -293,6 +293,27 @@ tail -f ~/.local/share/awsdash/logs/awsdash.log | grep -E '(stood|Agent|Tool|exe
 - Analyzing model interactions and token usage
 
 - When creating tests don't create mock tests.  All tests are either unit test, non-mock integration tests, or e2e test with no mocks
+
+### Cleanup Commands
+
+**Agent run cleanup**:
+- Clean incomplete agent runs and orphaned workspaces: `./scripts/cleanup-incomplete-runs.sh`
+- Removes log files from incomplete runs (older than 24 hours without completion marker)
+- Removes orphaned tool workspaces without corresponding completed logs
+- Safe to run periodically during development
+
+**Manual cleanup**:
+```bash
+# Remove all agent logs
+rm ~/.local/share/awsdash/logs/agents/*.log
+
+# Remove all tool workspaces
+rm -rf ~/.local/share/awsdash/tool_workspaces/*
+
+# View disk usage
+du -sh ~/.local/share/awsdash/logs/agents/
+du -sh ~/.local/share/awsdash/tool_workspaces/
+```
 
 ## Chunked Testing Strategy
 

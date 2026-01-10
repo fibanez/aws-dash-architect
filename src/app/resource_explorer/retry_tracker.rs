@@ -131,7 +131,10 @@ impl RetryTracker {
                 state.last_error = Some(error);
                 state.last_error_time = Instant::now();
             } else {
-                queries.insert(query_key.to_string(), QueryRetryState::new(query_key, error));
+                queries.insert(
+                    query_key.to_string(),
+                    QueryRetryState::new(query_key, error),
+                );
             }
         }
 

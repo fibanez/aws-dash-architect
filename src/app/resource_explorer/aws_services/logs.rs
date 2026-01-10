@@ -848,10 +848,7 @@ impl LogsService {
         serde_json::Value::Object(json)
     }
 
-    fn resource_policy_to_json(
-        &self,
-        policy: &logs::types::ResourcePolicy,
-    ) -> serde_json::Value {
+    fn resource_policy_to_json(&self, policy: &logs::types::ResourcePolicy) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(policy_name) = &policy.policy_name {
@@ -911,7 +908,10 @@ impl LogsService {
                 .iter()
                 .map(|name| serde_json::Value::String(name.clone()))
                 .collect();
-            json.insert("LogGroupNames".to_string(), serde_json::Value::Array(names_json));
+            json.insert(
+                "LogGroupNames".to_string(),
+                serde_json::Value::Array(names_json),
+            );
         }
 
         if let Some(last_modified) = definition.last_modified {

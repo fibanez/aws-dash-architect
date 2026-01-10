@@ -125,11 +125,7 @@ impl ConversationLayer for LoggingLayer {
                 );
             }
             LogLevel::Full => {
-                log::info!(
-                    "[{}] Received response:\n{}",
-                    ctx.agent_id,
-                    response
-                );
+                log::info!("[{}] Received response:\n{}", ctx.agent_id, response);
             }
         }
 

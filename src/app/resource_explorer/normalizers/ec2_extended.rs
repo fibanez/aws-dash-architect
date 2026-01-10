@@ -519,7 +519,11 @@ impl AsyncResourceNormalizer for EC2LaunchTemplateNormalizer {
         let resource_id = raw_response
             .get("LaunchTemplateId")
             .and_then(|v| v.as_str())
-            .or_else(|| raw_response.get("LaunchTemplateName").and_then(|v| v.as_str()))
+            .or_else(|| {
+                raw_response
+                    .get("LaunchTemplateName")
+                    .and_then(|v| v.as_str())
+            })
             .unwrap_or("unknown-launch-template")
             .to_string();
 

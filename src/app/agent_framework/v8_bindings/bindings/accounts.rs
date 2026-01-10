@@ -137,7 +137,7 @@ fn list_accounts_callback(
 ///
 /// Accesses the cached AwsIdentityCenter data without making API calls.
 /// Returns the list of accounts that the user has access to through Identity Center.
-fn get_accounts_from_app() -> Result<Vec<AccountInfo>> {
+pub fn get_accounts_from_app() -> Result<Vec<AccountInfo>> {
     // Get the global AwsIdentityCenter (cached data - no API calls)
     let identity = get_global_aws_identity()
         .ok_or_else(|| anyhow::anyhow!("AwsIdentityCenter not initialized"))?;

@@ -15,6 +15,7 @@ pub enum MenuAction {
     LoginAWS,
     AWSExplorer,
     AgentManager,
+    PagesManager,
     Quit,
 }
 
@@ -60,11 +61,14 @@ pub fn build_menu(
         if ui.button("Login to AWS").clicked() {
             menu_action = MenuAction::LoginAWS;
         }
-        if ui.button("AWS Explorer").clicked() {
+        if ui.button("Explorer").clicked() {
             menu_action = MenuAction::AWSExplorer;
         }
-        if ui.button("Agent Manager").clicked() {
+        if ui.button("Agents").clicked() {
             menu_action = MenuAction::AgentManager;
+        }
+        if ui.button("Pages").clicked() {
+            menu_action = MenuAction::PagesManager;
         }
         ui.separator();
         if ui.button("Quit").clicked() {

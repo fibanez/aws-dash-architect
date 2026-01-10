@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Dash IPC Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 10px 0;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        h1 {
+            color: #333;
+        }
+        h2 {
+            color: #666;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>AWS Dash IPC Test Page</h1>
+    <p>This page tests the IPC communication between the webview and Rust backend.</p>
+
+    <!-- Test 1: List Accounts -->
+    <div class="test-section">
+        <h2>Test 1: List Accounts</h2>
+        <button onclick="testListAccounts()">Run Test</button>
+        <div id="accounts-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Test 2: List Regions -->
+    <div class="test-section">
+        <h2>Test 2: List Regions</h2>
+        <button onclick="testListRegions()">Run Test</button>
+        <div id="regions-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Test 3: Invoke Key Validation -->
+    <div class="test-section">
+        <h2>Test 3: Security - Invalid Invoke Key</h2>
+        <button onclick="testInvalidInvokeKey()">Run Test</button>
+        <div id="security-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Test 4: All Functions -->
+    <div class="test-section">
+        <h2>Test 4: Run All Tests</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <div id="all-tests-result" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        // Helper function to display results
+        function displayResult(elementId, result, isError = false) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.className = `result ${isError ? 'error' : 'success'}`;
+            element.textContent = typeof result === 'object'
+                ? JSON.stringify(result, null, 2)
+                : result;
+        }
+
+        // Test 1: List Accounts
+        async function testListAccounts() {
+            try {
+                console.log('[TEST] Calling dashApp.listAccounts()...');
+                const accounts = await window.dashApp.listAccounts();
+                console.log('[TEST] Received accounts:', accounts);
+                displayResult('accounts-result', {
+                    status: 'SUCCESS',
+                    accountCount: accounts.length,
+                    accounts: accounts
+                });
+            } catch (error) {
+                console.error('[TEST] Error listing accounts:', error);
+                displayResult('accounts-result', `ERROR: ${error.message}`, true);
+            }
+        }
+
+        // Test 2: List Regions
+        async function testListRegions() {
+            try {
+                console.log('[TEST] Calling dashApp.listRegions()...');
+                const regions = await window.dashApp.listRegions();
+                console.log('[TEST] Received regions:', regions);
+                displayResult('regions-result', {
+                    status: 'SUCCESS',
+                    regionCount: regions.length,
+                    regions: regions.slice(0, 5) // Show first 5
+                });
+            } catch (error) {
+                console.error('[TEST] Error listing regions:', error);
+                displayResult('regions-result', `ERROR: ${error.message}`, true);
+            }
+        }
+
+        // Test 3: Invalid Invoke Key (Security Test)
+        async function testInvalidInvokeKey() {
+            try {
+                console.log('[TEST] Sending IPC with invalid invoke key...');
+
+                // Manually craft IPC message with wrong key
+                const testMessage = {
+                    cmd: 'listAccounts',
+                    success: 999,
+                    error: 998,
+                    payload: {},
+                    invokeKey: 'INVALID-KEY-123'
+                };
+
+                window.ipc.postMessage(JSON.stringify(testMessage));
+
+                // Wait a bit for response
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                displayResult('security-result', {
+                    status: 'EXPECTED_FAILURE',
+                    message: 'Unauthorized IPC should be rejected (check console for warnings)'
+                });
+            } catch (error) {
+                displayResult('security-result', `ERROR: ${error.message}`, true);
+            }
+        }
+
+        // Test 4: Run All Tests
+        async function runAllTests() {
+            const results = [];
+            const resultElement = document.getElementById('all-tests-result');
+            resultElement.style.display = 'block';
+            resultElement.textContent = 'Running tests...\n';
+
+            // Test 1: List Accounts
+            try {
+                const accounts = await window.dashApp.listAccounts();
+                results.push(`✓ List Accounts: ${accounts.length} accounts found`);
+            } catch (error) {
+                results.push(`✗ List Accounts: ${error.message}`);
+            }
+
+            // Test 2: List Regions
+            try {
+                const regions = await window.dashApp.listRegions();
+                results.push(`✓ List Regions: ${regions.length} regions found`);
+            } catch (error) {
+                results.push(`✗ List Regions: ${error.message}`);
+            }
+
+            // Test 3: Check DashApp API exists
+            const apiMethods = [
+                'listAccounts', 'listRegions', 'loadCache',
+                'getResourceSchema', 'queryCachedResources',
+                'showInExplorer', 'queryCloudWatchLogs',
+                'getCloudTrailEvents', 'saveCurrentApp'
+            ];
+
+            const missingMethods = apiMethods.filter(method =>
+                typeof window.dashApp[method] !== 'function'
+            );
+
+            if (missingMethods.length === 0) {
+                results.push(`✓ All API methods present`);
+            } else {
+                results.push(`✗ Missing methods: ${missingMethods.join(', ')}`);
+            }
+
+            // Test 4: Check internals
+            if (window.__DASH_INTERNALS__) {
+                results.push(`✓ Debug internals available`);
+                results.push(`  - Callbacks: ${window.__DASH_INTERNALS__.callbacks.size} registered`);
+            } else {
+                results.push(`✗ Debug internals missing`);
+            }
+
+            // Display results
+            resultElement.className = 'result success';
+            resultElement.textContent = results.join('\n');
+        }
+
+        // Run initial diagnostic on load
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('[TEST] Page loaded');
+            console.log('[TEST] window.dashApp:', window.dashApp);
+            console.log('[TEST] window.__INVOKE_KEY__:', window.__INVOKE_KEY__);
+            console.log('[TEST] window.__DASH_INTERNALS__:', window.__DASH_INTERNALS__);
+
+            // Check if dashApp is available
+            if (!window.dashApp) {
+                alert('ERROR: window.dashApp is not available! IPC library may not be loaded.');
+            } else {
+                console.log('[TEST] IPC library loaded successfully');
+            }
+        });
+    </script>
+</body>
+</html>

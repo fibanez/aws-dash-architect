@@ -5,8 +5,8 @@
 
 #[cfg(test)]
 mod window_focus_integration_tests {
-    use awsdash::app::dashui::{HelpWindow, LogWindow, VerificationWindow};
     use awsdash::app::dashui::{FocusableWindow, WindowFocusManager};
+    use awsdash::app::dashui::{HelpWindow, LogWindow, VerificationWindow};
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]

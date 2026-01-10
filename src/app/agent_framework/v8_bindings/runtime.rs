@@ -110,7 +110,10 @@ impl V8Runtime {
         } else {
             code.replace('\n', " ")
         };
-        stood::perf_checkpoint!("awsdash.v8.execute.start", &format!("code_len={}, preview={}", code.len(), code_preview));
+        stood::perf_checkpoint!(
+            "awsdash.v8.execute.start",
+            &format!("code_len={}, preview={}", code.len(), code_preview)
+        );
         let _v8_guard = stood::perf_guard!("awsdash.v8.execute");
 
         // Create isolate with memory limits
@@ -118,9 +121,8 @@ impl V8Runtime {
         let mut params = v8::CreateParams::default();
         params = params.heap_limits(0, self.config.max_heap_size_bytes);
 
-        let isolate_result = stood::perf_timed!("awsdash.v8.isolate_new", {
-            v8::Isolate::new(params)
-        });
+        let isolate_result =
+            stood::perf_timed!("awsdash.v8.isolate_new", v8::Isolate::new(params));
         let mut isolate = isolate_result;
         stood::perf_checkpoint!("awsdash.v8.isolate.create.end");
 
@@ -157,9 +159,9 @@ impl V8Runtime {
 
             // Register function bindings (listAccounts, etc.)
             stood::perf_checkpoint!("awsdash.v8.bindings.start");
-            if let Err(e) = stood::perf_timed!("awsdash.v8.register_bindings", {
-                register_bindings(scope)
-            }) {
+            if let Err(e) =
+                stood::perf_timed!("awsdash.v8.register_bindings", register_bindings(scope))
+            {
                 let (stdout, mut stderr) = if let Some(ref buffers) = console_buffers {
                     (buffers.get_stdout(), buffers.get_stderr())
                 } else {
@@ -228,9 +230,7 @@ impl V8Runtime {
 
             // Execute JavaScript
             stood::perf_checkpoint!("awsdash.v8.run.start");
-            let result = match stood::perf_timed!("awsdash.v8.script_run", {
-                script.run(scope)
-            }) {
+            let result = match stood::perf_timed!("awsdash.v8.script_run", script.run(scope)) {
                 Some(result) => result,
                 None => {
                     // Extract console output before returning
@@ -298,7 +298,10 @@ impl V8Runtime {
             (String::new(), String::new())
         };
 
-        stood::perf_checkpoint!("awsdash.v8.execute.end", &format!("execution_time_ms={}", execution_time_ms));
+        stood::perf_checkpoint!(
+            "awsdash.v8.execute.end",
+            &format!("execution_time_ms={}", execution_time_ms)
+        );
         Ok(ExecutionResult {
             success: true,
             result: Some(result),

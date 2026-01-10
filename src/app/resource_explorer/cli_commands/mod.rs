@@ -290,7 +290,10 @@ pub fn execute_cli_command(
     } else {
         format!(" {}", cmd.extra_args.join(" "))
     };
-    let command_str = format!("aws {} {}{} --region {}", cmd.service, cmd.operation, extra_str, region);
+    let command_str = format!(
+        "aws {} {}{} --region {}",
+        cmd.service, cmd.operation, extra_str, region
+    );
     info!("[CLI] Executing: {}", command_str);
 
     let start = Instant::now();
@@ -346,7 +349,9 @@ pub fn execute_cli_command(
 
     info!(
         "[CLI] Response: {}ms, {} bytes, {} resources",
-        duration_ms, response_size, resources.len()
+        duration_ms,
+        response_size,
+        resources.len()
     );
 
     Ok(CliResult {
@@ -383,7 +388,14 @@ pub fn execute_detail_commands(
     let mut merged = serde_json::Map::new();
 
     for cmd in detail_commands {
-        let mut args = vec![cmd.service, cmd.operation, cmd.id_arg, resource_id, "--output", "json"];
+        let mut args = vec![
+            cmd.service,
+            cmd.operation,
+            cmd.id_arg,
+            resource_id,
+            "--output",
+            "json",
+        ];
 
         // Add extra arguments (e.g., --scope REGIONAL for WAFv2)
         for arg in cmd.extra_args {
@@ -473,7 +485,10 @@ pub fn execute_cli_with_details_progress(
     }
 
     let total = result.resources.len();
-    info!("[CLI] Fetching details for {} {} resources...", total, resource_type);
+    info!(
+        "[CLI] Fetching details for {} {} resources...",
+        total, resource_type
+    );
 
     // For each resource, fetch details and merge
     let mut enriched_resources = Vec::new();
@@ -495,7 +510,9 @@ pub fn execute_cli_with_details_progress(
         let details = execute_detail_commands(resource_type, &resource_id, creds, region);
 
         // Merge details into resource
-        let merged = if let (Value::Object(mut base), Value::Object(detail_obj)) = (resource.clone(), details) {
+        let merged = if let (Value::Object(mut base), Value::Object(detail_obj)) =
+            (resource.clone(), details)
+        {
             for (k, v) in detail_obj {
                 base.insert(k, v);
             }
@@ -589,7 +606,9 @@ pub fn execute_child_cli_command(
 
             info!(
                 "[CLI] Response: {}ms, {} bytes, {} resources",
-                duration_ms, response_size, resources.len()
+                duration_ms,
+                response_size,
+                resources.len()
             );
 
             Ok(CliResult {
@@ -716,7 +735,10 @@ fn extract_single_id(resource: &Value, id_field: &str) -> Option<String> {
     if id_field.is_empty() {
         return resource.as_str().map(|s| s.to_string());
     }
-    resource.get(id_field).and_then(|v| v.as_str()).map(|s| s.to_string())
+    resource
+        .get(id_field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Get list of resource types that have CLI command mappings.
@@ -817,14 +839,20 @@ mod tests {
     #[test]
     fn test_get_json_value_simple() {
         let json = serde_json::json!({"Name": "test", "Size": 100});
-        assert_eq!(get_json_value(&json, "Name"), Some(Value::String("test".to_string())));
+        assert_eq!(
+            get_json_value(&json, "Name"),
+            Some(Value::String("test".to_string()))
+        );
         assert_eq!(get_json_value(&json, "Size"), Some(serde_json::json!(100)));
     }
 
     #[test]
     fn test_get_json_value_nested() {
         let json = serde_json::json!({"State": {"Name": "running", "Code": 16}});
-        assert_eq!(get_json_value(&json, "State.Name"), Some(Value::String("running".to_string())));
+        assert_eq!(
+            get_json_value(&json, "State.Name"),
+            Some(Value::String("running".to_string()))
+        );
     }
 
     #[test]

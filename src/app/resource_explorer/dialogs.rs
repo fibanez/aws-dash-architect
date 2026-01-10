@@ -628,7 +628,11 @@ impl FuzzySearchDialog {
         current_accounts: &[AccountSelection],
         current_regions: &[RegionSelection],
         current_resources: &[ResourceTypeSelection],
-    ) -> Option<(Vec<AccountSelection>, Vec<RegionSelection>, Vec<ResourceTypeSelection>)> {
+    ) -> Option<(
+        Vec<AccountSelection>,
+        Vec<RegionSelection>,
+        Vec<ResourceTypeSelection>,
+    )> {
         if !*is_open {
             return None;
         }
@@ -643,15 +647,18 @@ impl FuzzySearchDialog {
             );
             // Pre-populate accounts
             for account in current_accounts {
-                self.selected_accounts.insert(account.account_id.clone(), true);
+                self.selected_accounts
+                    .insert(account.account_id.clone(), true);
             }
             // Pre-populate regions
             for region in current_regions {
-                self.selected_regions.insert(region.region_code.clone(), true);
+                self.selected_regions
+                    .insert(region.region_code.clone(), true);
             }
             // Pre-populate resource types
             for resource in current_resources {
-                self.selected_resource_types.insert(resource.resource_type.clone(), true);
+                self.selected_resource_types
+                    .insert(resource.resource_type.clone(), true);
             }
             self.unified_dialog_initialized = true;
             tracing::debug!(

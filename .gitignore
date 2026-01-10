@@ -61,6 +61,7 @@ sso.json
 **/.claude/settings.local.json
 stood/
 stood-source/
+tauri-source/
 
 # Security scan reports (generated)
 .security-reports/

@@ -63,6 +63,7 @@ directories = "5.0"
 dirs = "5.0"
 walkdir = "2.4"
 zip = "0.6.6"
+fs2 = "0.4"  # Cross-platform file locking for concurrent manifest writes
 
 # AWS support
 aws-config = "1.1"
@@ -150,6 +151,9 @@ reqwest = { version = "0.11", features = ["blocking", "json"] }
 url = "2.4"
 percent-encoding = "2.3"
 open = "5.0.0"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
@@ -159,6 +163,7 @@ futures = "0.3"
 uuid = { version = "1.4", features = ["v4", "serde"] }
 rand = "0.8.5"
 regex = "1.7"
+hex = "0.4"
 memory-stats = "1.0"
 lazy_static = "1.4.0"
 fuzzy-matcher = "0.3"

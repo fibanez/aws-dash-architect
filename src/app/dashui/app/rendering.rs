@@ -95,6 +95,10 @@ impl DashApp {
                             tracing::warn!("Agent Manager access denied - not logged in");
                         }
                     }
+                    menu::MenuAction::PagesManager => {
+                        self.open_pages_manager_window();
+                        tracing::info!("Pages Manager window opened from Dash menu");
+                    }
                     menu::MenuAction::Quit => {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         tracing::info!("Quit requested from Dash menu");
@@ -390,10 +394,10 @@ impl DashApp {
     /// Pre-creates the log groups at startup/toggle to avoid ~1 second delay
     /// per agent during creation. Uses the IAM role name for naming.
     pub(super) fn initialize_agent_telemetry_log_groups(&self) {
-        use crate::app::agent_framework::telemetry_init;
+        use crate::app::agent_framework::logging::telemetry;
 
         // Skip if already initialized
-        if telemetry_init::are_log_groups_initialized() {
+        if telemetry::are_log_groups_initialized() {
             tracing::debug!("Agent telemetry log groups already initialized");
             return;
         }
@@ -413,7 +417,10 @@ impl DashApp {
         let bedrock_creds = match identity.get_bedrock_credentials() {
             Ok(creds) => creds,
             Err(e) => {
-                tracing::warn!("Cannot initialize log groups: Failed to get Bedrock credentials: {}", e);
+                tracing::warn!(
+                    "Cannot initialize log groups: Failed to get Bedrock credentials: {}",
+                    e
+                );
                 return;
             }
         };
@@ -438,7 +445,7 @@ impl DashApp {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async move {
-                match telemetry_init::initialize_log_groups(
+                match telemetry::initialize_log_groups(
                     &role_name_clone,
                     &region_clone,
                     &access_key,
@@ -482,14 +489,16 @@ impl DashApp {
             tracing::info!("Login detected with agent logging enabled - initializing log groups");
             self.initialize_agent_telemetry_log_groups();
         } else {
-            tracing::debug!("Login detected but agent logging is disabled - skipping log group init");
+            tracing::debug!(
+                "Login detected but agent logging is disabled - skipping log group init"
+            );
         }
     }
 
     /// Reset log groups check flag (call on logout)
     pub(super) fn reset_log_groups_init_check(&mut self) {
         self.log_groups_init_checked = false;
-        crate::app::agent_framework::telemetry_init::reset_initialization();
+        crate::app::agent_framework::telemetry::reset_initialization();
         tracing::debug!("Log groups init check reset");
     }
 

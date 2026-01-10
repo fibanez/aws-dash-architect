@@ -666,13 +666,18 @@ impl CloudWatchService {
                             .insert("Name".to_string(), serde_json::Value::String(name.clone()));
                     }
                     if let Some(value) = &dim.value {
-                        dim_json
-                            .insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                        dim_json.insert(
+                            "Value".to_string(),
+                            serde_json::Value::String(value.clone()),
+                        );
                     }
                     serde_json::Value::Object(dim_json)
                 })
                 .collect();
-            json.insert("Dimensions".to_string(), serde_json::Value::Array(dims_json));
+            json.insert(
+                "Dimensions".to_string(),
+                serde_json::Value::Array(dims_json),
+            );
         }
 
         let mut identifier = format!("{}/{}", namespace, metric_name);
@@ -696,10 +701,7 @@ impl CloudWatchService {
             "MetricId".to_string(),
             serde_json::Value::String(identifier.clone()),
         );
-        json.insert(
-            "Name".to_string(),
-            serde_json::Value::String(identifier),
-        );
+        json.insert("Name".to_string(), serde_json::Value::String(identifier));
         json.insert(
             "Status".to_string(),
             serde_json::Value::String("Available".to_string()),
@@ -783,7 +785,14 @@ impl CloudWatchService {
                     "MetricDataQueryCount".to_string(),
                     serde_json::Value::Number(query_count.into()),
                 );
-                (None, None, None, None, "MetricMath", metric_math.metric_data_queries.clone())
+                (
+                    None,
+                    None,
+                    None,
+                    None,
+                    "MetricMath",
+                    metric_math.metric_data_queries.clone(),
+                )
             } else {
                 (None, None, None, None, "Unknown", None)
             };
@@ -808,10 +817,7 @@ impl CloudWatchService {
         }
 
         if let Some(stat) = &stat {
-            json.insert(
-                "Stat".to_string(),
-                serde_json::Value::String(stat.clone()),
-            );
+            json.insert("Stat".to_string(), serde_json::Value::String(stat.clone()));
         }
 
         if let Some(state_value) = &detector.state_value {
@@ -835,13 +841,18 @@ impl CloudWatchService {
                             .insert("Name".to_string(), serde_json::Value::String(name.clone()));
                     }
                     if let Some(value) = &dim.value {
-                        dim_json
-                            .insert("Value".to_string(), serde_json::Value::String(value.clone()));
+                        dim_json.insert(
+                            "Value".to_string(),
+                            serde_json::Value::String(value.clone()),
+                        );
                     }
                     serde_json::Value::Object(dim_json)
                 })
                 .collect();
-            json.insert("Dimensions".to_string(), serde_json::Value::Array(dims_json));
+            json.insert(
+                "Dimensions".to_string(),
+                serde_json::Value::Array(dims_json),
+            );
         }
 
         let metric_name = metric_name.clone().unwrap_or_default();
@@ -899,10 +910,7 @@ impl CloudWatchService {
             "DetectorId".to_string(),
             serde_json::Value::String(identifier.clone()),
         );
-        json.insert(
-            "Name".to_string(),
-            serde_json::Value::String(identifier),
-        );
+        json.insert("Name".to_string(), serde_json::Value::String(identifier));
 
         serde_json::Value::Object(json)
     }

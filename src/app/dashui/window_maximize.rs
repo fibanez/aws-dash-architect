@@ -121,16 +121,17 @@ impl WindowMaximizeState {
     /// Returns (position, size, should_set_pos) tuple.
     /// - When maximized: fills screen below menu bar
     /// - When restored: uses saved position/size or defaults
-    pub fn get_window_config(&self, ctx: &Context, default_size: Vec2) -> (Option<Pos2>, Vec2, bool) {
+    pub fn get_window_config(
+        &self,
+        ctx: &Context,
+        default_size: Vec2,
+    ) -> (Option<Pos2>, Vec2, bool) {
         let screen_rect = ctx.screen_rect();
 
         if self.is_maximized {
             // Maximized: fill screen below menu bar
             let pos = Pos2::new(0.0, MENU_BAR_HEIGHT);
-            let size = Vec2::new(
-                screen_rect.width(),
-                screen_rect.height() - MENU_BAR_HEIGHT,
-            );
+            let size = Vec2::new(screen_rect.width(), screen_rect.height() - MENU_BAR_HEIGHT);
             (Some(pos), size, true)
         } else {
             // Restored: use saved state or defaults
@@ -144,10 +145,7 @@ impl WindowMaximizeState {
     /// Calculate maximized size for the current screen
     pub fn maximized_size(ctx: &Context) -> Vec2 {
         let screen_rect = ctx.screen_rect();
-        Vec2::new(
-            screen_rect.width(),
-            screen_rect.height() - MENU_BAR_HEIGHT,
-        )
+        Vec2::new(screen_rect.width(), screen_rect.height() - MENU_BAR_HEIGHT)
     }
 
     /// Calculate maximized position (top-left, below menu)
@@ -161,12 +159,9 @@ impl WindowMaximizeState {
 /// Returns true if the button was clicked.
 /// Place this in a horizontal layout at the top-right of your window content.
 pub fn maximize_button(ui: &mut egui::Ui, state: &WindowMaximizeState) -> bool {
-    ui.add(
-        egui::Button::new(state.button_label())
-            .small()
-    )
-    .on_hover_text(state.button_tooltip())
-    .clicked()
+    ui.add(egui::Button::new(state.button_label()).small())
+        .on_hover_text(state.button_tooltip())
+        .clicked()
 }
 
 #[cfg(test)]

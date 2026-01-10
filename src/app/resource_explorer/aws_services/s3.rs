@@ -22,7 +22,9 @@ impl S3Service {
     /// - None or empty string = us-east-1 (buckets created before regions)
     /// - "EU" = eu-west-1 (legacy EU region)
     /// - Otherwise = direct region code (e.g., "us-west-2")
-    fn location_constraint_to_region(constraint: Option<&s3::types::BucketLocationConstraint>) -> String {
+    fn location_constraint_to_region(
+        constraint: Option<&s3::types::BucketLocationConstraint>,
+    ) -> String {
         match constraint {
             None => "us-east-1".to_string(),
             Some(loc) => {
@@ -57,7 +59,9 @@ impl S3Service {
             .send()
             .await?;
 
-        Ok(Self::location_constraint_to_region(response.location_constraint.as_ref()))
+        Ok(Self::location_constraint_to_region(
+            response.location_constraint.as_ref(),
+        ))
     }
 
     /// Get bucket locations for all buckets in parallel
@@ -131,16 +135,13 @@ impl S3Service {
         let bucket_names: Vec<String> = response
             .buckets
             .as_ref()
-            .map(|buckets| {
-                buckets
-                    .iter()
-                    .filter_map(|b| b.name.clone())
-                    .collect()
-            })
+            .map(|buckets| buckets.iter().filter_map(|b| b.name.clone()).collect())
             .unwrap_or_default();
 
         // Get all bucket locations in parallel
-        let locations = self.get_all_bucket_locations(account_id, &bucket_names).await;
+        let locations = self
+            .get_all_bucket_locations(account_id, &bucket_names)
+            .await;
 
         // Build bucket JSON with actual regions
         let mut buckets = Vec::new();
@@ -235,10 +236,7 @@ impl S3Service {
                 );
             } else {
                 // us-east-1 buckets have no LocationConstraint - store null to match CLI
-                bucket_details.insert(
-                    "LocationConstraint".to_string(),
-                    serde_json::Value::Null,
-                );
+                bucket_details.insert("LocationConstraint".to_string(), serde_json::Value::Null);
             }
         }
 

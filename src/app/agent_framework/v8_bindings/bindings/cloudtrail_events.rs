@@ -203,7 +203,7 @@ fn get_cloudtrail_events_callback(
 }
 
 /// Execute lookup using tokio runtime
-fn execute_lookup(args: GetCloudTrailEventsArgs) -> Result<CloudTrailEventsResult> {
+pub fn execute_lookup(args: GetCloudTrailEventsArgs) -> Result<CloudTrailEventsResult> {
     // CRITICAL: Use block_in_place to avoid "Cannot start a runtime from within a runtime" error
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
@@ -212,7 +212,7 @@ fn execute_lookup(args: GetCloudTrailEventsArgs) -> Result<CloudTrailEventsResul
 }
 
 /// Internal async implementation of CloudTrail events lookup
-async fn get_cloudtrail_events_internal(
+pub async fn get_cloudtrail_events_internal(
     args: GetCloudTrailEventsArgs,
 ) -> Result<CloudTrailEventsResult> {
     info!(
@@ -226,7 +226,7 @@ async fn get_cloudtrail_events_internal(
     );
 
     // Get global AWS client for credential coordinator access
-    let aws_client = crate::app::agent_framework::tools_registry::get_global_aws_client()
+    let aws_client = crate::app::agent_framework::utils::registry::get_global_aws_client()
         .ok_or_else(|| anyhow!("AWS client not initialized"))?;
 
     let credential_coordinator = aws_client.get_credential_coordinator();

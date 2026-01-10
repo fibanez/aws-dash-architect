@@ -171,9 +171,7 @@ impl ConversationLayer for AutoAnalysisLayer {
         _ctx: &LayerContext,
     ) -> LayerResult<PostResponseAction> {
         if self.should_analyze(response) {
-            log::debug!(
-                "AutoAnalysis: Detected raw data, injecting analysis prompt"
-            );
+            log::debug!("AutoAnalysis: Detected raw data, injecting analysis prompt");
             return Ok(PostResponseAction::InjectFollowUp(
                 self.config.analysis_prompt.clone(),
             ));
@@ -184,7 +182,11 @@ impl ConversationLayer for AutoAnalysisLayer {
 
     fn on_tool_complete(&self, tool_name: &str, success: bool, _ctx: &LayerContext) {
         // Log tool completions that might produce data
-        if success && (tool_name.contains("query") || tool_name.contains("list") || tool_name.contains("get")) {
+        if success
+            && (tool_name.contains("query")
+                || tool_name.contains("list")
+                || tool_name.contains("get"))
+        {
             log::trace!(
                 "AutoAnalysis: Data-producing tool '{}' completed, watching for data patterns",
                 tool_name
@@ -217,7 +219,9 @@ mod tests {
             .enabled(false);
 
         assert!(config.data_patterns.contains(&"custom pattern".to_string()));
-        assert!(config.analysis_patterns.contains(&"Custom Analysis:".to_string()));
+        assert!(config
+            .analysis_patterns
+            .contains(&"Custom Analysis:".to_string()));
         assert_eq!(config.analysis_prompt, "Analyze this data");
         assert_eq!(config.min_response_length, 1000);
         assert!(!config.enabled);
@@ -251,9 +255,7 @@ mod tests {
 
     #[test]
     fn test_should_analyze_raw_data() {
-        let layer = AutoAnalysisLayer::new(
-            AutoAnalysisConfig::default().with_min_length(10),
-        );
+        let layer = AutoAnalysisLayer::new(AutoAnalysisConfig::default().with_min_length(10));
 
         // Long response with data but no analysis
         let response = "Here are 50 resources found in the account:\n\
@@ -267,9 +269,7 @@ mod tests {
 
     #[test]
     fn test_should_not_analyze_with_existing_analysis() {
-        let layer = AutoAnalysisLayer::new(
-            AutoAnalysisConfig::default().with_min_length(10),
-        );
+        let layer = AutoAnalysisLayer::new(AutoAnalysisConfig::default().with_min_length(10));
 
         // Response with data AND analysis
         let response = "Here are 50 resources found in the account:\n\
@@ -290,9 +290,7 @@ mod tests {
 
     #[test]
     fn test_should_not_analyze_when_disabled() {
-        let layer = AutoAnalysisLayer::new(
-            AutoAnalysisConfig::default().enabled(false),
-        );
+        let layer = AutoAnalysisLayer::new(AutoAnalysisConfig::default().enabled(false));
 
         let response = "Here are 50 resources found in the account with lots of data...";
         assert!(!layer.should_analyze(response));
@@ -300,9 +298,7 @@ mod tests {
 
     #[test]
     fn test_post_response_triggers_injection() {
-        let layer = AutoAnalysisLayer::new(
-            AutoAnalysisConfig::default().with_min_length(10),
-        );
+        let layer = AutoAnalysisLayer::new(AutoAnalysisConfig::default().with_min_length(10));
         let ctx = LayerContext::new("test", AgentType::TaskManager);
 
         let response = "Here are 50 resources found in the account:\n\

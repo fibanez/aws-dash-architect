@@ -17,10 +17,7 @@ pub enum ResourceExplorerAction {
         region: String,
     },
     /// Request available AWS Identity Center roles for an account (AWS Console submenu)
-    RequestAwsConsoleRoles {
-        request_id: u64,
-        account_id: String,
-    },
+    RequestAwsConsoleRoles { request_id: u64, account_id: String },
     /// Request to open AWS Console for a resource
     OpenAwsConsole {
         resource_type: String,
@@ -131,7 +128,9 @@ pub fn get_global_bookmark_manager() -> Option<Arc<StdRwLock<BookmarkManager>>> 
 #[derive(Debug, Clone)]
 pub enum ExplorerAction {
     /// Open Explorer window with dynamic configuration from JavaScript
-    OpenWithConfig(crate::app::agent_framework::v8_bindings::bindings::resources::ShowInExplorerArgs),
+    OpenWithConfig(
+        crate::app::agent_framework::v8_bindings::bindings::resources::ShowInExplorerArgs,
+    ),
 }
 
 /// Global action queue for V8 -> Explorer communication
@@ -165,9 +164,9 @@ pub mod aws_client;
 pub mod aws_services;
 pub mod bookmarks;
 pub mod cache;
-pub mod console_links;
 pub mod child_resources;
 pub mod colors;
+pub mod console_links;
 pub mod credentials;
 pub mod dialogs;
 pub mod global_services;
@@ -198,6 +197,10 @@ pub mod verification_results;
 pub mod verification_window;
 
 pub use aws_client::{AWSResourceClient, QueryProgress, QueryStatus};
+pub use cache::{
+    get_shared_cache, init_shared_cache, shared_cache, CacheConfig, CacheMemoryStats, DetailedData,
+    ResourceKey, SharedResourceCache,
+};
 pub use child_resources::{ChildQueryMethod, ChildResourceConfig, ChildResourceDef};
 pub use colors::{
     assign_account_color, assign_region_color, get_contrasting_text_color, AwsColorGenerator,
@@ -211,21 +214,17 @@ pub use property_system::{
     PropertyCatalog, PropertyFilter, PropertyFilterGroup, PropertyFilterType, PropertyKey,
     PropertyType, PropertyValue,
 };
+pub use retry_tracker::{retry_tracker, QueryRetryState, QueryRetrySummary, RetryTracker};
+pub use sdk_errors::{categorize_error, categorize_error_string, ErrorCategory};
 pub use state::{
     AccountSelection, BooleanOperator, GroupingMode, QueryScope, RegionSelection, RelationshipType,
     ResourceEntry, ResourceExplorerState, ResourceRelationship, ResourceTag, ResourceTypeSelection,
     TagFilter, TagFilterGroup, TagFilterType,
 };
 pub use status::{global_status, report_status, report_status_done, StatusChannel, StatusMessage};
-pub use retry_tracker::{retry_tracker, QueryRetrySummary, QueryRetryState, RetryTracker};
-pub use sdk_errors::{categorize_error, categorize_error_string, ErrorCategory};
 pub use tag_badges::{BadgeSelector, TagCombination, TagPopularityTracker};
 pub use tag_cache::{CacheStats, TagCache};
 pub use tag_discovery::{OverallTagStats, TagDiscovery, TagMetadata, TagStats};
-pub use cache::{
-    get_shared_cache, init_shared_cache, shared_cache, CacheConfig, CacheMemoryStats,
-    DetailedData, ResourceKey, SharedResourceCache,
-};
 pub use tree::{NodeType, TreeBuilder, TreeNode, TreeRenderer};
 pub use unified_query::{
     BookmarkInfo, DetailLevel, DetailedResources, QueryError, QueryResultStatus, QueryWarning,

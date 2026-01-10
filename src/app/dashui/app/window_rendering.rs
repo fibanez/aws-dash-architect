@@ -199,6 +199,18 @@ impl DashApp {
         }
     }
 
+    /// Open the Pages Manager window in a new webview
+    pub fn open_pages_manager_window(&self) {
+        match crate::app::webview::spawn_pages_manager_window() {
+            Ok(()) => {
+                tracing::info!("Pages Manager window spawned successfully");
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn Pages Manager window: {}", e);
+            }
+        }
+    }
+
     /// Handle the AWS resource explorer window
     pub(super) fn handle_resource_explorer_window(&mut self, ctx: &egui::Context) {
         if self.resource_explorer.is_open() {

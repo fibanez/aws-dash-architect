@@ -7,6 +7,7 @@ fn encode(value: &str) -> String {
 #[derive(Debug)]
 struct ArnParts<'a> {
     service: &'a str,
+    #[allow(dead_code)]
     region: &'a str,
     account_id: &'a str,
     resource: &'a str,

@@ -202,17 +202,14 @@ impl CredentialCoordinator {
         // Time the lock acquisition
         let lock_start = Instant::now();
         let identity_center_clone = {
-            let identity_center = self
-                .identity_center
-                .lock()
-                .map_err(|e| {
-                    query_timing::identity_center_lock_timing(
-                        account_id,
-                        lock_start.elapsed().as_millis(),
-                        false,
-                    );
-                    anyhow::anyhow!("Failed to acquire lock on Identity Center: {}", e)
-                })?;
+            let identity_center = self.identity_center.lock().map_err(|e| {
+                query_timing::identity_center_lock_timing(
+                    account_id,
+                    lock_start.elapsed().as_millis(),
+                    false,
+                );
+                anyhow::anyhow!("Failed to acquire lock on Identity Center: {}", e)
+            })?;
             debug!(
                 "🔑 CREDS: Successfully acquired Identity Center lock, cloning for account: {}",
                 account_id

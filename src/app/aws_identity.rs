@@ -1022,10 +1022,13 @@ impl AwsIdentityCenter {
                             );
                             // Get credentials for the SSO management account instead
                             let default_role = self.default_role_name.clone();
-                            match self.get_account_credentials(&management_account_id, &default_role) {
+                            match self
+                                .get_account_credentials(&management_account_id, &default_role)
+                            {
                                 Ok(mgmt_credentials) => {
                                     self.default_role_credentials = Some(mgmt_credentials.clone());
-                                    self.default_role_account_id = Some(management_account_id.clone());
+                                    self.default_role_account_id =
+                                        Some(management_account_id.clone());
                                     info!(
                                         "Successfully obtained default role credentials for SSO management account {}",
                                         management_account_id
@@ -1044,7 +1047,10 @@ impl AwsIdentityCenter {
                     }
                 }
 
-                info!("Successfully obtained default role credentials for account {}", account_id);
+                info!(
+                    "Successfully obtained default role credentials for account {}",
+                    account_id
+                );
                 Ok(credentials)
             }
             None => {
@@ -1134,7 +1140,9 @@ impl AwsIdentityCenter {
 
                 let credentials = self.get_default_role_credentials()?;
                 let region = self.identity_center_region.clone();
-                let account_id = self.default_role_account_id.clone()
+                let account_id = self
+                    .default_role_account_id
+                    .clone()
                     .unwrap_or_else(|| "unknown".to_string());
 
                 info!(
@@ -2040,10 +2048,7 @@ impl AwsIdentityCenter {
             .unwrap_or_default()
     }
 
-    pub(crate) fn fetch_console_menu_roles(
-        &self,
-        account_id: &str,
-    ) -> Result<Vec<String>, String> {
+    pub(crate) fn fetch_console_menu_roles(&self, account_id: &str) -> Result<Vec<String>, String> {
         let access_token = match &self.access_token {
             Some(token) => token.clone(),
             None => return Err("Not logged in".to_string()),
@@ -2298,8 +2303,11 @@ impl AwsIdentityCenter {
     /// }
     /// ```
     pub fn open_aws_console(&mut self, account_id: &str, role_name: &str) -> Result<(), String> {
-        let console_signin_url =
-            self.generate_console_signin_url(account_id, role_name, "https://console.aws.amazon.com/")?;
+        let console_signin_url = self.generate_console_signin_url(
+            account_id,
+            role_name,
+            "https://console.aws.amazon.com/",
+        )?;
 
         if let Err(e) = open::that(&console_signin_url) {
             return Err(format!("Failed to open browser: {}", e));
@@ -2474,7 +2482,10 @@ impl AwsIdentityCenter {
         let runtime = match Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
-                warn!("Failed to create Tokio runtime for Home Dash Account extraction: {}", e);
+                warn!(
+                    "Failed to create Tokio runtime for Home Dash Account extraction: {}",
+                    e
+                );
                 return;
             }
         };
@@ -2485,7 +2496,8 @@ impl AwsIdentityCenter {
         let result: Result<HomeDashAccount, String> = runtime.block_on(async {
             // Create AWS config with our credentials
             let expiration_time = credentials.expiration.map(|dt| {
-                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(dt.timestamp() as u64)
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(dt.timestamp() as u64)
             });
 
             let creds = aws_credential_types::Credentials::new(
@@ -2510,11 +2522,13 @@ impl AwsIdentityCenter {
                 .await
                 .map_err(|e| format!("Failed to get caller identity: {}", e))?;
 
-            let arn = caller_identity.arn
+            let arn = caller_identity
+                .arn
                 .ok_or("No ARN found in caller identity")?;
 
             // Extract role name from ARN: arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_RoleName/username
-            let role_name = arn.split('/')
+            let role_name = arn
+                .split('/')
                 .nth(1)
                 .ok_or("Invalid ARN format - cannot extract role name")?
                 .to_string();
@@ -2539,7 +2553,10 @@ impl AwsIdentityCenter {
                 Err(_) => policy_document.clone(),
             };
 
-            info!("Searching for DynamoDB ARN with table pattern: {}", table_pattern);
+            info!(
+                "Searching for DynamoDB ARN with table pattern: {}",
+                table_pattern
+            );
 
             // Look for DynamoDB table ARN: arn:aws:dynamodb:REGION:ACCOUNT:table/TABLE_NAME
             let dynamodb_pattern = format!(
@@ -2550,10 +2567,12 @@ impl AwsIdentityCenter {
                 .map_err(|e| format!("Invalid DynamoDB regex pattern: {}", e))?;
 
             if let Some(captures) = dynamodb_re.captures(&decoded_policy) {
-                let db_region = captures.get(1)
+                let db_region = captures
+                    .get(1)
                     .map(|m| m.as_str().to_string())
                     .ok_or("Failed to extract region from DynamoDB ARN")?;
-                let db_account = captures.get(2)
+                let db_account = captures
+                    .get(2)
                     .map(|m| m.as_str().to_string())
                     .ok_or("Failed to extract account from DynamoDB ARN")?;
 

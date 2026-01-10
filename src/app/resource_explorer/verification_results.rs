@@ -7,7 +7,7 @@
 
 #![cfg(debug_assertions)]
 
-use super::cli_commands::{CliExecution, ComparisonType, get_field_mappings, get_json_value};
+use super::cli_commands::{get_field_mappings, get_json_value, CliExecution, ComparisonType};
 use super::state::ResourceEntry;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -197,10 +197,7 @@ impl VerificationResults {
         // Write raw CLI responses
         self.write_raw_responses(&raw_path)?;
 
-        info!(
-            "Verification results written to {:?}",
-            dir
-        );
+        info!("Verification results written to {:?}", dir);
 
         Ok((summary_path, details_path))
     }
@@ -227,8 +224,16 @@ impl VerificationResults {
         writeln!(file, "===============")?;
         writeln!(file, "Resource Types Verified: {}", self.results.len())?;
         writeln!(file, "Total Fields Compared: {}", total_compared)?;
-        writeln!(file, "Total Fields Matched: {} ({:.1}%)", total_matched, match_pct)?;
-        writeln!(file, "Total Fields Mismatched: {}", total_compared - total_matched)?;
+        writeln!(
+            file,
+            "Total Fields Matched: {} ({:.1}%)",
+            total_matched, match_pct
+        )?;
+        writeln!(
+            file,
+            "Total Fields Mismatched: {}",
+            total_compared - total_matched
+        )?;
         writeln!(file)?;
 
         writeln!(file, "RESOURCE TYPE SUMMARY")?;
@@ -278,9 +283,15 @@ impl VerificationResults {
         writeln!(file)?;
 
         for result in &self.results {
-            writeln!(file, "===============================================================================")?;
+            writeln!(
+                file,
+                "==============================================================================="
+            )?;
             writeln!(file, "=== {} ===", result.resource_type)?;
-            writeln!(file, "===============================================================================")?;
+            writeln!(
+                file,
+                "==============================================================================="
+            )?;
 
             // CLI execution details
             if let Some(ref exec) = result.cli_execution {
@@ -300,14 +311,25 @@ impl VerificationResults {
             writeln!(file, "Dash count: {}", result.dash_count)?;
             writeln!(file, "CLI count: {}", result.cli_count)?;
             writeln!(file, "Fields compared: {}", result.total_fields_compared)?;
-            writeln!(file, "Fields matched: {} ({:.1}%)",
-                result.total_fields_matched, result.match_percentage())?;
-            writeln!(file, "Fields mismatched: {}", result.total_fields_mismatched)?;
+            writeln!(
+                file,
+                "Fields matched: {} ({:.1}%)",
+                result.total_fields_matched,
+                result.match_percentage()
+            )?;
+            writeln!(
+                file,
+                "Fields mismatched: {}",
+                result.total_fields_mismatched
+            )?;
             writeln!(file)?;
 
             // Missing resources
             if !result.missing_in_dash.is_empty() {
-                writeln!(file, "MISSING IN DASH (found in CLI but not in Dash cache):")?;
+                writeln!(
+                    file,
+                    "MISSING IN DASH (found in CLI but not in Dash cache):"
+                )?;
                 for id in &result.missing_in_dash {
                     writeln!(file, "  - {}", id)?;
                 }
@@ -315,7 +337,10 @@ impl VerificationResults {
             }
 
             if !result.missing_in_cli.is_empty() {
-                writeln!(file, "MISSING IN CLI (found in Dash but not in CLI output):")?;
+                writeln!(
+                    file,
+                    "MISSING IN CLI (found in Dash but not in CLI output):"
+                )?;
                 for id in &result.missing_in_cli {
                     writeln!(file, "  - {}", id)?;
                 }
@@ -331,20 +356,32 @@ impl VerificationResults {
                 writeln!(file, "--- Resource: {} ---", resource.resource_id)?;
 
                 // Show mismatches first
-                let mismatches: Vec<_> = resource.field_comparisons.iter()
+                let mismatches: Vec<_> = resource
+                    .field_comparisons
+                    .iter()
                     .filter(|f| !f.matched && !f.skipped)
                     .collect();
 
                 if !mismatches.is_empty() {
                     for field in mismatches {
                         writeln!(file, "MISMATCH: {}", field.field_name)?;
-                        writeln!(file, "  Dash: {}", field.dash_value.as_deref().unwrap_or("null"))?;
-                        writeln!(file, "  CLI:  {}", field.cli_value.as_deref().unwrap_or("null"))?;
+                        writeln!(
+                            file,
+                            "  Dash: {}",
+                            field.dash_value.as_deref().unwrap_or("null")
+                        )?;
+                        writeln!(
+                            file,
+                            "  CLI:  {}",
+                            field.cli_value.as_deref().unwrap_or("null")
+                        )?;
                     }
                 }
 
                 // Then show matches
-                let matches: Vec<_> = resource.field_comparisons.iter()
+                let matches: Vec<_> = resource
+                    .field_comparisons
+                    .iter()
                     .filter(|f| f.matched && !f.skipped)
                     .collect();
 
@@ -360,17 +397,29 @@ impl VerificationResults {
                 }
 
                 // Show skipped fields
-                let skipped: Vec<_> = resource.field_comparisons.iter()
+                let skipped: Vec<_> = resource
+                    .field_comparisons
+                    .iter()
                     .filter(|f| f.skipped)
                     .collect();
 
                 if !skipped.is_empty() {
-                    writeln!(file, "SKIPPED: {} (dynamic fields)",
-                        skipped.iter().map(|f| f.field_name.as_str()).collect::<Vec<_>>().join(", "))?;
+                    writeln!(
+                        file,
+                        "SKIPPED: {} (dynamic fields)",
+                        skipped
+                            .iter()
+                            .map(|f| f.field_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )?;
                 }
 
-                writeln!(file, "Summary: {} matched, {} mismatched, {} skipped",
-                    resource.matched_count, resource.mismatched_count, resource.skipped_count)?;
+                writeln!(
+                    file,
+                    "Summary: {} matched, {} mismatched, {} skipped",
+                    resource.matched_count, resource.mismatched_count, resource.skipped_count
+                )?;
                 writeln!(file)?;
             }
 
@@ -411,18 +460,15 @@ pub fn compare_resources_detailed(
     let field_mappings = get_field_mappings(resource_type);
 
     // Build set of Dash resource IDs
-    let dash_ids: HashSet<String> = dash_resources.iter()
+    let dash_ids: HashSet<String> = dash_resources
+        .iter()
         .map(|r| r.resource_id.clone())
         .collect();
     let cli_ids: HashSet<String> = cli_resource_ids.iter().cloned().collect();
 
     // Find missing resources
-    let missing_in_dash: Vec<String> = cli_ids.difference(&dash_ids)
-        .cloned()
-        .collect();
-    let missing_in_cli: Vec<String> = dash_ids.difference(&cli_ids)
-        .cloned()
-        .collect();
+    let missing_in_dash: Vec<String> = cli_ids.difference(&dash_ids).cloned().collect();
+    let missing_in_cli: Vec<String> = dash_ids.difference(&cli_ids).cloned().collect();
 
     // Compare each resource that exists in both
     let mut resource_comparisons = Vec::new();
@@ -453,7 +499,9 @@ pub fn compare_resources_detailed(
         let cli_json = cli_resource.unwrap();
 
         // Get Dash JSON data - try detailed_properties first, then raw_properties, then properties
-        let dash_json = dash_resource.detailed_properties.as_ref()
+        let dash_json = dash_resource
+            .detailed_properties
+            .as_ref()
             .or(Some(&dash_resource.raw_properties))
             .unwrap_or(&dash_resource.properties);
 
@@ -498,13 +546,8 @@ pub fn compare_resources_detailed(
                 let all_keys: HashSet<&String> = dash_map.keys().chain(cli_map.keys()).collect();
 
                 for key in all_keys {
-                    let comparison = compare_field(
-                        dash_json,
-                        cli_json,
-                        key,
-                        key,
-                        ComparisonType::Exact,
-                    );
+                    let comparison =
+                        compare_field(dash_json, cli_json, key, key, ComparisonType::Exact);
 
                     if comparison.matched {
                         matched_count += 1;
@@ -585,11 +628,10 @@ fn compare_field(
     let matched = match comparison_type {
         ComparisonType::Exact => dash_str == cli_str,
         ComparisonType::CaseInsensitive => {
-            dash_str.as_ref().map(|s| s.to_lowercase()) == cli_str.as_ref().map(|s| s.to_lowercase())
+            dash_str.as_ref().map(|s| s.to_lowercase())
+                == cli_str.as_ref().map(|s| s.to_lowercase())
         }
-        ComparisonType::Numeric => {
-            compare_numeric(&dash_value, &cli_value)
-        }
+        ComparisonType::Numeric => compare_numeric(&dash_value, &cli_value),
         ComparisonType::Ignore => true, // Already handled above
     };
 
@@ -611,8 +653,12 @@ fn value_to_string(value: &Option<Value>) -> Option<String> {
         Some(Value::Bool(b)) => Some(b.to_string()),
         Some(Value::Number(n)) => Some(n.to_string()),
         Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Array(arr)) => Some(serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string())),
-        Some(Value::Object(obj)) => Some(serde_json::to_string(obj).unwrap_or_else(|_| "{}".to_string())),
+        Some(Value::Array(arr)) => {
+            Some(serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string()))
+        }
+        Some(Value::Object(obj)) => {
+            Some(serde_json::to_string(obj).unwrap_or_else(|_| "{}".to_string()))
+        }
     }
 }
 
@@ -703,7 +749,13 @@ mod tests {
         let dash = serde_json::json!({"MemorySize": 128});
         let cli = serde_json::json!({"MemorySize": 256});
 
-        let result = compare_field(&dash, &cli, "MemorySize", "MemorySize", ComparisonType::Numeric);
+        let result = compare_field(
+            &dash,
+            &cli,
+            "MemorySize",
+            "MemorySize",
+            ComparisonType::Numeric,
+        );
         assert!(!result.matched);
         assert_eq!(result.dash_value, Some("128".to_string()));
         assert_eq!(result.cli_value, Some("256".to_string()));
@@ -714,7 +766,13 @@ mod tests {
         let dash = serde_json::json!({"LastModified": "2024-01-01"});
         let cli = serde_json::json!({"LastModified": "2024-12-01"});
 
-        let result = compare_field(&dash, &cli, "LastModified", "LastModified", ComparisonType::Ignore);
+        let result = compare_field(
+            &dash,
+            &cli,
+            "LastModified",
+            "LastModified",
+            ComparisonType::Ignore,
+        );
         assert!(result.matched);
         assert!(result.skipped);
     }
@@ -730,9 +788,18 @@ mod tests {
 
     #[test]
     fn test_value_to_string() {
-        assert_eq!(value_to_string(&Some(serde_json::json!("test"))), Some("test".to_string()));
-        assert_eq!(value_to_string(&Some(serde_json::json!(123))), Some("123".to_string()));
-        assert_eq!(value_to_string(&Some(serde_json::json!(true))), Some("true".to_string()));
+        assert_eq!(
+            value_to_string(&Some(serde_json::json!("test"))),
+            Some("test".to_string())
+        );
+        assert_eq!(
+            value_to_string(&Some(serde_json::json!(123))),
+            Some("123".to_string())
+        );
+        assert_eq!(
+            value_to_string(&Some(serde_json::json!(true))),
+            Some("true".to_string())
+        );
         assert_eq!(value_to_string(&None), None);
     }
 

@@ -18,7 +18,7 @@ pub struct RegionInfo {
 }
 
 /// Get all AWS regions
-fn get_regions() -> Vec<RegionInfo> {
+pub fn get_regions() -> Vec<RegionInfo> {
     crate::app::aws_regions::AWS_REGIONS
         .iter()
         .map(|code| RegionInfo {

@@ -101,7 +101,8 @@ impl LayerContext {
 
     /// Get elapsed time since processing started
     pub fn elapsed_ms(&self) -> Option<u64> {
-        self.processing_start.map(|start| start.elapsed().as_millis() as u64)
+        self.processing_start
+            .map(|start| start.elapsed().as_millis() as u64)
     }
 
     /// Set a metadata value

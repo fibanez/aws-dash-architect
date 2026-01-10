@@ -86,22 +86,17 @@ impl ExplorerTab {
     /// Check if either pane has resources
     pub fn has_resources(&self) -> bool {
         self.left_pane.has_resources()
-            || self
-                .right_pane
-                .as_ref()
-                .is_some_and(|p| p.has_resources())
+            || self.right_pane.as_ref().is_some_and(|p| p.has_resources())
     }
 
     /// Check if either pane is loading
     pub fn is_loading(&self) -> bool {
-        self.left_pane.is_loading()
-            || self.right_pane.as_ref().is_some_and(|p| p.is_loading())
+        self.left_pane.is_loading() || self.right_pane.as_ref().is_some_and(|p| p.is_loading())
     }
 
     /// Get total resource count across both panes
     pub fn resource_count(&self) -> usize {
-        self.left_pane.resource_count()
-            + self.right_pane.as_ref().map_or(0, |p| p.resource_count())
+        self.left_pane.resource_count() + self.right_pane.as_ref().map_or(0, |p| p.resource_count())
     }
 
     /// Render the tab content (panes)

@@ -83,8 +83,6 @@ mod tests {
         assert!(mappings.iter().any(|m| m.dash_field == "ClusterName"));
         assert!(mappings.iter().any(|m| m.dash_field == "ClusterArn"));
         assert!(mappings.iter().any(|m| m.dash_field == "Status"));
-        assert!(mappings
-            .iter()
-            .any(|m| m.dash_field == "RunningTasksCount"));
+        assert!(mappings.iter().any(|m| m.dash_field == "RunningTasksCount"));
     }
 }

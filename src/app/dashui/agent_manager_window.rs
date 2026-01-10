@@ -122,6 +122,35 @@ struct TaskContext {
     _active_task_ids: Vec<AgentId>,
 }
 
+/// Status of a tool call within a worker
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolCallStatus {
+    /// Tool is currently executing
+    Running,
+    /// Tool completed successfully
+    Success,
+    /// Tool failed with error message
+    Failed(String),
+}
+
+/// Record of a single tool call by a worker agent
+#[derive(Debug, Clone)]
+struct ToolCallRecord {
+    /// Name of the tool (e.g., "execute_javascript", "write_file")
+    tool_name: String,
+    /// Human-readable description of what this tool call is doing
+    /// e.g., "Creating HTML structure for Lambda function table"
+    intent: String,
+    /// Tokens used specifically for this tool call (if available)
+    tokens: Option<u32>,
+    /// Current status of this tool call
+    status: ToolCallStatus,
+    /// When the tool call started
+    started_at: std::time::Instant,
+    /// When the tool call completed (if finished)
+    completed_at: Option<std::time::Instant>,
+}
+
 /// Status of an inline worker message
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WorkerMessageStatus {
@@ -142,32 +171,53 @@ struct WorkerInlineMessage {
     short_description: String,
     /// Path to worker's log file
     log_path: Option<std::path::PathBuf>,
-    /// Currently running tool (if any)
-    current_tool: Option<String>,
+    /// History of all tool calls made by this worker
+    tool_calls: Vec<ToolCallRecord>,
     /// Worker status
     status: WorkerMessageStatus,
-    /// Cumulative token usage from model calls
-    total_tokens: u32,
+    /// Whether this is a ToolBuilder worker
+    is_tool_builder: bool,
+    /// Workspace name (for ToolBuilder workers)
+    workspace_name: Option<String>,
+    /// Pending tokens that arrived before any tool calls (to be attributed to next completion)
+    pending_tokens: Option<u32>,
 }
 
 impl WorkerInlineMessage {
     /// Create a new running worker message
-    fn new(worker_id: AgentId, parent_id: AgentId, short_description: String) -> Self {
+    fn new(
+        worker_id: AgentId,
+        parent_id: AgentId,
+        short_description: String,
+        is_tool_builder: bool,
+        workspace_name: Option<String>,
+    ) -> Self {
         Self {
             worker_id,
             parent_id,
             short_description,
             log_path: None,
-            current_tool: None,
+            tool_calls: Vec::new(),
             status: WorkerMessageStatus::Running,
-            total_tokens: 0,
+            is_tool_builder,
+            workspace_name,
+            pending_tokens: None,
         }
     }
 
     /// Mark as completed
     fn mark_completed(&mut self, success: bool) {
         self.status = WorkerMessageStatus::Completed { success };
-        self.current_tool = None;
+    }
+
+    /// Get total tokens across all tool calls
+    fn total_tokens(&self) -> u32 {
+        self.tool_calls.iter().filter_map(|c| c.tokens).sum()
+    }
+
+    /// Check if worker has any running tool calls
+    fn has_running_tools(&self) -> bool {
+        self.tool_calls.iter().any(|c| matches!(c.status, ToolCallStatus::Running))
     }
 }
 
@@ -223,6 +273,14 @@ pub struct AgentManagerWindow {
     /// Soft-maximize state - see module docs for implementation guide
     /// Tracks: is_maximized, restore_pos, restore_size
     maximize_state: WindowMaximizeState,
+
+    // Agent type selection dialog state
+    show_agent_type_dialog: bool,
+    selected_agent_type: Option<AgentType>,
+    new_agent_name: String,
+    tool_workspace_name: String,
+    dialog_selected_model: AgentModel,
+    dialog_selected_log_level: StoodLogLevel,
 }
 
 impl Default for AgentManagerWindow {
@@ -252,6 +310,12 @@ impl AgentManagerWindow {
             status_widgets: HashMap::new(),
             worker_inline_messages: HashMap::new(),
             maximize_state: WindowMaximizeState::new(),
+            show_agent_type_dialog: false,
+            selected_agent_type: None,
+            new_agent_name: String::new(),
+            tool_workspace_name: String::new(),
+            dialog_selected_model: AgentModel::default(),
+            dialog_selected_log_level: StoodLogLevel::default(),
         }
     }
 
@@ -299,12 +363,8 @@ impl AgentManagerWindow {
     }
 
     pub fn show(&mut self, ctx: &Context) {
+        // Delegate to show_with_focus (which handles dialogs and log window)
         self.show_with_focus(ctx, (), false);
-
-        // Show agent log window if open
-        if self.agent_log_window.is_open() {
-            self.agent_log_window.show(ctx, false);
-        }
     }
 
     fn ui_content(&mut self, ui: &mut Ui) {
@@ -329,175 +389,133 @@ impl AgentManagerWindow {
                     ScrollArea::both()
                         .id_salt("left_pane_scroll")
                         .show(ui, |ui| {
-                    ui.heading(RichText::new("Agents").size(14.0));
+                            // [+] New Agent button
+                            if ui.button("+ New Agent").clicked() {
+                                log::info!("New Agent button clicked - showing agent creation dialog");
+                                self.show_agent_type_dialog = true;
+                                self.selected_agent_type = Some(AgentType::TaskManager); // Default to TaskManager
+                                self.new_agent_name = format!("Agent {}", self.agents.len() + 1);
+                                // Initialize dialog with current global settings
+                                self.dialog_selected_model = self.selected_model;
+                                self.dialog_selected_log_level = self.stood_log_level;
+                            }
 
-                    // Stood log level dropdown
-                    ui.horizontal(|ui| {
-                        ui.label("Logs:");
-                        let current_level = self.stood_log_level;
-                        egui::ComboBox::from_id_salt("stood_log_level")
-                            .selected_text(current_level.display_name())
-                            .width(60.0)
-                            .show_ui(ui, |ui| {
-                                for level in StoodLogLevel::all() {
-                                    if ui
-                                        .selectable_label(
-                                            self.stood_log_level == *level,
-                                            level.display_name(),
-                                        )
-                                        .clicked()
-                                        && self.stood_log_level != *level
-                                    {
-                                        let old_level = self.stood_log_level;
-                                        self.stood_log_level = *level;
+                            // Space after New Agent button
+                            ui.add_space(10.0);
 
-                                        // Update global tracing filter
-                                        crate::set_stood_log_level(*level);
+                            // Collect agent info (only show TaskManager agents)
+                            // Worker agents (TaskWorker and ToolBuilderWorker) work in background
+                            let agent_list: Vec<(AgentId, String)> = self
+                                .agents
+                                .iter()
+                                .filter(|(_, agent)| {
+                                    matches!(agent.agent_type(), AgentType::TaskManager)
+                                })
+                                .map(|(agent_id, agent)| (*agent_id, agent.metadata().name.clone()))
+                                .collect();
 
-                                        // Update all agents with new log level
-                                        for agent in self.agents.values_mut() {
-                                            agent.set_stood_log_level(*level);
+                            let mut clicked_agent_id: Option<AgentId> = None;
+                            let mut start_editing_id: Option<AgentId> = None;
+                            let mut finish_editing = false;
+                            let mut cancel_editing = false;
+
+                            // Agent list - no nested scroll area needed since parent scrolls
+                            if agent_list.is_empty() {
+                                ui.label(RichText::new("No agents").weak());
+                            } else {
+                                for (agent_id, name) in agent_list {
+                                    let is_selected = self.selected_agent_id == Some(agent_id);
+                                    let is_editing = self.editing_agent_name == Some(agent_id);
+
+                                    if is_editing {
+                                        // Show text edit for renaming
+                                        let response = ui.add(
+                                            egui::TextEdit::singleline(&mut self.temp_agent_name)
+                                                .desired_width(100.0),
+                                        );
+
+                                        // Request focus on first frame of editing
+                                        response.request_focus();
+
+                                        // Check for Enter key while field has focus
+                                        let enter_pressed =
+                                            ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                        let escape_pressed =
+                                            ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                                        if escape_pressed {
+                                            cancel_editing = true;
+                                        } else if enter_pressed || response.lost_focus() {
+                                            // Enter pressed or clicked elsewhere
+                                            finish_editing = true;
+                                        }
+                                    } else {
+                                        // Agent list item - larger button with better styling
+                                        let button_text = RichText::new(&name).size(14.0);
+                                        let button = egui::Button::new(button_text)
+                                            .fill(if is_selected {
+                                                ui.visuals().selection.bg_fill
+                                            } else {
+                                                ui.visuals().widgets.inactive.bg_fill
+                                            })
+                                            .min_size(egui::vec2(ui.available_width(), 32.0));
+
+                                        let response = ui.add(button);
+
+                                        if response.clicked() {
+                                            clicked_agent_id = Some(agent_id);
                                         }
 
-                                        tracing::info!(
-                                            old_level = %old_level.display_name(),
-                                            new_level = %level.display_name(),
-                                            "Stood log level changed"
-                                        );
+                                        // Double-click to edit name
+                                        if response.double_clicked() {
+                                            start_editing_id = Some(agent_id);
+                                        }
                                     }
                                 }
-                            });
-                    });
+                            }
 
-                    ui.add_space(5.0);
-
-                    // Model selection dropdown
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_salt("model_selector")
-                            .selected_text(self.selected_model.display_name())
-                            .width(120.0)
-                            .show_ui(ui, |ui| {
-                                for model in AgentModel::all_models() {
-                                    ui.selectable_value(
-                                        &mut self.selected_model,
-                                        *model,
-                                        model.display_name(),
-                                    );
-                                }
-                            });
-                    });
-
-                    ui.add_space(5.0);
-
-                    // [+] New Agent button
-                    if ui.button("+ New Agent").clicked() {
-                        log::info!("New Agent button clicked");
-                        self.create_new_agent();
-                    }
-
-                    // Separator after New Agent button
-                    ui.separator();
-
-                    // Collect agent info (exclude TaskWorker agents - they are shown inline)
-                    let agent_list: Vec<(AgentId, String)> = self
-                        .agents
-                        .iter()
-                        .filter(|(_, agent)| !matches!(agent.agent_type(), AgentType::TaskWorker { .. }))
-                        .map(|(agent_id, agent)| (*agent_id, agent.metadata().name.clone()))
-                        .collect();
-
-                    let mut clicked_agent_id: Option<AgentId> = None;
-                    let mut start_editing_id: Option<AgentId> = None;
-                    let mut finish_editing = false;
-                    let mut cancel_editing = false;
-
-                    // Agent list - no nested scroll area needed since parent scrolls
-                    if agent_list.is_empty() {
-                        ui.label(RichText::new("No agents").weak());
-                    } else {
-                        for (agent_id, name) in agent_list {
-                            let is_selected = self.selected_agent_id == Some(agent_id);
-                            let is_editing = self.editing_agent_name == Some(agent_id);
-
-                            if is_editing {
-                                // Show text edit for renaming
-                                let response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.temp_agent_name)
-                                        .desired_width(100.0),
-                                );
-
-                                // Request focus on first frame of editing
-                                response.request_focus();
-
-                                // Check for Enter key while field has focus
-                                let enter_pressed =
-                                    ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                let escape_pressed =
-                                    ui.input(|i| i.key_pressed(egui::Key::Escape));
-
-                                if escape_pressed {
-                                    cancel_editing = true;
-                                } else if enter_pressed || response.lost_focus() {
-                                    // Enter pressed or clicked elsewhere
-                                    finish_editing = true;
-                                }
-                            } else {
-                                // Agent list item - use full width for better clickability
-                                let response = ui.selectable_label(is_selected, &name);
-
-                                if response.clicked() {
-                                    clicked_agent_id = Some(agent_id);
-                                }
-
-                                // Double-click to edit name
-                                if response.double_clicked() {
-                                    start_editing_id = Some(agent_id);
+                            // Handle editing state changes
+                            if let Some(agent_id) = start_editing_id {
+                                if let Some(agent) = self.agents.get(&agent_id) {
+                                    self.temp_agent_name = agent.metadata().name.clone();
+                                    self.editing_agent_name = Some(agent_id);
                                 }
                             }
-                        }
-                    }
 
-                    // Handle editing state changes
-                    if let Some(agent_id) = start_editing_id {
-                        if let Some(agent) = self.agents.get(&agent_id) {
-                            self.temp_agent_name = agent.metadata().name.clone();
-                            self.editing_agent_name = Some(agent_id);
-                        }
-                    }
-
-                    if finish_editing {
-                        if let Some(agent_id) = self.editing_agent_name.take() {
-                            let new_name = self.temp_agent_name.trim().to_string();
-                            if !new_name.is_empty() {
-                                if let Some(agent) = self.agents.get_mut(&agent_id) {
-                                    let old_name = agent.metadata().name.clone();
-                                    agent.metadata_mut().name = new_name.clone();
-                                    // Update logger with new name
-                                    agent
-                                        .logger()
-                                        .update_agent_name(&agent.agent_type(), new_name.clone());
-                                    log::info!(
-                                        "Agent {} renamed from '{}' to '{}'",
-                                        agent_id,
-                                        old_name,
-                                        new_name
-                                    );
+                            if finish_editing {
+                                if let Some(agent_id) = self.editing_agent_name.take() {
+                                    let new_name = self.temp_agent_name.trim().to_string();
+                                    if !new_name.is_empty() {
+                                        if let Some(agent) = self.agents.get_mut(&agent_id) {
+                                            let old_name = agent.metadata().name.clone();
+                                            agent.metadata_mut().name = new_name.clone();
+                                            // Update logger with new name
+                                            agent.logger().update_agent_name(
+                                                &agent.agent_type(),
+                                                new_name.clone(),
+                                            );
+                                            log::info!(
+                                                "Agent {} renamed from '{}' to '{}'",
+                                                agent_id,
+                                                old_name,
+                                                new_name
+                                            );
+                                        }
+                                    }
                                 }
+                                self.temp_agent_name.clear();
                             }
-                        }
-                        self.temp_agent_name.clear();
-                    }
 
-                    if cancel_editing {
-                        self.editing_agent_name = None;
-                        self.temp_agent_name.clear();
-                    }
+                            if cancel_editing {
+                                self.editing_agent_name = None;
+                                self.temp_agent_name.clear();
+                            }
 
-                    // Handle selection
-                    if let Some(agent_id) = clicked_agent_id {
-                        self.select_agent(agent_id);
-                    }
-                    }); // Close ScrollArea::both
+                            // Handle selection
+                            if let Some(agent_id) = clicked_agent_id {
+                                self.select_agent(agent_id);
+                            }
+                        }); // Close ScrollArea::both
                 });
 
                 // RIGHT PANE: Agent chat view - fills remaining space
@@ -510,43 +528,124 @@ impl AgentManagerWindow {
             });
     }
 
-    /// Create a new agent instance
+    /// Show agent creation dialog (simplified - always creates TaskManager)
+    fn show_agent_type_selection_dialog(&mut self, ctx: &Context) {
+        let mut should_create = false;
+        let mut open = self.show_agent_type_dialog;
+
+        egui::Window::new("Create New Agent")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(400.0);
+
+                ui.heading("New Agent");
+                ui.add_space(10.0);
+
+                // Agent Name
+                ui.label("Agent Name:");
+                ui.text_edit_singleline(&mut self.new_agent_name);
+                ui.add_space(10.0);
+
+                // Model selection
+                ui.horizontal(|ui| {
+                    ui.label("Model:");
+                    egui::ComboBox::from_id_salt("dialog_model_selector")
+                        .selected_text(self.dialog_selected_model.display_name())
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            for model in AgentModel::all_models() {
+                                ui.selectable_value(
+                                    &mut self.dialog_selected_model,
+                                    *model,
+                                    model.display_name(),
+                                );
+                            }
+                        });
+                });
+                ui.add_space(10.0);
+
+                // Log level selection
+                ui.horizontal(|ui| {
+                    ui.label("Debug Level:");
+                    egui::ComboBox::from_id_salt("dialog_log_level_selector")
+                        .selected_text(self.dialog_selected_log_level.display_name())
+                        .width(120.0)
+                        .show_ui(ui, |ui| {
+                            for level in StoodLogLevel::all() {
+                                ui.selectable_value(
+                                    &mut self.dialog_selected_log_level,
+                                    *level,
+                                    level.display_name(),
+                                );
+                            }
+                        });
+                });
+                ui.add_space(15.0);
+
+                // Create button
+                let can_create = !self.new_agent_name.trim().is_empty();
+
+                if ui
+                    .add_enabled(can_create, egui::Button::new("Create Agent"))
+                    .clicked()
+                {
+                    should_create = true;
+                }
+            });
+
+        self.show_agent_type_dialog = open;
+
+        // Create agent after dialog closes to avoid borrow conflicts
+        if should_create {
+            self.create_new_agent();
+            self.show_agent_type_dialog = false;
+        }
+    }
+
+    /// Create a new agent instance (always creates TaskManager)
     fn create_new_agent(&mut self) {
         let _timing = perf_guard!("create_new_agent");
         use crate::app::agent_framework::AgentMetadata;
         use chrono::Utc;
 
-        // Generate default name
-        let agent_count = self.agents.len();
-        let default_name = format!("Agent {}", agent_count + 1);
+        // Use agent name from dialog or generate default
+        let agent_name = if !self.new_agent_name.is_empty() {
+            self.new_agent_name.clone()
+        } else {
+            format!("Agent {}", self.agents.len() + 1)
+        };
+
+        // Always create TaskManager agents
+        let agent_type = AgentType::TaskManager;
 
         log::info!(
-            "Creating new agent: {} with model {} (current agent count: {})",
-            default_name,
-            self.selected_model,
-            agent_count
+            "Creating new agent: {} with model {} and log level {}",
+            agent_name,
+            self.dialog_selected_model,
+            self.dialog_selected_log_level
         );
 
-        perf_checkpoint!("create_new_agent.building_metadata", &default_name);
+        perf_checkpoint!("create_new_agent.building_metadata", &agent_name);
 
         let metadata = AgentMetadata {
-            name: default_name.clone(),
-            description: "New agent".to_string(),
-            model: self.selected_model,
+            name: agent_name.clone(),
+            description: "General purpose agent".to_string(),
+            model: self.dialog_selected_model,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
-        // Always create TaskManager agents
-        // Future: Add UI for selecting agent type
         perf_checkpoint!("create_new_agent.creating_agent_instance");
         let mut agent = perf_timed!("create_new_agent.AgentInstance_new", {
-            AgentInstance::new(metadata, AgentType::TaskManager)
+            AgentInstance::new(metadata, agent_type, None)
         });
         let agent_id = agent.id();
 
-        // Set the current stood log level on new agent
-        agent.set_stood_log_level(self.stood_log_level);
+        // Set the log level from dialog on new agent
+        agent.set_stood_log_level(self.dialog_selected_log_level);
 
         // Initialize agent with AWS credentials
         if let Some(aws_identity) = &self.aws_identity {
@@ -562,7 +661,7 @@ impl AgentManagerWindow {
                 Ok(_) => {
                     log::info!(
                         "Agent {} initialized successfully (ID: {})",
-                        default_name,
+                        agent_name,
                         agent_id
                     );
                     perf_checkpoint!("create_new_agent.inserting_into_map");
@@ -573,11 +672,101 @@ impl AgentManagerWindow {
                     perf_checkpoint!("create_new_agent.complete");
                 }
                 Err(e) => {
-                    log::error!("Failed to initialize agent {}: {}", default_name, e);
+                    log::error!("Failed to initialize agent {}: {}", agent_name, e);
                 }
             }
         } else {
             log::error!("Cannot create agent: AWS Identity not set");
+        }
+    }
+
+    /// Create an agent for editing an existing page
+    ///
+    /// This creates a TaskManager agent with the page workspace set,
+    /// opens the page preview, and sends an initial message prompting
+    /// the user to describe what changes they want to make.
+    fn create_agent_for_page_edit(&mut self, page_name: String) {
+        use crate::app::agent_framework::AgentMetadata;
+        use chrono::Utc;
+
+        let agent_name = format!("Edit: {}", page_name);
+        let agent_type = AgentType::TaskManager;
+
+        tracing::info!(
+            "Creating agent for page edit: {} with model {}",
+            agent_name,
+            self.dialog_selected_model
+        );
+
+        let metadata = AgentMetadata {
+            name: agent_name.clone(),
+            description: format!("Editing page: {}", page_name),
+            model: self.dialog_selected_model,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let mut agent = AgentInstance::new(metadata, agent_type, None);
+        let agent_id = agent.id();
+
+        // Set the page workspace so edit_page tool knows which page to modify
+        agent.set_current_page_workspace(Some(page_name.clone()));
+
+        // Set the log level
+        agent.set_stood_log_level(self.dialog_selected_log_level);
+
+        // Initialize agent with AWS credentials
+        if let Some(aws_identity) = &self.aws_identity {
+            let init_result =
+                agent.initialize(&mut aws_identity.lock().unwrap(), self.agent_logging_enabled);
+
+            match init_result {
+                Ok(_) => {
+                    tracing::info!(
+                        "Page edit agent {} initialized successfully (ID: {})",
+                        agent_name,
+                        agent_id
+                    );
+
+                    // Insert agent and select it
+                    self.agents.insert(agent_id, agent);
+                    self.select_agent(agent_id);
+
+                    // Open the window if not already open
+                    self.open();
+
+                    // Open page preview in a separate webview
+                    let page_name_clone = page_name.clone();
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("Failed to create tokio runtime");
+                        rt.block_on(async move {
+                            let page_url = format!(
+                                "wry://localhost/pages/{}/index.html",
+                                page_name_clone
+                            );
+                            if let Err(e) = crate::app::webview::open_page_preview(
+                                &page_name_clone,
+                                &page_url,
+                            )
+                            .await
+                            {
+                                tracing::warn!("Failed to open page preview: {}", e);
+                            }
+                        });
+                    });
+
+                    tracing::info!(
+                        "Page edit agent created for '{}'. User can now describe changes.",
+                        page_name
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize page edit agent {}: {}", agent_name, e);
+                }
+            }
+        } else {
+            tracing::error!("Cannot create page edit agent: AWS Identity not set");
         }
     }
 
@@ -602,7 +791,10 @@ impl AgentManagerWindow {
 
         // Only log if we have events to process
         if !events.is_empty() {
-            perf_checkpoint!("UI.process_ui_events.start", &format!("event_count={}", events.len()));
+            perf_checkpoint!(
+                "UI.process_ui_events.start",
+                &format!("event_count={}", events.len())
+            );
         }
 
         // Now process events without holding the lock
@@ -632,12 +824,14 @@ impl AgentManagerWindow {
                     );
                     self.handle_agent_completion(agent_id);
                 }
-                // Worker progress events - inline display implementation pending
+                // Worker progress events - inline display
                 AgentUIEvent::WorkerStarted {
                     worker_id,
                     parent_id,
                     short_description,
                     message_index,
+                    is_tool_builder,
+                    workspace_name,
                 } => {
                     tracing::debug!(
                         target: "agent::ui_events",
@@ -645,29 +839,41 @@ impl AgentManagerWindow {
                         parent_id = %parent_id,
                         short_description = %short_description,
                         message_index = message_index,
+                        is_tool_builder = is_tool_builder,
+                        workspace_name = ?workspace_name,
                         "UI event: Worker started"
                     );
-                    self.handle_worker_started(worker_id, parent_id, short_description, message_index);
+                    self.handle_worker_started(
+                        worker_id,
+                        parent_id,
+                        short_description,
+                        message_index,
+                        is_tool_builder,
+                        workspace_name,
+                    );
                 }
                 AgentUIEvent::WorkerToolStarted {
                     worker_id,
                     parent_id,
                     tool_name,
+                    intent,
                 } => {
                     tracing::debug!(
                         target: "agent::ui_events",
                         worker_id = %worker_id,
                         parent_id = %parent_id,
                         tool_name = %tool_name,
+                        intent = %intent,
                         "UI event: Worker tool started"
                     );
-                    self.handle_worker_tool_started(worker_id, tool_name);
+                    self.handle_worker_tool_started(worker_id, tool_name, intent);
                 }
                 AgentUIEvent::WorkerToolCompleted {
                     worker_id,
                     parent_id,
                     tool_name,
                     success,
+                    tokens_used,
                 } => {
                     tracing::debug!(
                         target: "agent::ui_events",
@@ -675,9 +881,10 @@ impl AgentManagerWindow {
                         parent_id = %parent_id,
                         tool_name = %tool_name,
                         success = success,
+                        tokens_used = ?tokens_used,
                         "UI event: Worker tool completed"
                     );
-                    self.handle_worker_tool_completed(worker_id, tool_name, success);
+                    self.handle_worker_tool_completed(worker_id, tool_name, success, tokens_used);
                 }
                 AgentUIEvent::WorkerCompleted {
                     worker_id,
@@ -708,6 +915,15 @@ impl AgentManagerWindow {
                     );
                     self.handle_worker_tokens_updated(worker_id, total_tokens);
                 }
+                // Page management events
+                AgentUIEvent::OpenPageForEdit { page_name } => {
+                    tracing::info!(
+                        target: "agent::ui_events",
+                        page_name = %page_name,
+                        "UI event: Open page for edit"
+                    );
+                    self.create_agent_for_page_edit(page_name);
+                }
             }
         }
     }
@@ -735,8 +951,16 @@ impl AgentManagerWindow {
         parent_id: AgentId,
         short_description: String,
         message_index: usize,
+        is_tool_builder: bool,
+        workspace_name: Option<String>,
     ) {
-        let mut message = WorkerInlineMessage::new(worker_id, parent_id, short_description);
+        let mut message = WorkerInlineMessage::new(
+            worker_id,
+            parent_id,
+            short_description,
+            is_tool_builder,
+            workspace_name,
+        );
 
         // Try to get log path from the worker agent's logger
         if let Some(agent) = self.agents.get(&worker_id) {
@@ -760,38 +984,103 @@ impl AgentManagerWindow {
 
     /// Handle worker tool started event
     ///
-    /// Updates the current tool for the worker's inline message.
-    fn handle_worker_tool_started(&mut self, worker_id: AgentId, tool_name: String) {
-        // Find the worker in any message index and update current_tool
-        for workers in self.worker_inline_messages.values_mut() {
+    /// Adds a new tool call record to the worker's history.
+    fn handle_worker_tool_started(&mut self, worker_id: AgentId, tool_name: String, intent: String) {
+        perf_checkpoint!(
+            "manager.event_received.tool_started",
+            &format!("worker={} tool={} intent={}", worker_id, tool_name, intent)
+        );
+
+        // Find the worker in any message index and add tool call record
+        for (msg_idx, workers) in self.worker_inline_messages.iter_mut() {
             if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
-                worker.current_tool = Some(tool_name.clone());
+                worker.tool_calls.push(ToolCallRecord {
+                    tool_name: tool_name.clone(),
+                    intent: intent.clone(),
+                    tokens: None,
+                    status: ToolCallStatus::Running,
+                    started_at: std::time::Instant::now(),
+                    completed_at: None,
+                });
+
+                perf_checkpoint!(
+                    "manager.tool_started.recorded",
+                    &format!("worker={} msg_idx={} tool={} total_calls={}",
+                        worker_id, msg_idx, tool_name, worker.tool_calls.len())
+                );
                 return;
             }
         }
+
+        perf_checkpoint!(
+            "manager.tool_started.worker_not_found",
+            &format!("worker={} tool={}", worker_id, tool_name)
+        );
     }
 
     /// Handle worker tool completed event
     ///
-    /// Clears the current tool for the worker's inline message.
+    /// Updates the status of the most recent running tool call.
     fn handle_worker_tool_completed(
         &mut self,
         worker_id: AgentId,
-        _tool_name: String,
-        _success: bool,
+        tool_name: String,
+        success: bool,
+        tokens: Option<u32>,
     ) {
-        // Find the worker and clear current_tool
-        for workers in self.worker_inline_messages.values_mut() {
+        perf_checkpoint!(
+            "manager.event_received.tool_completed",
+            &format!("worker={} tool={} success={} tokens={:?}",
+                worker_id, tool_name, success, tokens)
+        );
+
+        // Find the worker and update the last running tool call with this name
+        for (msg_idx, workers) in self.worker_inline_messages.iter_mut() {
             if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
-                worker.current_tool = None;
+                // Find the last Running tool call with this name
+                if let Some(call) = worker
+                    .tool_calls
+                    .iter_mut()
+                    .filter(|c| c.tool_name == tool_name)
+                    .filter(|c| matches!(c.status, ToolCallStatus::Running))
+                    .last()
+                {
+                    let duration = call.started_at.elapsed();
+                    call.status = if success {
+                        ToolCallStatus::Success
+                    } else {
+                        ToolCallStatus::Failed("Tool execution failed".to_string())
+                    };
+
+                    // Use provided tokens, or pending tokens if available
+                    call.tokens = tokens.or(worker.pending_tokens.take());
+                    call.completed_at = Some(std::time::Instant::now());
+
+                    perf_checkpoint!(
+                        "manager.tool_completed.recorded",
+                        &format!("worker={} msg_idx={} tool={} success={} duration_ms={} tokens={:?} intent={}",
+                            worker_id, msg_idx, tool_name, success, duration.as_millis(), call.tokens, call.intent)
+                    );
+                } else {
+                    perf_checkpoint!(
+                        "manager.tool_completed.no_running_call",
+                        &format!("worker={} tool={}", worker_id, tool_name)
+                    );
+                }
                 return;
             }
         }
+
+        perf_checkpoint!(
+            "manager.tool_completed.worker_not_found",
+            &format!("worker={} tool={}", worker_id, tool_name)
+        );
     }
 
     /// Handle worker completed event
     ///
-    /// Marks the worker as completed in its inline message.
+    /// Marks the worker as completed in its inline message and removes
+    /// the worker agent from memory to free resources.
     fn handle_worker_completed(&mut self, worker_id: AgentId, success: bool) {
         // Find the worker and mark as completed
         for workers in self.worker_inline_messages.values_mut() {
@@ -801,24 +1090,72 @@ impl AgentManagerWindow {
                     target: "agent::ui_events",
                     worker_id = %worker_id,
                     success = success,
-                    "Worker marked as completed"
+                    "Worker marked as completed in inline display"
                 );
-                return;
+                break;
             }
+        }
+
+        // Remove worker agent from memory to free resources
+        // Worker agents work in background and should not be kept after completion
+        if self.agents.remove(&worker_id).is_some() {
+            self.status_widgets.remove(&worker_id);
+            tracing::info!(
+                target: "agent::ui_events",
+                worker_id = %worker_id,
+                "Worker agent removed from memory after completion"
+            );
         }
     }
 
     /// Handle worker tokens updated event
     ///
-    /// Updates the cumulative token count for a worker's inline message.
+    /// Tokens can arrive either:
+    /// 1. BEFORE any tools (initial model thinking) → buffer as pending_tokens
+    /// 2. AFTER a tool batch completes → attribute to last completed call without tokens
     fn handle_worker_tokens_updated(&mut self, worker_id: AgentId, total_tokens: u32) {
-        // Find the worker and update token count
-        for workers in self.worker_inline_messages.values_mut() {
+        perf_checkpoint!(
+            "manager.event_received.tokens_updated",
+            &format!("worker={} tokens={}", worker_id, total_tokens)
+        );
+
+        // Find the worker
+        for (msg_idx, workers) in self.worker_inline_messages.iter_mut() {
             if let Some(worker) = workers.iter_mut().find(|w| w.worker_id == worker_id) {
-                worker.total_tokens = total_tokens;
+                // Try to find a completed tool call without tokens
+                if let Some(call) = worker
+                    .tool_calls
+                    .iter_mut()
+                    .filter(|c| !matches!(c.status, ToolCallStatus::Running))  // Completed
+                    .filter(|c| c.tokens.is_none())  // No tokens yet
+                    .last()
+                {
+                    // Attribute to this call
+                    call.tokens = Some(total_tokens);
+
+                    perf_checkpoint!(
+                        "manager.tokens_updated.attributed_to_call",
+                        &format!("worker={} msg_idx={} tool={} tokens={} intent={}",
+                            worker_id, msg_idx, call.tool_name, total_tokens, call.intent)
+                    );
+                } else {
+                    // No completed calls yet - buffer tokens for next completion
+                    worker.pending_tokens = Some(total_tokens);
+
+                    perf_checkpoint!(
+                        "manager.tokens_updated.buffered",
+                        &format!("worker={} tokens={} total_calls={} (tokens will be attributed to next completion)",
+                            worker_id, total_tokens, worker.tool_calls.len())
+                    );
+                }
                 return;
             }
         }
+
+        perf_checkpoint!(
+            "manager.tokens_updated.worker_not_found",
+            &format!("worker={} tokens={}", worker_id, total_tokens)
+        );
     }
 
     /// Convert worker inline messages to display format for rendering
@@ -829,26 +1166,99 @@ impl AgentManagerWindow {
         &self,
         parent_id: AgentId,
     ) -> HashMap<usize, Vec<InlineWorkerDisplay>> {
+        use crate::app::agent_framework::ui::events::{
+            ToolCallDisplayRecord, ToolCallStatus as DisplayStatus,
+        };
+
+        tracing::trace!(
+            target: "agent::ui_render",
+            parent_id = %parent_id,
+            total_message_indices = self.worker_inline_messages.len(),
+            "Converting workers to display format"
+        );
+
         let mut result: HashMap<usize, Vec<InlineWorkerDisplay>> = HashMap::new();
 
         for (message_index, workers) in &self.worker_inline_messages {
+            let workers_for_parent = workers.iter().filter(|w| w.parent_id == parent_id).count();
+
+            if workers_for_parent > 0 {
+                tracing::trace!(
+                    target: "agent::ui_render",
+                    parent_id = %parent_id,
+                    message_index = message_index,
+                    workers_count = workers_for_parent,
+                    "Converting workers at message index"
+                );
+            }
+
             let filtered: Vec<InlineWorkerDisplay> = workers
                 .iter()
                 .filter(|w| w.parent_id == parent_id)
-                .map(|w| InlineWorkerDisplay {
-                    short_description: w.short_description.clone(),
-                    current_tool: w.current_tool.clone(),
-                    is_running: w.status == WorkerMessageStatus::Running,
-                    success: matches!(w.status, WorkerMessageStatus::Completed { success: true }),
-                    log_path: w.log_path.clone(),
-                    total_tokens: w.total_tokens,
+                .map(|w| {
+                    // Convert internal ToolCallRecord to display format
+                    let tool_calls = w
+                        .tool_calls
+                        .iter()
+                        .map(|tc| ToolCallDisplayRecord {
+                            tool_name: tc.tool_name.clone(),
+                            intent: tc.intent.clone(),
+                            tokens: tc.tokens,
+                            status: match &tc.status {
+                                ToolCallStatus::Running => DisplayStatus::Running,
+                                ToolCallStatus::Success => DisplayStatus::Success,
+                                ToolCallStatus::Failed(err) => DisplayStatus::Failed(err.clone()),
+                            },
+                            started_at: tc.started_at,
+                            completed_at: tc.completed_at,
+                        })
+                        .collect::<Vec<_>>();
+
+                    let total_tokens: u32 = tool_calls.iter().filter_map(|tc| tc.tokens).sum();
+
+                    tracing::trace!(
+                        target: "agent::ui_render",
+                        worker_id = %w.worker_id,
+                        short_description = %w.short_description,
+                        tool_call_count = tool_calls.len(),
+                        total_tokens = total_tokens,
+                        is_running = w.status == WorkerMessageStatus::Running,
+                        is_tool_builder = w.is_tool_builder,
+                        "Converted worker to display format"
+                    );
+
+                    InlineWorkerDisplay {
+                        short_description: w.short_description.clone(),
+                        tool_calls,
+                        is_running: w.status == WorkerMessageStatus::Running,
+                        success: matches!(w.status, WorkerMessageStatus::Completed { success: true }),
+                        log_path: w.log_path.clone(),
+                        is_tool_builder: w.is_tool_builder,
+                        workspace_name: w.workspace_name.clone(),
+                    }
                 })
                 .collect();
 
             if !filtered.is_empty() {
+                tracing::trace!(
+                    target: "agent::ui_render",
+                    parent_id = %parent_id,
+                    message_index = message_index,
+                    worker_count = filtered.len(),
+                    "Added workers to result"
+                );
                 result.insert(*message_index, filtered);
             }
         }
+
+        let total_workers: usize = result.values().map(|v| v.len()).sum();
+        tracing::trace!(
+            target: "agent::ui_render",
+            parent_id = %parent_id,
+            message_indices = result.len(),
+            total_workers = total_workers,
+            "Completed conversion to display format"
+        );
 
         result
     }
@@ -875,27 +1285,30 @@ impl AgentManagerWindow {
 
         // Only log if we have requests to process
         if !requests.is_empty() {
-            perf_checkpoint!("UI.process_agent_creation_requests.start", &format!("request_count={}", requests.len()));
+            perf_checkpoint!(
+                "UI.process_agent_creation_requests.start",
+                &format!("request_count={}", requests.len())
+            );
         }
 
         // Process each request
         for request in requests {
             tracing::debug!(
                 target: "agent::creation",
-                request_id = request.request_id,
-                parent_id = %request.parent_id,
+                request_id = request.request_id(),
+                parent_id = %request.parent_id(),
                 "Processing agent creation request"
             );
 
             match self.handle_agent_creation_request(&request) {
                 Ok(agent_id) => {
                     // Send success response
-                    if let Some(response_sender) = take_response_channel(request.request_id) {
+                    if let Some(response_sender) = take_response_channel(request.request_id()) {
                         let response = AgentCreationResponse::success(agent_id);
                         if let Err(e) = response_sender.send(response) {
                             tracing::error!(
                                 target: "agent::creation",
-                                request_id = request.request_id,
+                                request_id = request.request_id(),
                                 error = %e,
                                 "Failed to send agent creation success response"
                             );
@@ -904,12 +1317,12 @@ impl AgentManagerWindow {
                 }
                 Err(error) => {
                     // Send error response
-                    if let Some(response_sender) = take_response_channel(request.request_id) {
+                    if let Some(response_sender) = take_response_channel(request.request_id()) {
                         let response = AgentCreationResponse::error(AgentId::new(), error.clone());
                         if let Err(e) = response_sender.send(response) {
                             tracing::error!(
                                 target: "agent::creation",
-                                request_id = request.request_id,
+                                request_id = request.request_id(),
                                 error = %e,
                                 "Failed to send agent creation error response"
                             );
@@ -928,7 +1341,14 @@ impl AgentManagerWindow {
         &mut self,
         request: &AgentCreationRequest,
     ) -> Result<AgentId, String> {
-        perf_checkpoint!("UI.handle_agent_creation_request.start", &format!("parent_id={}, task={}", request.parent_id, &request.short_description));
+        perf_checkpoint!(
+            "UI.handle_agent_creation_request.start",
+            &format!(
+                "parent_id={}, task={}",
+                request.parent_id(),
+                request.short_description().unwrap_or("Worker")
+            )
+        );
         let _creation_guard = perf_guard!("UI.handle_agent_creation_request");
 
         use crate::app::agent_framework::AgentMetadata;
@@ -938,47 +1358,93 @@ impl AgentManagerWindow {
         let parent_model = {
             let parent_agent = self
                 .agents
-                .get(&request.parent_id)
-                .ok_or_else(|| format!("Parent agent {} not found", request.parent_id))?;
+                .get(&request.parent_id())
+                .ok_or_else(|| format!("Parent agent {} not found", request.parent_id()))?;
             parent_agent.metadata().model
-        };
-
-        // Generate agent name
-        let worker_count = self
-            .agents
-            .values()
-            .filter(|a| matches!(a.agent_type(), AgentType::TaskWorker { .. }))
-            .count();
-        let default_name = format!("Task Worker {}", worker_count + 1);
-
-        // Create metadata (inherit parent's model)
-        let metadata = AgentMetadata {
-            name: default_name.clone(),
-            description: format!("Task: {}", request.task_description),
-            model: parent_model,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
         };
 
         // Get parent agent's logger to share with worker
         let parent_logger = {
             let parent_agent = self
                 .agents
-                .get(&request.parent_id)
-                .ok_or_else(|| format!("Parent agent {} not found", request.parent_id))?;
+                .get(&request.parent_id())
+                .ok_or_else(|| format!("Parent agent {} not found", request.parent_id()))?;
             parent_agent.logger().clone()
         };
 
-        // Create TaskWorker agent with parent_id and parent's logger
-        perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.start");
-        let agent_type = AgentType::TaskWorker {
-            parent_id: request.parent_id,
+        // Create agent based on request type
+        let (agent_type, agent_name, short_description, initial_message) = match request {
+            AgentCreationRequest::TaskWorker {
+                short_description,
+                task_description,
+                ..
+            } => {
+                // Generate agent name
+                let worker_count = self
+                    .agents
+                    .values()
+                    .filter(|a| matches!(a.agent_type(), AgentType::TaskWorker { .. }))
+                    .count();
+                let default_name = format!("Task Worker {}", worker_count + 1);
+
+                (
+                    AgentType::TaskWorker {
+                        parent_id: request.parent_id(),
+                    },
+                    default_name,
+                    short_description.clone(),
+                    task_description.clone(),
+                )
+            }
+
+            AgentCreationRequest::ToolBuilderWorker {
+                workspace_name,
+                concise_description,
+                task_description,
+                resource_context,
+                ..
+            } => {
+                // Generate agent name from workspace name
+                let default_name = format!("Page Builder: {}", workspace_name);
+
+                // Build full initial message with resource context if provided
+                let initial_message = if let Some(context) = resource_context {
+                    format!("{}\n\nResource Context: {}", task_description, context)
+                } else {
+                    task_description.clone()
+                };
+
+                (
+                    AgentType::PageBuilderWorker {
+                        parent_id: request.parent_id(),
+                        workspace_name: workspace_name.clone(),
+                    },
+                    default_name,
+                    concise_description.clone(),
+                    initial_message,
+                )
+            }
         };
+
+        // Create metadata (inherit parent's model)
+        let metadata = AgentMetadata {
+            name: agent_name.clone(),
+            description: format!("Task: {}", request.task_description()),
+            model: parent_model,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        // Create worker agent with parent_id and parent's logger
+        perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.start");
         let mut agent = perf_timed!("UI.handle_agent_creation_request.AgentInstance_new", {
-            AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger)
+            AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger, None)
         });
         let agent_id = agent.id();
-        perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.end", &format!("worker_id={}", agent_id));
+        perf_checkpoint!(
+            "UI.handle_agent_creation_request.create_worker_instance.end",
+            &format!("worker_id={}", agent_id)
+        );
 
         // Set the current stood log level on new worker agent
         agent.set_stood_log_level(self.stood_log_level);
@@ -993,7 +1459,10 @@ impl AgentManagerWindow {
                 )
             });
             if let Err(e) = init_result {
-                perf_checkpoint!("UI.handle_agent_creation_request.initialize_worker.failed", &format!("error={}", e));
+                perf_checkpoint!(
+                    "UI.handle_agent_creation_request.initialize_worker.failed",
+                    &format!("error={}", e)
+                );
                 return Err(format!("Failed to initialize agent: {}", e));
             }
         } else {
@@ -1002,20 +1471,23 @@ impl AgentManagerWindow {
         perf_checkpoint!("UI.handle_agent_creation_request.initialize_worker.end");
 
         // Send initial task message
-        perf_checkpoint!("UI.handle_agent_creation_request.send_task_message.start", &format!("task_len={}", request.task_description.len()));
-        agent.send_message(request.task_description.clone());
+        perf_checkpoint!(
+            "UI.handle_agent_creation_request.send_task_message.start",
+            &format!("task_len={}", initial_message.len())
+        );
+        agent.send_message(initial_message);
         perf_checkpoint!("UI.handle_agent_creation_request.send_task_message.end");
 
         tracing::info!(
             target: "agent::creation",
             agent_id = %agent_id,
-            parent_id = %request.parent_id,
-            name = %default_name,
-            "Created TaskWorker agent"
+            parent_id = %request.parent_id(),
+            name = %agent_name,
+            "Created worker agent"
         );
 
         // Determine the message index in parent's conversation where this worker was spawned
-        let message_index = if let Some(parent) = self.agents.get(&request.parent_id) {
+        let message_index = if let Some(parent) = self.agents.get(&request.parent_id()) {
             parent.messages().len().saturating_sub(1)
         } else {
             0
@@ -1024,21 +1496,32 @@ impl AgentManagerWindow {
         // Insert agent into map
         self.agents.insert(agent_id, agent);
 
+        // Extract workspace info for ToolBuilder workers
+        let (is_tool_builder, workspace_name) = match request {
+            crate::app::agent_framework::AgentCreationRequest::ToolBuilderWorker {
+                workspace_name,
+                ..
+            } => (true, Some(workspace_name.clone())),
+            _ => (false, None),
+        };
+
         // Send WorkerStarted event for inline display (replaces tab creation)
         let _ = crate::app::agent_framework::send_ui_event(
             crate::app::agent_framework::AgentUIEvent::worker_started(
                 agent_id,
-                request.parent_id,
-                request.short_description.clone(),
+                request.parent_id(),
+                short_description,
                 message_index,
+                is_tool_builder,
+                workspace_name,
             ),
         );
         tracing::debug!(
             target: "agent::creation",
             agent_id = %agent_id,
-            parent_id = %request.parent_id,
+            parent_id = %request.parent_id(),
             message_index = message_index,
-            short_description = %request.short_description,
+            short_description = %request.short_description().unwrap_or("Worker"),
             "Sent WorkerStarted event for inline display"
         );
 
@@ -1175,9 +1658,7 @@ impl AgentManagerWindow {
         let display_agent_id = agent_id;
 
         // Ensure status widget exists for this agent
-        self.status_widgets
-            .entry(display_agent_id)
-            .or_default();
+        self.status_widgets.entry(display_agent_id).or_default();
 
         // Render UI and handle message sending/polling in a scope to release borrow
         let (terminate_clicked, log_clicked, _clear_clicked, worker_log_to_open) = {
@@ -1212,7 +1693,10 @@ impl AgentManagerWindow {
 
             // Send message if requested
             if should_send {
-                perf_checkpoint!("UI.send_message.start", &format!("agent_id={}, msg_len={}", agent_id, self.input_text.len()));
+                perf_checkpoint!(
+                    "UI.send_message.start",
+                    &format!("agent_id={}, msg_len={}", agent_id, self.input_text.len())
+                );
                 let message = self.input_text.clone();
                 self.input_text.clear();
 
@@ -1235,7 +1719,12 @@ impl AgentManagerWindow {
                 log::info!("Agent {} conversation cleared", agent_id);
             }
 
-            (terminate_clicked, log_clicked, clear_clicked, worker_log_clicked)
+            (
+                terminate_clicked,
+                log_clicked,
+                clear_clicked,
+                worker_log_clicked,
+            )
         }; // agent borrow released here
 
         // Handle worker log button click
@@ -1259,11 +1748,36 @@ impl AgentManagerWindow {
 
         // Handle termination outside the borrow scope
         if terminate_clicked {
+            // If this is a TaskManager, also remove all its worker agents
+            let workers_to_remove: Vec<AgentId> = self.agents
+                .iter()
+                .filter_map(|(worker_id, worker)| {
+                    match worker.agent_type() {
+                        AgentType::TaskWorker { parent_id } if *parent_id == agent_id => Some(*worker_id),
+                        AgentType::PageBuilderWorker { parent_id, .. } if *parent_id == agent_id => Some(*worker_id),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            // Remove workers first
+            for worker_id in workers_to_remove {
+                self.agents.remove(&worker_id);
+                self.status_widgets.remove(&worker_id);
+                log::info!("Worker agent {} terminated (parent terminated)", worker_id);
+            }
+
+            // Remove the manager agent
             self.agents.remove(&agent_id);
-            log::info!("Agent{} terminated and removed", agent_id);
-            // Clear selection since the agent is now deleted
+            self.status_widgets.remove(&agent_id);
+            log::info!("Agent {} terminated and removed", agent_id);
+
+            // Clear selections if this agent was selected
             if self.selected_agent_id == Some(agent_id) {
                 self.selected_agent_id = None;
+            }
+            if self.selected_tab_agent_id == Some(agent_id) {
+                self.selected_tab_agent_id = None;
             }
         }
     }
@@ -1297,7 +1811,14 @@ impl AgentManagerWindow {
                 let poll_start_v2 = std::time::Instant::now();
                 if agent.poll_response() {
                     let poll_duration = poll_start_v2.elapsed();
-                    perf_checkpoint!("UI.poll.response_received", &format!("agent_id={}, poll_ms={}", agent_id, poll_duration.as_millis()));
+                    perf_checkpoint!(
+                        "UI.poll.response_received",
+                        &format!(
+                            "agent_id={}, poll_ms={}",
+                            agent_id,
+                            poll_duration.as_millis()
+                        )
+                    );
 
                     // Get timing info from the message
                     if let Some(last_msg) = agent.messages().back() {
@@ -1332,7 +1853,7 @@ impl AgentManagerWindow {
                                     Ok(last_msg.content.clone())
                                 };
                                 let is_success = result.is_ok();
-                                completed_workers.push((agent_id, parent_id, result));
+                                completed_workers.push((agent_id, *parent_id, result));
                                 log::info!(
                                     target: "agent::worker_complete",
                                     "Worker agent {} completed task for parent {} (success: {})",
@@ -1352,7 +1873,10 @@ impl AgentManagerWindow {
 
         // Process completed workers: send results to parent and terminate
         for (worker_id, parent_id, result) in completed_workers {
-            perf_checkpoint!("UI.poll.worker_complete.start", &format!("worker_id={}, parent_id={}", worker_id, parent_id));
+            perf_checkpoint!(
+                "UI.poll.worker_complete.start",
+                &format!("worker_id={}, parent_id={}", worker_id, parent_id)
+            );
 
             // Calculate worker execution time using metadata created_at
             let execution_time = if let Some(worker_agent) = self.agents.get(&worker_id) {
@@ -1366,7 +1890,15 @@ impl AgentManagerWindow {
 
             // Send worker completion to channel (for start_task tool to return as ToolResult)
             let is_success = result.is_ok();
-            perf_checkpoint!("UI.poll.worker_complete.send_to_channel", &format!("worker_id={}, success={}, execution_time_ms={}", worker_id, is_success, execution_time.as_millis()));
+            perf_checkpoint!(
+                "UI.poll.worker_complete.send_to_channel",
+                &format!(
+                    "worker_id={}, success={}, execution_time_ms={}",
+                    worker_id,
+                    is_success,
+                    execution_time.as_millis()
+                )
+            );
             let completion = crate::app::agent_framework::WorkerCompletion {
                 worker_id,
                 result, // Raw result (Ok or Err), no wrapper text
@@ -1385,9 +1917,7 @@ impl AgentManagerWindow {
             // Send WorkerCompleted UI event for inline display update
             let _ = crate::app::agent_framework::send_ui_event(
                 crate::app::agent_framework::AgentUIEvent::worker_completed(
-                    worker_id,
-                    parent_id,
-                    is_success,
+                    worker_id, parent_id, is_success,
                 ),
             );
             tracing::debug!(
@@ -1400,7 +1930,11 @@ impl AgentManagerWindow {
 
             // Remove worker instance - log path is preserved in WorkerInlineMessage
             self.agents.remove(&worker_id);
-            perf_checkpoint!("UI.poll.worker_complete.end", &format!("worker_id={}", worker_id));
+            self.status_widgets.remove(&worker_id);
+            perf_checkpoint!(
+                "UI.poll.worker_complete.end",
+                &format!("worker_id={}", worker_id)
+            );
             tracing::debug!(
                 target: "agent::worker_complete",
                 worker_id = %worker_id,
@@ -1454,12 +1988,10 @@ impl FocusableWindow for AgentManagerWindow {
         self.handle_keyboard_navigation(ctx);
 
         // ========================================================================
-        // SOFT-MAXIMIZE IMPLEMENTATION
-        // See module docs for full explanation. Key points:
-        // - Window remains resizable/movable/collapsible after maximize
-        // - Maximize calculates target size at button press time (from screen_rect)
-        // - Uses fixed_size for one frame to force resize, then relaxes constraints
-        // - Custom title bar places maximize button next to X (close) button
+        // WINDOW CONFIGURATION
+        // - Standard egui title bar with collapse and close buttons
+        // - Resizable, movable, and collapsible
+        // - Bottom panel prevents auto-growth (matches Explorer pattern)
         // ========================================================================
 
         // Get screen constraints - max size leaves room for menu bar
@@ -1470,9 +2002,10 @@ impl FocusableWindow for AgentManagerWindow {
 
         // IMPORTANT: Keep resizable/movable/collapsible TRUE even when maximized
         // This is "soft" maximize - user can still interact with the window
-        // Use title_bar(false) to render custom title bar with maximize button next to X
+        let mut open = self.open; // Local copy for close button
         let mut window = egui::Window::new(self.window_title())
-            .title_bar(false) // Custom title bar with maximize button
+            .title_bar(true) // Standard egui title bar
+            .open(&mut open) // Add close button (X)
             .resizable(true)
             .movable(true)
             .collapsible(true)
@@ -1491,9 +2024,7 @@ impl FocusableWindow for AgentManagerWindow {
         } else if self.maximize_state.is_maximized {
             // Already maximized - use maximized size as default
             let maximized_size = egui::Vec2::new(max_width, max_height);
-            window = window
-                .default_size(maximized_size)
-                .min_size([600.0, 400.0]);
+            window = window.default_size(maximized_size).min_size([600.0, 400.0]);
         } else {
             // ================================================================
             // WINDOW SIZE CONFIGURATION (matches Explorer pattern)
@@ -1503,49 +2034,15 @@ impl FocusableWindow for AgentManagerWindow {
             // - Bottom panel inside content: Prevents auto-growth
             // See: https://github.com/emilk/egui/discussions/610
             // ================================================================
-            window = window
-                .default_size(default_size)
-                .min_size([600.0, 400.0]); // Prevent shrinking too small
+            window = window.default_size(default_size).min_size([600.0, 400.0]);
+            // Prevent shrinking too small
         }
 
         if bring_to_front {
             window = window.order(egui::Order::Foreground);
         }
 
-        // Track if close button was clicked in custom title bar
-        let mut close_clicked = false;
-
         let response = window.show(ctx, |ui| {
-            // ================================================================
-            // CUSTOM TITLE BAR - Contains title, maximize button, and close button
-            // Maximize button [ ] / [_] placed directly next to X button
-            // ================================================================
-            ui.horizontal(|ui| {
-                // Window title on the left
-                ui.heading(&self.window_title());
-
-                // Spacer to push buttons to the right
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Close button (X) - rightmost
-                    if ui.button("X")
-                        .on_hover_text("Close window")
-                        .clicked()
-                    {
-                        close_clicked = true;
-                    }
-
-                    // Maximize button - next to close button
-                    if ui.button(self.maximize_state.button_label())
-                        .on_hover_text(self.maximize_state.button_tooltip())
-                        .clicked()
-                    {
-                        // toggle() calculates target size at click time from screen_rect
-                        self.maximize_state.toggle(ctx);
-                    }
-                });
-            });
-            ui.separator();
-
             // ================================================================
             // BOTTOM PANEL - Anchors the bottom edge to prevent auto-growth
             // This pattern matches the Explorer window which uses a bottom
@@ -1557,25 +2054,20 @@ impl FocusableWindow for AgentManagerWindow {
                 .show_separator_line(true)
                 .show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
-                        // Show agent count
-                        let agent_count = self.agents.len();
-                        ui.label(format!("Agents: {}", agent_count));
-
-                        ui.separator();
-
-                        // Show selected model
-                        ui.label(format!("Model: {}", self.selected_model.display_name()));
+                        // Show manager agent count (not workers)
+                        let manager_count = self.agents.values()
+                            .filter(|a| matches!(a.agent_type(), AgentType::TaskManager))
+                            .count();
+                        ui.label(format!("Agents: {}", manager_count));
                     });
                 });
 
-            // Main content fills remaining space (between title bar and bottom panel)
+            // Main content fills remaining space
             self.ui_content(ui);
         });
 
-        // Update self.open based on close button click
-        if close_clicked {
-            self.open = false;
-        }
+        // Update open state from local copy (in case user clicked close button)
+        self.open = open;
 
         // Clear resize flag after window is shown (size has been applied)
         if self.maximize_state.needs_resize() {
@@ -1590,13 +2082,20 @@ impl FocusableWindow for AgentManagerWindow {
         if !self.maximize_state.is_maximized && !self.maximize_state.needs_resize() {
             if let Some(inner_response) = &response {
                 let rect = inner_response.response.rect;
-                self.maximize_state.save_restore_state(rect.min, rect.size());
+                self.maximize_state
+                    .save_restore_state(rect.min, rect.size());
             }
         }
 
         // Show agent log window if open
         if self.agent_log_window.is_open() {
             self.agent_log_window.show(ctx, false);
+        }
+
+        // Show agent type selection dialog if open
+        if self.show_agent_type_dialog {
+            log::info!("Showing agent type selection dialog");
+            self.show_agent_type_selection_dialog(ctx);
         }
     }
 }

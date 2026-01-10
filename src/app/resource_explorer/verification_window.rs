@@ -9,11 +9,15 @@
 
 #![cfg(debug_assertions)]
 
-use super::cli_commands::{check_cli_available, execute_cli_with_details_progress, get_cli_command, DetailProgressCallback};
+use super::cli_commands::{
+    check_cli_available, execute_cli_with_details_progress, get_cli_command, DetailProgressCallback,
+};
 use super::credentials::CredentialCoordinator;
 use super::global_services::is_global_service;
 use super::state::{ResourceEntry, ResourceExplorerState};
-use super::verification_results::{compare_resources_detailed, ResourceTypeResult, VerificationResults};
+use super::verification_results::{
+    compare_resources_detailed, ResourceTypeResult, VerificationResults,
+};
 use egui::{self, Color32, Context, RichText, ScrollArea, Ui};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -128,9 +132,9 @@ fn success_color(ui: &Ui) -> Color32 {
     // egui doesn't have a built-in success color, so we create one that works in both themes
     // Use a green that's visible on both light and dark backgrounds
     if ui.visuals().dark_mode {
-        Color32::from_rgb(100, 200, 100)  // Lighter green for dark mode
+        Color32::from_rgb(100, 200, 100) // Lighter green for dark mode
     } else {
-        Color32::from_rgb(40, 150, 40)    // Darker green for light mode
+        Color32::from_rgb(40, 150, 40) // Darker green for light mode
     }
 }
 
@@ -281,7 +285,11 @@ impl VerificationWindow {
                         "Verification completed: {} fields compared, {} matched ({:.1}%)",
                         total_fields,
                         matched_fields,
-                        if total_fields > 0 { (matched_fields as f64 / total_fields as f64) * 100.0 } else { 100.0 }
+                        if total_fields > 0 {
+                            (matched_fields as f64 / total_fields as f64) * 100.0
+                        } else {
+                            100.0
+                        }
                     ));
                     self.results = Some(results);
                     self.skipped_types = progress.skipped_types;
@@ -294,7 +302,9 @@ impl VerificationWindow {
             }
             VerificationProgressState::Failed => {
                 self.state = VerificationState::Error(
-                    progress.error.unwrap_or_else(|| "Unknown error".to_string())
+                    progress
+                        .error
+                        .unwrap_or_else(|| "Unknown error".to_string()),
                 );
                 self.skipped_types = progress.skipped_types;
                 // Reset background progress
@@ -352,7 +362,9 @@ impl VerificationWindow {
         }
 
         // Account/Region info from cache
-        if let Some((account, region, resource_count, type_count)) = self.get_cache_info(explorer_state) {
+        if let Some((account, region, resource_count, type_count)) =
+            self.get_cache_info(explorer_state)
+        {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Account: ").strong());
                 ui.label(&account);
@@ -360,7 +372,10 @@ impl VerificationWindow {
                 ui.label(RichText::new("Region: ").strong());
                 ui.label(&region);
                 ui.add_space(20.0);
-                ui.label(format!("{} resources in {} types", resource_count, type_count));
+                ui.label(format!(
+                    "{} resources in {} types",
+                    resource_count, type_count
+                ));
             });
 
             self.selected_account = Some(account);
@@ -420,7 +435,8 @@ impl VerificationWindow {
             }
 
             // Count unique resource types
-            let type_count = resources.iter()
+            let type_count = resources
+                .iter()
                 .map(|r| &r.resource_type)
                 .collect::<std::collections::HashSet<_>>()
                 .len();
@@ -430,7 +446,9 @@ impl VerificationWindow {
 
             // Get region from query scope (user's selected regions)
             // Use the first selected region, falling back to us-east-1 if none
-            let region = state.query_scope.regions
+            let region = state
+                .query_scope
+                .regions
                 .first()
                 .map(|r| r.region_code.clone())
                 .unwrap_or_else(|| "us-east-1".to_string());
@@ -463,19 +481,29 @@ impl VerificationWindow {
             }
         };
 
-        info!("[Verification] Starting verification for account {} region {}", account, region);
+        info!(
+            "[Verification] Starting verification for account {} region {}",
+            account, region
+        );
 
         // Get cached resources AND selected resource types from query_scope
-        let (cached_by_type, selected_types, all_selected_types, skipped, selected_regions) = match explorer_state.try_read() {
-            Ok(state) => {
-                // Debug: Log Phase 2 status and detailed_properties count
-                let s3_resources_count = state.resources.iter()
-                    .filter(|r| r.resource_type == "AWS::S3::Bucket")
-                    .count();
-                let s3_with_details = state.resources.iter()
-                    .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
-                    .count();
-                info!(
+        let (cached_by_type, selected_types, all_selected_types, skipped, selected_regions) =
+            match explorer_state.try_read() {
+                Ok(state) => {
+                    // Debug: Log Phase 2 status and detailed_properties count
+                    let s3_resources_count = state
+                        .resources
+                        .iter()
+                        .filter(|r| r.resource_type == "AWS::S3::Bucket")
+                        .count();
+                    let s3_with_details = state
+                        .resources
+                        .iter()
+                        .filter(|r| {
+                            r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some()
+                        })
+                        .count();
+                    info!(
                     "[Verification] Reading state: phase2_completed={}, phase2_in_progress={}, S3 buckets={}, S3 with detailed_properties={}",
                     state.phase2_enrichment_completed,
                     state.phase2_enrichment_in_progress,
@@ -483,42 +511,50 @@ impl VerificationWindow {
                     s3_with_details
                 );
 
-                // Use filtered resources from state.resources (only visible resources)
-                let cached = self.group_resources_by_type(&state.resources);
+                    // Use filtered resources from state.resources (only visible resources)
+                    let cached = self.group_resources_by_type(&state.resources);
 
-                // Get selected regions for filtering CLI results
-                let regions: Vec<String> = state.query_scope.regions
-                    .iter()
-                    .map(|r| r.region_code.clone())
-                    .collect();
+                    // Get selected regions for filtering CLI results
+                    let regions: Vec<String> = state
+                        .query_scope
+                        .regions
+                        .iter()
+                        .map(|r| r.region_code.clone())
+                        .collect();
 
-                // Get ALL selected types from query scope
-                let all_types: Vec<String> = state.query_scope.resource_types
-                    .iter()
-                    .map(|rt| rt.resource_type.clone())
-                    .collect();
+                    // Get ALL selected types from query scope
+                    let all_types: Vec<String> = state
+                        .query_scope
+                        .resource_types
+                        .iter()
+                        .map(|rt| rt.resource_type.clone())
+                        .collect();
 
-                // Get selected types that have CLI mappings
-                let supported: Vec<String> = state.query_scope.resource_types
-                    .iter()
-                    .filter(|rt| get_cli_command(&rt.resource_type).is_some())
-                    .map(|rt| rt.resource_type.clone())
-                    .collect();
+                    // Get selected types that have CLI mappings
+                    let supported: Vec<String> = state
+                        .query_scope
+                        .resource_types
+                        .iter()
+                        .filter(|rt| get_cli_command(&rt.resource_type).is_some())
+                        .map(|rt| rt.resource_type.clone())
+                        .collect();
 
-                // Track skipped types (no CLI mapping)
-                let skipped: Vec<String> = state.query_scope.resource_types
-                    .iter()
-                    .filter(|rt| get_cli_command(&rt.resource_type).is_none())
-                    .map(|rt| rt.resource_type.clone())
-                    .collect();
+                    // Track skipped types (no CLI mapping)
+                    let skipped: Vec<String> = state
+                        .query_scope
+                        .resource_types
+                        .iter()
+                        .filter(|rt| get_cli_command(&rt.resource_type).is_none())
+                        .map(|rt| rt.resource_type.clone())
+                        .collect();
 
-                (cached, supported, all_types, skipped, regions)
-            }
-            Err(_) => {
-                self.state = VerificationState::Error("Could not read cache".to_string());
-                return;
-            }
-        };
+                    (cached, supported, all_types, skipped, regions)
+                }
+                Err(_) => {
+                    self.state = VerificationState::Error("Could not read cache".to_string());
+                    return;
+                }
+            };
 
         // Store skipped types for display
         self.skipped_types = skipped.clone();
@@ -634,10 +670,7 @@ impl VerificationWindow {
                 // Show current resource type
                 if let Some(ref resource_type) = progress.current_type {
                     // Extract short name from AWS::Service::Type
-                    let short_name = resource_type
-                        .split("::")
-                        .last()
-                        .unwrap_or(resource_type);
+                    let short_name = resource_type.split("::").last().unwrap_or(resource_type);
                     ui.label(RichText::new(format!("Type: {}", short_name)).strong());
                 }
 
@@ -653,7 +686,11 @@ impl VerificationWindow {
 
                 // Show CLI command
                 if let Some(ref command) = progress.current_command {
-                    ui.label(RichText::new(format!("  Command: {}", command)).monospace().small());
+                    ui.label(
+                        RichText::new(format!("  Command: {}", command))
+                            .monospace()
+                            .small(),
+                    );
                 }
 
                 // Show resource counts if available
@@ -690,14 +727,27 @@ impl VerificationWindow {
                         ui.label(RichText::new("Overall: ").strong());
                         let total = results.total_fields_compared();
                         let matched = results.total_fields_matched();
-                        let pct = if total > 0 { (matched as f64 / total as f64) * 100.0 } else { 100.0 };
+                        let pct = if total > 0 {
+                            (matched as f64 / total as f64) * 100.0
+                        } else {
+                            100.0
+                        };
 
                         if pct >= 100.0 {
-                            ui.label(RichText::new(format!("{} fields, 100% match", total)).color(success_color(ui)));
+                            ui.label(
+                                RichText::new(format!("{} fields, 100% match", total))
+                                    .color(success_color(ui)),
+                            );
                         } else if pct >= 90.0 {
-                            ui.label(RichText::new(format!("{} fields, {:.1}% match", total, pct)).color(warn_color(ui)));
+                            ui.label(
+                                RichText::new(format!("{} fields, {:.1}% match", total, pct))
+                                    .color(warn_color(ui)),
+                            );
                         } else {
-                            ui.label(RichText::new(format!("{} fields, {:.1}% match", total, pct)).color(error_color(ui)));
+                            ui.label(
+                                RichText::new(format!("{} fields, {:.1}% match", total, pct))
+                                    .color(error_color(ui)),
+                            );
                         }
                     });
 
@@ -767,7 +817,13 @@ impl VerificationWindow {
         if let Some(ref exec) = result.cli_execution {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("CLI: ").small());
-                ui.label(RichText::new(format!("{}ms, {} bytes", exec.duration_ms, exec.response_size_bytes)).small());
+                ui.label(
+                    RichText::new(format!(
+                        "{}ms, {} bytes",
+                        exec.duration_ms, exec.response_size_bytes
+                    ))
+                    .small(),
+                );
             });
         }
 
@@ -799,14 +855,19 @@ impl VerificationWindow {
                         continue;
                     }
 
-                    let mismatches: Vec<_> = resource.field_comparisons.iter()
+                    let mismatches: Vec<_> = resource
+                        .field_comparisons
+                        .iter()
                         .filter(|f| !f.matched && !f.skipped)
                         .collect();
 
                     if !mismatches.is_empty() && mismatch_count < 5 {
-                        ui.label(RichText::new(format!("Resource: {}", resource.resource_id)).strong());
+                        ui.label(
+                            RichText::new(format!("Resource: {}", resource.resource_id)).strong(),
+                        );
                         for field in &mismatches {
-                            ui.label(format!("  {} - Dash: {} | CLI: {}",
+                            ui.label(format!(
+                                "  {} - Dash: {} | CLI: {}",
                                 field.field_name,
                                 field.dash_value.as_deref().unwrap_or("null"),
                                 field.cli_value.as_deref().unwrap_or("null")
@@ -922,28 +983,35 @@ fn run_verification_background(
             // Create progress callback for detail fetching
             let progress_for_callback = progress.clone();
             let resource_type_for_callback = resource_type.clone();
-            let detail_callback: Option<DetailProgressCallback> = Some(Box::new(move |current, total, resource_id| {
-                if let Ok(mut p) = progress_for_callback.lock() {
-                    p.phase = VerificationPhase::ExecutingCliDetails;
-                    p.status_detail = Some(format!(
-                        "Fetching details {}/{}: {}",
-                        current, total, resource_id
-                    ));
-                    // Update CLI resource count as we discover them
-                    if current == 1 {
-                        p.cli_resource_count = total;
+            let detail_callback: Option<DetailProgressCallback> =
+                Some(Box::new(move |current, total, resource_id| {
+                    if let Ok(mut p) = progress_for_callback.lock() {
+                        p.phase = VerificationPhase::ExecutingCliDetails;
+                        p.status_detail = Some(format!(
+                            "Fetching details {}/{}: {}",
+                            current, total, resource_id
+                        ));
+                        // Update CLI resource count as we discover them
+                        if current == 1 {
+                            p.cli_resource_count = total;
+                        }
                     }
-                }
-                // Log progress for visibility
-                if current % 10 == 0 || current == total {
-                    info!(
-                        "[CLI Details] {}: {}/{} resources",
-                        resource_type_for_callback, current, total
-                    );
-                }
-            }));
+                    // Log progress for visibility
+                    if current % 10 == 0 || current == total {
+                        info!(
+                            "[CLI Details] {}: {}/{} resources",
+                            resource_type_for_callback, current, total
+                        );
+                    }
+                }));
 
-            match execute_cli_with_details_progress(&cmd, resource_type, &creds, query_region, detail_callback) {
+            match execute_cli_with_details_progress(
+                &cmd,
+                resource_type,
+                &creds,
+                query_region,
+                detail_callback,
+            ) {
                 Ok(cli_result) => {
                     // Update progress: Got CLI response
                     {
@@ -957,7 +1025,10 @@ fn run_verification_background(
                     }
 
                     if let Some(ref err) = cli_result.error {
-                        error!("[Verification Background] CLI error for {}: {}", resource_type, err);
+                        error!(
+                            "[Verification Background] CLI error for {}: {}",
+                            resource_type, err
+                        );
                         // Update progress: Error
                         {
                             if let Ok(mut p) = progress.lock() {
@@ -982,18 +1053,20 @@ fn run_verification_background(
                         // For global services like S3, filter CLI results to only include
                         // resources in the selected regions. CLI returns all resources globally,
                         // but we only want to compare resources in selected regions.
-                        let (filtered_resources_by_id, filtered_resource_ids) = if cmd.is_global
-                            && is_global_service(resource_type)
-                        {
-                            filter_cli_results_by_region(
-                                resource_type,
-                                &cli_result.resources_by_id,
-                                &cli_result.resource_ids,
-                                &selected_regions,
-                            )
-                        } else {
-                            (cli_result.resources_by_id.clone(), cli_result.resource_ids.clone())
-                        };
+                        let (filtered_resources_by_id, filtered_resource_ids) =
+                            if cmd.is_global && is_global_service(resource_type) {
+                                filter_cli_results_by_region(
+                                    resource_type,
+                                    &cli_result.resources_by_id,
+                                    &cli_result.resource_ids,
+                                    &selected_regions,
+                                )
+                            } else {
+                                (
+                                    cli_result.resources_by_id.clone(),
+                                    cli_result.resource_ids.clone(),
+                                )
+                            };
 
                         // Update progress: Comparing resources
                         {

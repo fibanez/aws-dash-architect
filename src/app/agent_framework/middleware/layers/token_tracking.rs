@@ -268,7 +268,10 @@ mod tests {
         layer.on_post_response("Response", &ctx).unwrap();
 
         assert!(layer.total_tokens() > 0);
-        assert_eq!(layer.total_tokens(), layer.tokens_sent() + layer.tokens_received());
+        assert_eq!(
+            layer.total_tokens(),
+            layer.tokens_sent() + layer.tokens_received()
+        );
     }
 
     #[test]

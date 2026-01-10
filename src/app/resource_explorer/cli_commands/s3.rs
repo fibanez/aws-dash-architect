@@ -82,7 +82,7 @@ pub fn bucket_detail_commands() -> Vec<DetailCommand> {
             id_arg: "--bucket",
             json_path: "",
             is_global: true,
-        extra_args: &[],
+            extra_args: &[],
         },
         DetailCommand {
             service: "s3api",
@@ -90,7 +90,7 @@ pub fn bucket_detail_commands() -> Vec<DetailCommand> {
             id_arg: "--bucket",
             json_path: "ServerSideEncryptionConfiguration",
             is_global: true,
-        extra_args: &[],
+            extra_args: &[],
         },
         DetailCommand {
             service: "s3api",
@@ -98,7 +98,7 @@ pub fn bucket_detail_commands() -> Vec<DetailCommand> {
             id_arg: "--bucket",
             json_path: "",
             is_global: true,
-        extra_args: &[],
+            extra_args: &[],
         },
         DetailCommand {
             service: "s3api",
@@ -106,7 +106,7 @@ pub fn bucket_detail_commands() -> Vec<DetailCommand> {
             id_arg: "--bucket",
             json_path: "",
             is_global: true,
-        extra_args: &[],
+            extra_args: &[],
         },
         DetailCommand {
             service: "s3api",
@@ -114,7 +114,7 @@ pub fn bucket_detail_commands() -> Vec<DetailCommand> {
             id_arg: "--bucket",
             json_path: "PublicAccessBlockConfiguration",
             is_global: true,
-        extra_args: &[],
+            extra_args: &[],
         },
     ]
 }
@@ -143,6 +143,8 @@ mod tests {
         let cmds = bucket_detail_commands();
         assert!(cmds.len() >= 4);
         assert!(cmds.iter().any(|c| c.operation == "get-bucket-versioning"));
-        assert!(cmds.iter().any(|c| c.operation == "get-public-access-block"));
+        assert!(cmds
+            .iter()
+            .any(|c| c.operation == "get-public-access-block"));
     }
 }

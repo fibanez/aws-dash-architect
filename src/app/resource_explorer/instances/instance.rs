@@ -192,10 +192,7 @@ impl ExplorerInstance {
 
                             // Close button (only if more than one tab)
                             if tab_count > 1
-                                && ui
-                                    .small_button("x")
-                                    .on_hover_text("Close tab")
-                                    .clicked()
+                                && ui.small_button("x").on_hover_text("Close tab").clicked()
                             {
                                 tab_to_close = Some(index);
                             }

@@ -29,8 +29,8 @@ impl ExplorerSharedContext {
     /// Create a new shared context
     pub fn new() -> Self {
         // Create bookmark manager - panic if we can't access config directory
-        let bookmark_manager = BookmarkManager::new()
-            .expect("Failed to initialize bookmark manager");
+        let bookmark_manager =
+            BookmarkManager::new().expect("Failed to initialize bookmark manager");
 
         Self {
             cache: crate::app::resource_explorer::cache::shared_cache(),
@@ -46,7 +46,10 @@ impl ExplorerSharedContext {
     }
 
     /// Set the AWS Identity Center
-    pub fn set_aws_identity_center(&mut self, identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>) {
+    pub fn set_aws_identity_center(
+        &mut self,
+        identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>,
+    ) {
         self.aws_identity_center = identity_center;
     }
 
@@ -176,7 +179,10 @@ impl ExplorerManager {
     }
 
     /// Set AWS Identity Center for all instances
-    pub fn set_aws_identity_center(&mut self, identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>) {
+    pub fn set_aws_identity_center(
+        &mut self,
+        identity_center: Option<Arc<Mutex<AwsIdentityCenter>>>,
+    ) {
         self.shared_context.set_aws_identity_center(identity_center);
     }
 

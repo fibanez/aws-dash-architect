@@ -245,15 +245,22 @@ impl SharedResourceCache {
         let compressed = CompressedData::compress(&serialized);
 
         // Track uncompressed size for stats
-        self.total_uncompressed
-            .fetch_add(uncompressed_size as u64, std::sync::atomic::Ordering::Relaxed);
+        self.total_uncompressed.fetch_add(
+            uncompressed_size as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         self.resources.insert(key.clone(), compressed.clone());
 
         let elapsed_ms = start.elapsed().as_millis();
         super::query_timing::log_cache_op(
             "INSERT",
-            &format!("{} ({} entries, {}KB)", key, entries.len(), uncompressed_size / 1024),
+            &format!(
+                "{} ({} entries, {}KB)",
+                key,
+                entries.len(),
+                uncompressed_size / 1024
+            ),
             elapsed_ms,
         );
 
@@ -298,10 +305,7 @@ impl SharedResourceCache {
 
     /// Get all cache keys (for iteration/debugging)
     pub fn resource_keys(&self) -> Vec<String> {
-        self.resources
-            .iter()
-            .map(|(k, _)| (*k).clone())
-            .collect()
+        self.resources.iter().map(|(k, _)| (*k).clone()).collect()
     }
 
     // ========================================================================
@@ -358,8 +362,10 @@ impl SharedResourceCache {
 
         let compressed = CompressedData::compress(&serialized);
 
-        self.total_uncompressed
-            .fetch_add(uncompressed_size as u64, std::sync::atomic::Ordering::Relaxed);
+        self.total_uncompressed.fetch_add(
+            uncompressed_size as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         self.detailed_properties.insert(key, compressed);
     }
@@ -548,7 +554,9 @@ mod tests {
 
         cache.insert_resources("test-key".to_string(), entries.clone());
 
-        let retrieved = cache.get_resources("test-key").expect("should find cached entries");
+        let retrieved = cache
+            .get_resources("test-key")
+            .expect("should find cached entries");
         assert_eq!(retrieved.len(), 10);
         assert_eq!(retrieved[0].resource_id, "i-00000000");
     }
@@ -601,7 +609,9 @@ mod tests {
 
         cache.insert_detailed(key.clone(), data);
 
-        let retrieved = cache.get_detailed(&key).expect("should find detailed properties");
+        let retrieved = cache
+            .get_detailed(&key)
+            .expect("should find detailed properties");
         assert_eq!(retrieved.properties["detailed"], "properties");
     }
 

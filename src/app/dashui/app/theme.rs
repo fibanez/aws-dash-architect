@@ -14,9 +14,33 @@ impl DashApp {
             ThemeChoice::Mocha => catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA),
         }
 
-        // Make window corners more square by setting global window style
+        // Make window corners more square and adjust heading size
         let mut style = (*ctx.style()).clone();
         style.visuals.window_corner_radius = egui::CornerRadius::same(2); // Set window corner radius to 2 for a more square look
+
+        // Make window title bars ~23.5% smaller (0.85 * 0.90 = 0.765)
+        // Title bar height = max(font_height, interact_size.y) + inner_margin
+        // Button size = icon_width (capped at title bar height)
+        // Sources:
+        //   - Title bar height calculation: https://docs.rs/egui/latest/src/egui/containers/window.rs.html
+        //   - Spacing struct: https://docs.rs/egui/latest/egui/style/struct.Spacing.html
+        let scale = 0.765;
+
+        // Scale the heading font
+        if let Some(heading_font) = style.text_styles.get(&egui::TextStyle::Heading).cloned() {
+            let smaller_size = heading_font.size * scale;
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(smaller_size, heading_font.family),
+            );
+        }
+
+        // Scale the minimum interaction height (affects title bar minimum height)
+        style.spacing.interact_size.y *= scale;
+
+        // Scale the icon width (affects close/collapse button size)
+        style.spacing.icon_width *= scale;
+
         ctx.set_style(style);
     }
 

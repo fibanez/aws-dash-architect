@@ -15,12 +15,16 @@ This directory contains modular technical documentation for the AWS Dash project
 * [Agent Framework](agent-framework-v2.md) - AI agent system using stood library for AWS operations
 * [Agent Feedback Systems](agent-feedback-systems.md) - Status display, message injection, and conversation middleware for agents
 * [Multi-Agent System](multi-agent-system.md) - Task manager and worker agent orchestration with inline progress display
+* [Page Builder System](page-builder-system.md) - AI agents creating and editing HTML/CSS/JS pages for AWS data
 * [Code Execution Tool](code-execution-tool.md) - V8-based JavaScript execution for AI agents
+* [Webview API System](webview-api-system.md) - HTTP API for browser pages to access AWS resources (dashApp)
+* [V8 Bindings vs Webview API](v8-bindings-vs-webview-api.md) - Comparison of direct V8 bindings (agent tools) vs HTTP API (browser pages)
 
 ## UI Features
 
 * [AWS Login Window](aws-login-window.md) - Identity Center authentication with simplified URL input and region selection
 * [Command Palette System](command-palette-system.md) - Command palette with keyboard shortcuts
+* [Pages Manager](pages-manager.md) - Web UI for viewing, renaming, and deleting agent-created pages
 
 ## Architecture Patterns
 

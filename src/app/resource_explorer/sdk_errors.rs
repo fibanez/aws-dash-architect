@@ -28,10 +28,7 @@ pub enum ErrorCategory {
     /// Network connectivity issues
     NetworkError { message: String },
     /// AWS service temporarily unavailable
-    ServiceUnavailable {
-        service: String,
-        message: String,
-    },
+    ServiceUnavailable { service: String, message: String },
     /// Non-retryable error (permissions, validation, etc.)
     NonRetryable {
         code: String,

@@ -127,7 +127,10 @@ mod inner {
         }
 
         if sorted.len() > 20 {
-            log_query_event(&format!("    ... and {} more stuck operations", sorted.len() - 20));
+            log_query_event(&format!(
+                "    ... and {} more stuck operations",
+                sorted.len() - 20
+            ));
         }
     }
 
@@ -287,8 +290,7 @@ mod inner {
                 self.write_line("");
                 self.write_line("!!! FAILED QUERIES:");
                 // Collect to owned strings to avoid borrow issues
-                let failed: Vec<String> =
-                    self.failed_queries.iter().take(20).cloned().collect();
+                let failed: Vec<String> = self.failed_queries.iter().take(20).cloned().collect();
                 for query in &failed {
                     self.write_line(&format!("      [FAILED] {}", query));
                 }
@@ -396,7 +398,10 @@ mod inner {
 
     /// Log the end of a phase with duration (simple version)
     pub fn log_phase_end(phase: &str, duration_ms: u128, context: &str) {
-        log_query_event(&format!("<<< {} END: {} ({}ms)", phase, context, duration_ms));
+        log_query_event(&format!(
+            "<<< {} END: {} ({}ms)",
+            phase, context, duration_ms
+        ));
     }
 
     /// Log a query operation (simple logging)
@@ -466,7 +471,10 @@ mod inner {
 
     /// Log a throttling event specifically
     pub fn log_throttled(query_key: &str, service: &str) {
-        log_query_event(&format!("    [THROTTLE] {} - {} rate limited", query_key, service));
+        log_query_event(&format!(
+            "    [THROTTLE] {} - {} rate limited",
+            query_key, service
+        ));
     }
 
     /// Log recovery from transient errors
@@ -542,10 +550,18 @@ mod inner {
 
         // Track per-region
         match region {
-            "us-east-1" => { CONFIG_US_EAST_1.fetch_add(1, Ordering::SeqCst); }
-            "us-west-2" => { CONFIG_US_WEST_2.fetch_add(1, Ordering::SeqCst); }
-            "us-east-2" => { CONFIG_US_EAST_2.fetch_add(1, Ordering::SeqCst); }
-            _ => { CONFIG_OTHER_REGIONS.fetch_add(1, Ordering::SeqCst); }
+            "us-east-1" => {
+                CONFIG_US_EAST_1.fetch_add(1, Ordering::SeqCst);
+            }
+            "us-west-2" => {
+                CONFIG_US_WEST_2.fetch_add(1, Ordering::SeqCst);
+            }
+            "us-east-2" => {
+                CONFIG_US_EAST_2.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {
+                CONFIG_OTHER_REGIONS.fetch_add(1, Ordering::SeqCst);
+            }
         }
 
         log_query_event(&format!(
@@ -595,7 +611,12 @@ mod inner {
     }
 
     /// Log end of credential fetch
-    pub fn credential_fetch_end(account_id: &str, duration_ms: u128, success: bool, from_cache: bool) {
+    pub fn credential_fetch_end(
+        account_id: &str,
+        duration_ms: u128,
+        success: bool,
+        from_cache: bool,
+    ) {
         let concurrent = CONCURRENT_CREDENTIAL_FETCHES.fetch_sub(1, Ordering::SeqCst) - 1;
         let status = if success { "OK" } else { "FAILED" };
         let source = if from_cache { "cache" } else { "fresh" };
@@ -631,7 +652,12 @@ mod inner {
     }
 
     /// Log Identity Center API call timing
-    pub fn identity_center_api_timing(account_id: &str, role: &str, duration_ms: u128, success: bool) {
+    pub fn identity_center_api_timing(
+        account_id: &str,
+        role: &str,
+        duration_ms: u128,
+        success: bool,
+    ) {
         let status = if success { "OK" } else { "FAILED" };
         log_query_event(&format!(
             "    [IC-API] get_role_credentials account={} role={} {}ms [{}]",
@@ -658,7 +684,8 @@ mod inner {
 
     /// Log concurrency summary (call periodically or at end of phase)
     pub fn log_concurrency_summary() {
-        let (concurrent_configs, concurrent_creds, total_configs, total_creds) = get_concurrency_stats();
+        let (concurrent_configs, concurrent_creds, total_configs, total_creds) =
+            get_concurrency_stats();
         let us_east_1 = CONFIG_US_EAST_1.load(Ordering::SeqCst);
         let us_west_2 = CONFIG_US_WEST_2.load(Ordering::SeqCst);
         let us_east_2 = CONFIG_US_EAST_2.load(Ordering::SeqCst);
@@ -725,12 +752,24 @@ mod inner {
 
         // Track per-service
         match service {
-            "S3" => { TAG_FETCH_S3.fetch_add(1, Ordering::SeqCst); }
-            "Logs" | "CloudWatch" => { TAG_FETCH_LOGS.fetch_add(1, Ordering::SeqCst); }
-            "Lambda" => { TAG_FETCH_LAMBDA.fetch_add(1, Ordering::SeqCst); }
-            "EC2" => { TAG_FETCH_EC2.fetch_add(1, Ordering::SeqCst); }
-            "IAM" => { TAG_FETCH_IAM.fetch_add(1, Ordering::SeqCst); }
-            _ => { TAG_FETCH_OTHER.fetch_add(1, Ordering::SeqCst); }
+            "S3" => {
+                TAG_FETCH_S3.fetch_add(1, Ordering::SeqCst);
+            }
+            "Logs" | "CloudWatch" => {
+                TAG_FETCH_LOGS.fetch_add(1, Ordering::SeqCst);
+            }
+            "Lambda" => {
+                TAG_FETCH_LAMBDA.fetch_add(1, Ordering::SeqCst);
+            }
+            "EC2" => {
+                TAG_FETCH_EC2.fetch_add(1, Ordering::SeqCst);
+            }
+            "IAM" => {
+                TAG_FETCH_IAM.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {
+                TAG_FETCH_OTHER.fetch_add(1, Ordering::SeqCst);
+            }
         }
 
         log_query_event(&format!(
@@ -819,7 +858,8 @@ mod inner {
     /// Call this periodically during long-running operations to detect and report
     /// queries that appear to be stuck.
     pub fn diagnose_stuck_operations() {
-        let (concurrent_configs, concurrent_creds, total_configs, total_creds) = get_concurrency_stats();
+        let (concurrent_configs, concurrent_creds, total_configs, total_creds) =
+            get_concurrency_stats();
         let (concurrent_tags, total_tags) = get_tag_fetch_stats();
         let in_flight_registry_count = get_in_flight_tag_count();
 
@@ -876,7 +916,9 @@ mod inner {
         ));
 
         if us_west_2 > 0 || us_east_2 > 0 || other > 0 {
-            log_query_event("NOTE: Cross-region requests detected - these can be slower due to network latency");
+            log_query_event(
+                "NOTE: Cross-region requests detected - these can be slower due to network latency",
+            );
         }
 
         log_query_event("=== END DIAGNOSTICS ===");
@@ -885,16 +927,20 @@ mod inner {
 
     /// Log a watchdog message showing current state (call from a timer/watchdog thread)
     pub fn watchdog_pulse() {
-        let (concurrent_configs, concurrent_creds, total_configs, total_creds) = get_concurrency_stats();
+        let (concurrent_configs, concurrent_creds, total_configs, total_creds) =
+            get_concurrency_stats();
         let (concurrent_tags, total_tags) = get_tag_fetch_stats();
         let in_flight_count = get_in_flight_tag_count();
 
         if concurrent_configs > 0 || concurrent_creds > 0 || concurrent_tags > 0 {
             log_query_event(&format!(
                 "    [WATCHDOG] configs={}/{} creds={}/{} tags={}/{} registry={}",
-                concurrent_configs, total_configs,
-                concurrent_creds, total_creds,
-                concurrent_tags, total_tags,
+                concurrent_configs,
+                total_configs,
+                concurrent_creds,
+                total_creds,
+                concurrent_tags,
+                total_tags,
                 in_flight_count
             ));
 
@@ -1012,7 +1058,9 @@ mod inner {
 
     // Credential instrumentation no-ops
     #[inline(always)]
-    pub fn config_creation_start(_account_id: &str, _region: &str) -> u64 { 0 }
+    pub fn config_creation_start(_account_id: &str, _region: &str) -> u64 {
+        0
+    }
 
     #[inline(always)]
     pub fn config_creation_end(
@@ -1022,22 +1070,39 @@ mod inner {
         _config_load_ms: u128,
         _total_ms: u128,
         _success: bool,
-    ) {}
+    ) {
+    }
 
     #[inline(always)]
-    pub fn credential_fetch_start(_account_id: &str, _cache_hit: bool) -> u64 { 0 }
+    pub fn credential_fetch_start(_account_id: &str, _cache_hit: bool) -> u64 {
+        0
+    }
 
     #[inline(always)]
-    pub fn credential_fetch_end(_account_id: &str, _duration_ms: u128, _success: bool, _from_cache: bool) {}
+    pub fn credential_fetch_end(
+        _account_id: &str,
+        _duration_ms: u128,
+        _success: bool,
+        _from_cache: bool,
+    ) {
+    }
 
     #[inline(always)]
     pub fn identity_center_lock_timing(_account_id: &str, _duration_ms: u128, _success: bool) {}
 
     #[inline(always)]
-    pub fn identity_center_api_timing(_account_id: &str, _role: &str, _duration_ms: u128, _success: bool) {}
+    pub fn identity_center_api_timing(
+        _account_id: &str,
+        _role: &str,
+        _duration_ms: u128,
+        _success: bool,
+    ) {
+    }
 
     #[inline(always)]
-    pub fn get_concurrency_stats() -> (u64, u64, u64, u64) { (0, 0, 0, 0) }
+    pub fn get_concurrency_stats() -> (u64, u64, u64, u64) {
+        (0, 0, 0, 0)
+    }
 
     #[inline(always)]
     pub fn log_concurrency_summary() {}
@@ -1047,7 +1112,14 @@ mod inner {
 
     // Tag fetch no-ops
     #[inline(always)]
-    pub fn tag_fetch_start(_service: &str, _resource_id: &str, _region: &str, _account: &str) -> u64 { 0 }
+    pub fn tag_fetch_start(
+        _service: &str,
+        _resource_id: &str,
+        _region: &str,
+        _account: &str,
+    ) -> u64 {
+        0
+    }
 
     #[inline(always)]
     pub fn tag_fetch_end(
@@ -1058,20 +1130,25 @@ mod inner {
         _duration_ms: u128,
         _tag_count: usize,
         _success: bool,
-    ) {}
+    ) {
+    }
 
     #[inline(always)]
     pub fn log_tag_fetch_summary() {}
 
     #[inline(always)]
-    pub fn get_tag_fetch_stats() -> (u64, u64) { (0, 0) }
+    pub fn get_tag_fetch_stats() -> (u64, u64) {
+        (0, 0)
+    }
 
     // In-flight registry no-ops
     #[inline(always)]
     pub fn dump_stuck_tag_fetches(_threshold_secs: u64) {}
 
     #[inline(always)]
-    pub fn get_in_flight_tag_count() -> usize { 0 }
+    pub fn get_in_flight_tag_count() -> usize {
+        0
+    }
 
     // Stuck query detection no-ops
     #[inline(always)]

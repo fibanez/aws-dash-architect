@@ -175,14 +175,14 @@ impl CommandPalette {
             CommandEntry {
                 key: egui::Key::E,
                 key_char: 'E',
-                label: "AWS Explorer",
+                label: "Explorer",
                 color: egui::Color32::from_rgb(255, 140, 70), // Orange-Red
                 description: "Explore AWS resources across accounts",
             },
             CommandEntry {
                 key: egui::Key::M,
                 key_char: 'M',
-                label: "Agent Manager",
+                label: "Agents",
                 color: egui::Color32::from_rgb(100, 180, 220), // Light Blue
                 description: "Manage multiple AI agents",
             },

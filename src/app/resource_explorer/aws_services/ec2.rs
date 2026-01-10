@@ -1576,10 +1576,7 @@ impl EC2Service {
             })?;
 
         let client = ec2::Client::new(&aws_config);
-        let mut paginator = client
-            .describe_launch_templates()
-            .into_paginator()
-            .send();
+        let mut paginator = client.describe_launch_templates().into_paginator().send();
 
         let mut templates = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -1712,10 +1709,7 @@ impl EC2Service {
             })?;
 
         let client = ec2::Client::new(&aws_config);
-        let mut paginator = client
-            .describe_dhcp_options()
-            .into_paginator()
-            .send();
+        let mut paginator = client.describe_dhcp_options().into_paginator().send();
 
         let mut options_sets = Vec::new();
         while let Some(page) = paginator.next().await {
@@ -3995,10 +3989,7 @@ impl EC2Service {
     }
 
     /// Convert Launch Template to JSON format
-    fn launch_template_to_json(
-        &self,
-        template: &ec2::types::LaunchTemplate,
-    ) -> serde_json::Value {
+    fn launch_template_to_json(&self, template: &ec2::types::LaunchTemplate) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(template_id) = &template.launch_template_id {
@@ -4088,10 +4079,7 @@ impl EC2Service {
     }
 
     /// Convert Placement Group to JSON format
-    fn placement_group_to_json(
-        &self,
-        group: &ec2::types::PlacementGroup,
-    ) -> serde_json::Value {
+    fn placement_group_to_json(&self, group: &ec2::types::PlacementGroup) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(group_id) = &group.group_id {
@@ -4426,15 +4414,14 @@ impl EC2Service {
                         let values_json: Vec<serde_json::Value> = values
                             .iter()
                             .filter_map(|value| {
-                                value.value.as_ref().map(|v| {
-                                    serde_json::Value::String(v.clone())
-                                })
+                                value
+                                    .value
+                                    .as_ref()
+                                    .map(|v| serde_json::Value::String(v.clone()))
                             })
                             .collect();
-                        config_json.insert(
-                            "Values".to_string(),
-                            serde_json::Value::Array(values_json),
-                        );
+                        config_json
+                            .insert("Values".to_string(), serde_json::Value::Array(values_json));
                     }
                     serde_json::Value::Object(config_json)
                 })
@@ -4562,10 +4549,7 @@ impl EC2Service {
     }
 
     /// Convert VPN Connection to JSON format
-    fn vpn_connection_to_json(
-        &self,
-        connection: &ec2::types::VpnConnection,
-    ) -> serde_json::Value {
+    fn vpn_connection_to_json(&self, connection: &ec2::types::VpnConnection) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(connection_id) = &connection.vpn_connection_id {
@@ -4727,10 +4711,7 @@ impl EC2Service {
     }
 
     /// Convert Customer Gateway to JSON format
-    fn customer_gateway_to_json(
-        &self,
-        gateway: &ec2::types::CustomerGateway,
-    ) -> serde_json::Value {
+    fn customer_gateway_to_json(&self, gateway: &ec2::types::CustomerGateway) -> serde_json::Value {
         let mut json = serde_json::Map::new();
 
         if let Some(gateway_id) = &gateway.customer_gateway_id {

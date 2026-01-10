@@ -81,13 +81,11 @@ pub fn dynamodb_table_cli_command() -> CliCommand {
 pub fn dynamodb_table_field_mappings() -> Vec<FieldMapping> {
     // DynamoDB list-tables only returns table names
     // Full table details require describe-table per table
-    vec![
-        FieldMapping {
-            dash_field: "TableName",
-            cli_field: "TableName",
-            comparison_type: ComparisonType::Exact,
-        },
-    ]
+    vec![FieldMapping {
+        dash_field: "TableName",
+        cli_field: "TableName",
+        comparison_type: ComparisonType::Exact,
+    }]
 }
 
 // ============================================================================
@@ -145,7 +143,9 @@ mod tests {
     #[test]
     fn test_rds_instance_field_mappings() {
         let mappings = rds_instance_field_mappings();
-        assert!(mappings.iter().any(|m| m.dash_field == "DBInstanceIdentifier"));
+        assert!(mappings
+            .iter()
+            .any(|m| m.dash_field == "DBInstanceIdentifier"));
         assert!(mappings.iter().any(|m| m.dash_field == "Engine"));
     }
 

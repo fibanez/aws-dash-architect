@@ -236,11 +236,14 @@ impl TreeBuilder {
                     Self::group_resources_by_account_region(primary_resources);
 
                 // Sort account/region keys for consistent ordering
-                let mut ar_keys: Vec<(String, String)> = account_region_groups.keys().cloned().collect();
+                let mut ar_keys: Vec<(String, String)> =
+                    account_region_groups.keys().cloned().collect();
                 ar_keys.sort();
 
                 for (account_id, region) in ar_keys {
-                    let account_region_resources = account_region_groups.get(&(account_id.clone(), region.clone())).unwrap();
+                    let account_region_resources = account_region_groups
+                        .get(&(account_id.clone(), region.clone()))
+                        .unwrap();
                     let sub_display = format!(
                         "{} - {} ({})",
                         account_id,
@@ -667,7 +670,9 @@ impl TreeBuilder {
     /// Used within already-grouped resources for consistent ordering
     fn sort_resources_by_name(resources: &mut [ResourceEntry]) {
         resources.sort_by(|a, b| {
-            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
         });
     }
 
@@ -1056,10 +1061,7 @@ impl TreeRenderer {
         }
     }
 
-    pub fn apply_console_role_menu_update(
-        &mut self,
-        update: super::ConsoleRoleMenuUpdate,
-    ) {
+    pub fn apply_console_role_menu_update(&mut self, update: super::ConsoleRoleMenuUpdate) {
         let matches_account = self
             .console_role_menu
             .account_id
@@ -1263,7 +1265,12 @@ impl TreeRenderer {
         self.badge_selector = Some(badge_selector.clone());
         self.tag_popularity = Some(tag_popularity.clone());
 
-        let new_cache_key = Self::generate_cache_key(resources, &primary_grouping, search_filter, enrichment_version);
+        let new_cache_key = Self::generate_cache_key(
+            resources,
+            &primary_grouping,
+            search_filter,
+            enrichment_version,
+        );
 
         // Only rebuild tree if cache key has changed
         if self.cache_key != new_cache_key || self.cached_tree.is_none() {
@@ -1706,8 +1713,7 @@ impl TreeRenderer {
 
             // Expand All button
             if ui.small_button("Expand All").clicked() {
-                self.json_expand_levels
-                    .insert(resource_id_owned.clone(), 9);
+                self.json_expand_levels.insert(resource_id_owned.clone(), 9);
                 self.json_search_terms.remove(&resource_id_owned);
                 should_reset = true;
             }
@@ -1854,8 +1860,10 @@ impl TreeRenderer {
                         });
                     } else {
                         // Check if Phase 2 is loading details for this enrichable resource type
-                        let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
-                        let is_enrichable = enrichable_types.contains(&resource.resource_type.as_str());
+                        let enrichable_types =
+                            super::state::ResourceExplorerState::enrichable_resource_types();
+                        let is_enrichable =
+                            enrichable_types.contains(&resource.resource_type.as_str());
 
                         if self.phase2_in_progress && is_enrichable {
                             ui.horizontal(|ui| {

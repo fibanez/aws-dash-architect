@@ -6,8 +6,8 @@
 
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use crate::app::resource_explorer::state::{
-    BooleanOperator, GroupingMode, ResourceEntry, ResourceExplorerState, TagClickAction,
-    TagFilter, TagFilterGroup, TagFilterType,
+    BooleanOperator, GroupingMode, ResourceEntry, ResourceExplorerState, TagClickAction, TagFilter,
+    TagFilterGroup, TagFilterType,
 };
 use crate::app::resource_explorer::tree::TreeRenderer;
 use crate::app::resource_explorer::widgets::tag_filter_builder::TagFilterBuilderWidget;
@@ -471,10 +471,7 @@ impl PaneRenderer {
     }
 
     /// Render active selection tags and return any removal actions
-    pub fn render_active_tags(
-        ui: &mut Ui,
-        state: &mut ResourceExplorerState,
-    ) -> Vec<PaneAction> {
+    pub fn render_active_tags(ui: &mut Ui, state: &mut ResourceExplorerState) -> Vec<PaneAction> {
         let mut actions = Vec::new();
 
         // Count total tags
@@ -735,10 +732,7 @@ impl PaneRenderer {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    tracing::error!(
-                        "Failed to create tokio runtime for detailed loading: {}",
-                        e
-                    );
+                    tracing::error!("Failed to create tokio runtime for detailed loading: {}", e);
                     return;
                 }
             };
@@ -828,11 +822,8 @@ impl PaneRenderer {
                     ui.label(egui::RichText::new(&label_text).size(9.0).color(text_color));
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new("x")
-                                .size(9.0)
-                                .color(text_color)
-                        ).sense(egui::Sense::click())
+                        egui::Label::new(egui::RichText::new("x").size(9.0).color(text_color))
+                            .sense(egui::Sense::click()),
                     );
                     if x_response.clicked() {
                         clicked = true;
@@ -868,11 +859,8 @@ impl PaneRenderer {
                     ui.label(egui::RichText::new(&label_text).size(9.0).color(text_color));
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new("x")
-                                .size(9.0)
-                                .color(text_color)
-                        ).sense(egui::Sense::click())
+                        egui::Label::new(egui::RichText::new("x").size(9.0).color(text_color))
+                            .sense(egui::Sense::click()),
                     );
                     if x_response.clicked() {
                         clicked = true;
@@ -904,14 +892,15 @@ impl PaneRenderer {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.label(egui::RichText::new(&label_text).size(9.0).color(Color32::WHITE));
+                    ui.label(
+                        egui::RichText::new(&label_text)
+                            .size(9.0)
+                            .color(Color32::WHITE),
+                    );
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new("x")
-                                .size(9.0)
-                                .color(Color32::WHITE)
-                        ).sense(egui::Sense::click())
+                        egui::Label::new(egui::RichText::new("x").size(9.0).color(Color32::WHITE))
+                            .sense(egui::Sense::click()),
                     );
                     if x_response.clicked() {
                         clicked = true;

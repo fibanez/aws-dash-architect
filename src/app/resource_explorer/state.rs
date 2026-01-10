@@ -614,7 +614,7 @@ pub struct ResourceExplorerState {
     pub show_region_dialog: bool,
     pub show_resource_type_dialog: bool,
     pub show_unified_selection_dialog: bool, // Unified selection dialog (3-panel)
-    pub stale_data_threshold_minutes: i64, // Data older than this is considered stale
+    pub stale_data_threshold_minutes: i64,   // Data older than this is considered stale
     // Tag filtering UI state
     pub show_only_tagged: bool,    // Filter to only resources with tags
     pub show_only_untagged: bool,  // Filter to only resources without tags
@@ -634,24 +634,24 @@ pub struct ResourceExplorerState {
     pub phase1_failed_queries: HashSet<String>,  // Queries that failed to load
     pub phase1_total_queries: usize,             // Total queries requested
     // Phase 1 tag fetching progress (during resource normalization)
-    pub phase1_tag_fetching: bool,                // Tag fetching in progress
+    pub phase1_tag_fetching: bool, // Tag fetching in progress
     pub phase1_tag_resource_type: Option<String>, // Resource type being fetched (e.g., "IAM Role")
-    pub phase1_tag_progress_count: usize,         // Tags fetched so far
-    pub phase1_tag_progress_total: usize,         // Total resources needing tags
+    pub phase1_tag_progress_count: usize, // Tags fetched so far
+    pub phase1_tag_progress_total: usize, // Total resources needing tags
     // Phase 1.5: Tag analysis progress (between Phase 1 and Phase 2)
-    pub phase1_5_in_progress: bool,               // Tag analysis is currently running
-    pub phase1_5_stage: Option<String>,           // Current stage: "Discovering tags", "Analyzing popularity", etc.
-    pub phase1_5_progress_count: usize,           // Resources analyzed so far
-    pub phase1_5_progress_total: usize,           // Total resources to analyze
+    pub phase1_5_in_progress: bool, // Tag analysis is currently running
+    pub phase1_5_stage: Option<String>, // Current stage: "Discovering tags", "Analyzing popularity", etc.
+    pub phase1_5_progress_count: usize, // Resources analyzed so far
+    pub phase1_5_progress_total: usize, // Total resources to analyze
     // Two-phase loading state
     pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
     pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
     pub phase2_current_service: Option<String>, // Current service being enriched (e.g., "S3 buckets")
-    pub phase2_progress_count: usize,        // Resources enriched so far
-    pub phase2_progress_total: usize,        // Total resources to enrich
-    pub phase2_generation: u64,              // Selection generation for Phase 2 cancellation
+    pub phase2_progress_count: usize,           // Resources enriched so far
+    pub phase2_progress_total: usize,           // Total resources to enrich
+    pub phase2_generation: u64,                 // Selection generation for Phase 2 cancellation
     // Tree cache invalidation
-    pub enrichment_version: u64,             // Incremented each time resources are enriched (forces tree rebuild)
+    pub enrichment_version: u64, // Incremented each time resources are enriched (forces tree rebuild)
     pub last_enrichment_rebuild: std::time::Instant, // Last time enrichment_version was incremented (for debouncing)
 }
 
@@ -753,11 +753,18 @@ impl ResourceExplorerState {
     /// Start Phase 1 tracking with the list of query keys
     /// Each key should be in format "account_id:region:resource_type"
     pub fn start_phase1_tracking(&mut self, query_keys: Vec<String>) {
-        tracing::info!("📋 Phase 1: Starting tracking for {} queries", query_keys.len());
+        tracing::info!(
+            "📋 Phase 1: Starting tracking for {} queries",
+            query_keys.len()
+        );
         if query_keys.len() <= 10 {
             tracing::debug!("📋 Phase 1: Query keys: {:?}", query_keys);
         } else {
-            tracing::debug!("📋 Phase 1: Query keys (first 10 of {}): {:?}", query_keys.len(), &query_keys[..10]);
+            tracing::debug!(
+                "📋 Phase 1: Query keys (first 10 of {}): {:?}",
+                query_keys.len(),
+                &query_keys[..10]
+            );
         }
         self.phase1_pending_queries = query_keys.iter().cloned().collect();
         self.phase1_failed_queries.clear();
@@ -770,11 +777,16 @@ impl ResourceExplorerState {
         let was_present = self.phase1_pending_queries.remove(query_key);
         tracing::debug!(
             "✓ Phase 1: {} completed (was_tracked: {}, remaining: {})",
-            query_key, was_present, self.phase1_pending_queries.len()
+            query_key,
+            was_present,
+            self.phase1_pending_queries.len()
         );
         if self.phase1_pending_queries.is_empty() {
-            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
-                self.phase1_total_queries, self.phase1_failed_queries.len());
+            tracing::info!(
+                "✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries,
+                self.phase1_failed_queries.len()
+            );
         }
     }
 
@@ -785,12 +797,18 @@ impl ResourceExplorerState {
         self.phase1_failed_queries.insert(query_key.to_string());
         tracing::warn!(
             "✗ Phase 1: {} failed (was_tracked: {}, remaining: {}, total_failed: {})",
-            query_key, was_present, self.phase1_pending_queries.len(), self.phase1_failed_queries.len()
+            query_key,
+            was_present,
+            self.phase1_pending_queries.len(),
+            self.phase1_failed_queries.len()
         );
         // Also check if this was the last query
         if self.phase1_pending_queries.is_empty() {
-            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
-                self.phase1_total_queries, self.phase1_failed_queries.len());
+            tracing::info!(
+                "✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries,
+                self.phase1_failed_queries.len()
+            );
         }
     }
 
@@ -803,7 +821,12 @@ impl ResourceExplorerState {
     pub fn get_phase1_progress(&self) -> (usize, usize, usize, Vec<String>) {
         let mut pending: Vec<String> = self.phase1_pending_queries.iter().cloned().collect();
         pending.sort(); // Alphabetical for consistent display
-        (pending.len(), self.phase1_total_queries, self.phase1_failed_queries.len(), pending)
+        (
+            pending.len(),
+            self.phase1_total_queries,
+            self.phase1_failed_queries.len(),
+            pending,
+        )
     }
 
     /// Get count of failed queries in Phase 1
@@ -1177,10 +1200,7 @@ impl ResourceExplorerState {
         self.phase1_5_stage = Some("Discovering tags".to_string());
 
         // Discover tags from resources (populates tag discovery for autocomplete)
-        tracing::info!(
-            "Phase 1.5: Starting tag discovery for {} resources",
-            total
-        );
+        tracing::info!("Phase 1.5: Starting tag discovery for {} resources", total);
         self.tag_discovery.discover_tags(&self.resources);
         self.phase1_5_progress_count = total / 3; // ~33% progress
         tracing::info!(

@@ -44,9 +44,13 @@
 mod context;
 pub mod layers;
 mod stack;
+pub mod workspace_locking;
+pub mod page_validation;
 
 pub use context::LayerContext;
 pub use stack::LayerStack;
+pub use workspace_locking::WorkspaceLockingMiddleware;
+pub use page_validation::PageValidationMiddleware;
 
 use std::fmt;
 
@@ -93,20 +97,25 @@ pub enum PostResponseAction {
 impl PostResponseAction {
     /// Check if this action modifies the response
     pub fn modifies_response(&self) -> bool {
-        matches!(self, PostResponseAction::Modify(_) | PostResponseAction::SuppressAndInject(_))
+        matches!(
+            self,
+            PostResponseAction::Modify(_) | PostResponseAction::SuppressAndInject(_)
+        )
     }
 
     /// Check if this action triggers an injection
     pub fn triggers_injection(&self) -> bool {
-        matches!(self, PostResponseAction::InjectFollowUp(_) | PostResponseAction::SuppressAndInject(_))
+        matches!(
+            self,
+            PostResponseAction::InjectFollowUp(_) | PostResponseAction::SuppressAndInject(_)
+        )
     }
 
     /// Get the injection message if any
     pub fn injection_message(&self) -> Option<&str> {
         match self {
-            PostResponseAction::InjectFollowUp(msg) | PostResponseAction::SuppressAndInject(msg) => {
-                Some(msg)
-            }
+            PostResponseAction::InjectFollowUp(msg)
+            | PostResponseAction::SuppressAndInject(msg) => Some(msg),
             _ => None,
         }
     }
@@ -160,7 +169,11 @@ pub trait ConversationLayer: Send + Sync {
     /// # Returns
     /// * `Ok(PostResponseAction)` - Action to take with this response
     /// * `Err(LayerError)` - Error occurred during processing
-    fn on_post_response(&self, _response: &str, _ctx: &LayerContext) -> LayerResult<PostResponseAction> {
+    fn on_post_response(
+        &self,
+        _response: &str,
+        _ctx: &LayerContext,
+    ) -> LayerResult<PostResponseAction> {
         // Default: pass through unchanged
         Ok(PostResponseAction::PassThrough)
     }
@@ -220,8 +233,12 @@ mod tests {
 
     #[test]
     fn test_post_response_action_injection_message() {
-        assert!(PostResponseAction::PassThrough.injection_message().is_none());
-        assert!(PostResponseAction::Modify("test".into()).injection_message().is_none());
+        assert!(PostResponseAction::PassThrough
+            .injection_message()
+            .is_none());
+        assert!(PostResponseAction::Modify("test".into())
+            .injection_message()
+            .is_none());
         assert_eq!(
             PostResponseAction::InjectFollowUp("follow".into()).injection_message(),
             Some("follow")
@@ -234,12 +251,18 @@ mod tests {
 
     #[test]
     fn test_post_response_action_modified_response() {
-        assert!(PostResponseAction::PassThrough.modified_response().is_none());
+        assert!(PostResponseAction::PassThrough
+            .modified_response()
+            .is_none());
         assert_eq!(
             PostResponseAction::Modify("modified".into()).modified_response(),
             Some("modified")
         );
-        assert!(PostResponseAction::InjectFollowUp("test".into()).modified_response().is_none());
-        assert!(PostResponseAction::SuppressAndInject("test".into()).modified_response().is_none());
+        assert!(PostResponseAction::InjectFollowUp("test".into())
+            .modified_response()
+            .is_none());
+        assert!(PostResponseAction::SuppressAndInject("test".into())
+            .modified_response()
+            .is_none());
     }
 }

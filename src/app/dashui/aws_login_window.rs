@@ -29,13 +29,21 @@ impl Default for AwsLoginWindow {
                 tracing::info!("Loaded SSO defaults from sso.json");
                 (config.short_name(), config.region, config.default_role_name)
             } else {
-                ("your-org".to_string(), "us-east-1".to_string(), "awsdash".to_string())
+                (
+                    "your-org".to_string(),
+                    "us-east-1".to_string(),
+                    "awsdash".to_string(),
+                )
             }
         };
 
         #[cfg(not(debug_assertions))]
         let (short_name, region, role_name) = {
-            ("your-org".to_string(), "us-east-1".to_string(), "awsdash".to_string())
+            (
+                "your-org".to_string(),
+                "us-east-1".to_string(),
+                "awsdash".to_string(),
+            )
         };
 
         Self {

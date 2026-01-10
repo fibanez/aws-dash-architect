@@ -167,10 +167,7 @@ impl LayerStack {
                             result.was_modified = true;
                         }
                         PostResponseAction::InjectFollowUp(injection) => {
-                            log::debug!(
-                                "Layer '{}' queued follow-up injection",
-                                layer.name()
-                            );
+                            log::debug!("Layer '{}' queued follow-up injection", layer.name());
                             result.injections.push(injection);
                         }
                         PostResponseAction::SuppressAndInject(injection) => {
@@ -277,7 +274,10 @@ mod tests {
             response: &str,
             _ctx: &LayerContext,
         ) -> LayerResult<PostResponseAction> {
-            Ok(PostResponseAction::Modify(format!("{}{}", self.prefix, response)))
+            Ok(PostResponseAction::Modify(format!(
+                "{}{}",
+                self.prefix, response
+            )))
         }
     }
 
