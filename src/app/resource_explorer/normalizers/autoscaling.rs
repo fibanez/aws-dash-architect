@@ -27,7 +27,6 @@ impl AsyncResourceNormalizer for AutoScalingGroupNormalizer {
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::AutoScaling::AutoScalingGroup".to_string(),
@@ -36,9 +35,7 @@ impl AsyncResourceNormalizer for AutoScalingGroupNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -120,7 +117,6 @@ impl AsyncResourceNormalizer for AutoScalingPolicyNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::AutoScaling::ScalingPolicy".to_string(),
@@ -129,9 +125,7 @@ impl AsyncResourceNormalizer for AutoScalingPolicyNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -152,7 +146,7 @@ impl AsyncResourceNormalizer for AutoScalingPolicyNormalizer {
         let mut relationships = Vec::new();
 
         // Scaling Policies relate to their Auto Scaling Groups
-        if let Some(asg_name) = entry.raw_properties.get("AutoScalingGroupName") {
+        if let Some(asg_name) = entry.properties.get("AutoScalingGroupName") {
             if let Some(asg_name_str) = asg_name.as_str() {
                 for resource in all_resources {
                     if resource.resource_type == "AWS::AutoScaling::AutoScalingGroup"

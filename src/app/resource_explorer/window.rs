@@ -1,10 +1,10 @@
-#[cfg(debug_assertions)]
-use super::verification_window::VerificationWindow;
 use super::{
     aws_client::*, bookmarks::*, dialogs::*, instances::pane_renderer::PaneAction,
     instances::pane_renderer::PaneRenderer, retry_tracker::retry_tracker,
     sdk_errors::ErrorCategory, state::*, status::global_status, tree::*, widgets::*,
 };
+#[cfg(debug_assertions)]
+use super::verification_window::VerificationWindow;
 use crate::app::agent_framework::utils::registry::set_global_aws_client;
 use crate::app::aws_identity::AwsIdentityCenter;
 use egui::{Color32, Context, Ui, Window};
@@ -13,6 +13,22 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tracing::warn;
+
+/// Redact sensitive string, showing only last 4 characters
+///
+/// Used for account IDs and other sensitive identifiers in logs.
+/// Example: "123456789012" -> "********9012"
+fn redact_sensitive(value: &str) -> String {
+    if value.len() <= 4 {
+        "*".repeat(value.len())
+    } else {
+        format!(
+            "{}{}",
+            "*".repeat(value.len() - 4),
+            &value[value.len() - 4..]
+        )
+    }
+}
 
 /// Drag-drop payload that supports both bookmarks and folders
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -186,11 +202,7 @@ impl ResourceExplorerWindow {
             ErrorCategory::ServiceUnavailable { service, .. } => {
                 format!("Service Unavailable: {}", service)
             }
-            ErrorCategory::NonRetryable {
-                code,
-                message,
-                is_permission_error,
-            } => {
+            ErrorCategory::NonRetryable { code, message, is_permission_error } => {
                 if *is_permission_error {
                     format!("Permission Denied: {}", code)
                 } else if code == "Error" && !message.is_empty() {
@@ -210,10 +222,7 @@ impl ResourceExplorerWindow {
             ErrorCategory::Throttled { .. } => Color32::from_rgb(255, 200, 100),
             ErrorCategory::Timeout { .. } => Color32::from_rgb(255, 180, 80),
             ErrorCategory::ServiceUnavailable { .. } => Color32::from_rgb(255, 160, 60),
-            ErrorCategory::NonRetryable {
-                is_permission_error,
-                ..
-            } => {
+            ErrorCategory::NonRetryable { is_permission_error, .. } => {
                 if *is_permission_error {
                     Color32::from_rgb(255, 100, 100) // Red for permissions
                 } else {
@@ -237,7 +246,8 @@ impl ResourceExplorerWindow {
 
             // Clear filters
             state.tag_filter_group = TagFilterGroup::new();
-            state.property_filter_group = crate::app::resource_explorer::PropertyFilterGroup::new();
+            state.property_filter_group =
+                crate::app::resource_explorer::PropertyFilterGroup::new();
             state.search_filter.clear();
 
             // Reset loading state
@@ -364,7 +374,7 @@ impl ResourceExplorerWindow {
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, resource)| {
-                        if resource.detailed_properties.is_some() {
+                        if resource.detailed_timestamp.is_some() {
                             return None; // Already has details
                         }
                         let cache_key = format!(
@@ -379,9 +389,12 @@ impl ResourceExplorerWindow {
                                     .iter()
                                     .find(|r| r.resource_id == resource.resource_id)
                                     .and_then(|cached| {
-                                        cached.detailed_properties.as_ref().map(|props| {
-                                            (idx, Some(props.clone()), cached.detailed_timestamp)
-                                        })
+                                        // Only use cached if it has detailed properties merged
+                                        if cached.detailed_timestamp.is_some() {
+                                            Some((idx, Some(cached.properties.clone()), cached.detailed_timestamp))
+                                        } else {
+                                            None
+                                        }
                                     })
                             })
                     })
@@ -391,8 +404,10 @@ impl ResourceExplorerWindow {
                 let updated_count = updates.len();
                 for (idx, props, timestamp) in updates {
                     if let Some(resource) = state.resources.get_mut(idx) {
-                        resource.detailed_properties = props;
-                        resource.detailed_timestamp = timestamp;
+                        if let Some(properties) = props {
+                            resource.properties = properties;
+                            resource.detailed_timestamp = timestamp;
+                        }
                     }
                 }
 
@@ -866,9 +881,11 @@ impl ResourceExplorerWindow {
                                         state.show_property_hierarchy_builder = true;
                                     }
                                     // These actions are not expected from sidebar
-                                    PaneAction::RemoveAccount(_)
-                                    | PaneAction::RemoveRegion(_)
-                                    | PaneAction::RemoveResourceType(_) => {}
+                                    PaneAction::RemoveAccount { .. }
+                                    | PaneAction::RemoveRegion { .. }
+                                    | PaneAction::RemoveResourceType { .. }
+                                    | PaneAction::ApplyBookmark { .. }
+                                    | PaneAction::ShowFailedQueriesDialog => {}
                                 }
                             }
                         }
@@ -934,26 +951,27 @@ impl ResourceExplorerWindow {
 
                     if let Ok(mut state) = self.state.try_write() {
                         // Render active selection tags using PaneRenderer
-                        let actions = PaneRenderer::render_active_tags(ui, &mut state);
+                        // Use a dummy UUID for monolithic window (single pane)
+                        let actions = PaneRenderer::render_active_tags(ui, &mut state, uuid::Uuid::nil());
                         // Process any removal actions
                         for action in actions {
                             match action {
-                                PaneAction::RemoveAccount(id) => {
-                                    tracing::info!("Removing account: {}", id);
+                                PaneAction::RemoveAccount { account_id, .. } => {
+                                    tracing::info!("Removing account: {}", redact_sensitive(&account_id));
                                     let was_phase2_running = state.phase2_enrichment_in_progress;
-                                    state.remove_account(&id);
+                                    state.remove_account(&account_id);
                                     self.handle_active_selection_reduction(&mut state, was_phase2_running);
                                 }
-                                PaneAction::RemoveRegion(code) => {
-                                    tracing::info!("Removing region: {}", code);
+                                PaneAction::RemoveRegion { region_code, .. } => {
+                                    tracing::info!("Removing region: {}", region_code);
                                     let was_phase2_running = state.phase2_enrichment_in_progress;
-                                    state.remove_region(&code);
+                                    state.remove_region(&region_code);
                                     self.handle_active_selection_reduction(&mut state, was_phase2_running);
                                 }
-                                PaneAction::RemoveResourceType(rt) => {
-                                    tracing::info!("Removing resource type: {}", rt);
+                                PaneAction::RemoveResourceType { resource_type, .. } => {
+                                    tracing::info!("Removing resource type: {}", resource_type);
                                     let was_phase2_running = state.phase2_enrichment_in_progress;
-                                    state.remove_resource_type(&rt);
+                                    state.remove_resource_type(&resource_type);
                                     self.handle_active_selection_reduction(&mut state, was_phase2_running);
                                 }
                                 PaneAction::ShowTagFilterBuilder => {
@@ -967,6 +985,14 @@ impl ResourceExplorerWindow {
                                 }
                                 PaneAction::ShowPropertyHierarchyBuilder => {
                                     state.show_property_hierarchy_builder = true;
+                                }
+                                // TODO: Handle bookmark application in monolithic window (currently handled in new multi-pane architecture)
+                                PaneAction::ApplyBookmark { .. } => {
+                                    // This is handled in the new multi-pane architecture
+                                    // The monolithic window uses a different bookmark mechanism
+                                }
+                                PaneAction::ShowFailedQueriesDialog => {
+                                    self.show_service_availability_dialog = true;
                                 }
                             }
                         }
@@ -1320,12 +1346,8 @@ impl ResourceExplorerWindow {
         #[cfg(debug_assertions)]
         {
             // Get credential coordinator from AWS client if available
-            let credential_coordinator = self
-                .aws_client
-                .as_ref()
-                .map(|c| c.get_credential_coordinator());
-            self.verification_window
-                .show(ctx, &self.state, credential_coordinator.as_ref());
+            let credential_coordinator = self.aws_client.as_ref().map(|c| c.get_credential_coordinator());
+            self.verification_window.show(ctx, &self.state, credential_coordinator.as_ref());
         }
 
         action
@@ -1902,33 +1924,6 @@ impl ResourceExplorerWindow {
                     }
                 }
 
-                // Cache menu with memory info and clear option
-                ui.separator();
-                ui.menu_button("Cache", |ui| {
-                    let shared_cache = super::cache::shared_cache();
-                    shared_cache.run_pending_tasks();
-                    let stats = shared_cache.memory_stats();
-
-                    // Memory stats display
-                    let compressed_mb = stats.total_size() as f64 / (1024.0 * 1024.0);
-                    let uncompressed_mb = stats.total_uncompressed_size as f64 / (1024.0 * 1024.0);
-                    let ratio = stats.compression_ratio();
-
-                    ui.label(format!("Resource queries: {}", stats.resource_entry_count));
-                    ui.label(format!("Detailed entries: {}", stats.detailed_entry_count));
-                    ui.separator();
-                    ui.label(format!("Compressed: {:.1} MB", compressed_mb));
-                    ui.label(format!("Uncompressed: {:.1} MB", uncompressed_mb));
-                    ui.label(format!("Compression: {:.1}x", ratio));
-                    ui.separator();
-
-                    if ui.button("Clear Cache").clicked() {
-                        shared_cache.clear();
-                        tracing::info!("User cleared resource cache");
-                        ui.close();
-                    }
-                });
-
                 // Show loading indicator if queries are active
                 if state.is_loading() {
                     ui.separator();
@@ -2280,22 +2275,21 @@ impl ResourceExplorerWindow {
                 ui.vertical(|ui| {
                     // Header with explanation
                     ui.label(
-                        egui::RichText::new("The following queries failed to complete").strong(),
+                        egui::RichText::new("The following queries failed to complete")
+                            .strong()
                     );
                     ui.add_space(4.0);
                     ui.label(
                         "Queries may fail due to various reasons including service unavailability \
-                         in a region, permissions issues, network errors, or rate limiting.",
+                         in a region, permissions issues, network errors, or rate limiting."
                     );
                     ui.add_space(8.0);
 
                     ui.separator();
 
                     // Group failed queries by service type for clarity
-                    let mut by_service: std::collections::HashMap<
-                        String,
-                        Vec<(String, String, ErrorCategory)>,
-                    > = std::collections::HashMap::new();
+                    let mut by_service: std::collections::HashMap<String, Vec<(String, String, ErrorCategory)>> =
+                        std::collections::HashMap::new();
 
                     for (query_key, error_category) in &self.last_failed_queries {
                         let parts: Vec<&str> = query_key.split(':').collect();
@@ -2310,11 +2304,10 @@ impl ResourceExplorerWindow {
                                 .unwrap_or(&resource_type)
                                 .replace("::", " ");
 
-                            by_service.entry(short_name).or_default().push((
-                                account,
-                                region,
-                                error_category.clone(),
-                            ));
+                            by_service
+                                .entry(short_name)
+                                .or_default()
+                                .push((account, region, error_category.clone()));
                         }
                     }
 
@@ -2329,33 +2322,21 @@ impl ResourceExplorerWindow {
                             for service in &services {
                                 if let Some(locations) = by_service.get(service) {
                                     egui::CollapsingHeader::new(
-                                        egui::RichText::new(format!(
-                                            "{} ({} regions)",
-                                            service,
-                                            locations.len()
-                                        ))
-                                        .color(Color32::from_rgb(255, 180, 100)),
+                                        egui::RichText::new(format!("{} ({} regions)", service, locations.len()))
+                                            .color(Color32::from_rgb(255, 180, 100))
                                     )
                                     .default_open(services.len() == 1) // Auto-expand if only one service
                                     .show(ui, |ui| {
                                         for (account, region, error_category) in locations {
-                                            let error_label =
-                                                Self::error_category_label(error_category);
-                                            let error_color =
-                                                Self::error_category_color(error_category);
+                                            let error_label = Self::error_category_label(error_category);
+                                            let error_color = Self::error_category_color(error_category);
 
                                             ui.horizontal(|ui| {
-                                                ui.label(format!(
-                                                    "  {} (Account: {})",
-                                                    region, account
-                                                ));
+                                                ui.label(format!("  {} (Account: {})", region, account));
                                                 ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "[{}]",
-                                                        error_label
-                                                    ))
-                                                    .color(error_color)
-                                                    .small(),
+                                                    egui::RichText::new(format!("[{}]", error_label))
+                                                        .color(error_color)
+                                                        .small()
                                                 );
                                             });
                                         }
@@ -2397,7 +2378,7 @@ impl ResourceExplorerWindow {
                                 self.show_service_availability_dialog = false;
                                 self.last_failed_queries.clear(); // Clear to hide the indicator
                                 self.last_failed_queries_snapshotted = false; // Reset snapshot flag
-                                                                              // Also clear state's failed queries to prevent re-snapshot
+                                // Also clear state's failed queries to prevent re-snapshot
                                 if let Ok(mut state) = self.state.try_write() {
                                     state.phase1_failed_queries.clear();
                                 }
@@ -3394,8 +3375,11 @@ impl ResourceExplorerWindow {
                         .iter()
                         .map(|rt| {
                             // Extract service name from CloudFormation type (AWS::EC2::Instance -> EC2)
-                            let service_name =
-                                rt.split("::").nth(1).unwrap_or("Unknown").to_string();
+                            let service_name = rt
+                                .split("::")
+                                .nth(1)
+                                .unwrap_or("Unknown")
+                                .to_string();
 
                             ResourceTypeSelection {
                                 resource_type: rt.clone(),
@@ -3494,7 +3478,7 @@ impl ResourceExplorerWindow {
         }
     }
 
-    fn spawn_parallel_query(
+    pub fn spawn_parallel_query(
         state_arc: Arc<RwLock<ResourceExplorerState>>,
         scope: QueryScope,
         cache: Arc<super::cache::SharedResourceCache>,
@@ -3792,10 +3776,7 @@ impl ResourceExplorerWindow {
                             // This ensures Phase 2 only enriches visible resources (e.g., S3 buckets
                             // in selected regions only, not all buckets from the global query)
                             let cached_queries = state.cached_queries.clone();
-                            Self::refresh_resources_from_cache_filtered(
-                                &mut state,
-                                &cached_queries,
-                            );
+                            Self::refresh_resources_from_cache_filtered(&mut state, &cached_queries);
 
                             state.finish_loading_task(&cache_key);
 
@@ -4048,24 +4029,17 @@ impl ResourceExplorerWindow {
                                 let mut filtered_resources = Vec::new();
                                 for resource in &resources {
                                     // Check account match
-                                    let account_matches = scope
-                                        .accounts
-                                        .iter()
+                                    let account_matches = scope.accounts.iter()
                                         .any(|a| a.account_id == resource.account_id);
 
                                     // True global resources match any region; S3 buckets filtered by actual region
                                     let is_true_global = resource.region == "Global"
                                         && resource.resource_type != "AWS::S3::Bucket";
                                     let region_matches = is_true_global
-                                        || scope
-                                            .regions
-                                            .iter()
-                                            .any(|r| r.region_code == resource.region);
+                                        || scope.regions.iter().any(|r| r.region_code == resource.region);
 
                                     // Check resource type match
-                                    let type_matches = scope
-                                        .resource_types
-                                        .iter()
+                                    let type_matches = scope.resource_types.iter()
                                         .any(|rt| rt.resource_type == resource.resource_type);
 
                                     if account_matches && region_matches && type_matches {
@@ -4149,8 +4123,8 @@ impl ResourceExplorerWindow {
         // S3 buckets are hybrid-global: queried globally but have actual regions.
         // They are filtered by their actual bucket region to only show buckets
         // in selected regions (user expectation: select us-east-1, see us-east-1 buckets).
-        let is_true_global_resource =
-            resource.region == "Global" && resource.resource_type != "AWS::S3::Bucket";
+        let is_true_global_resource = resource.region == "Global"
+            && resource.resource_type != "AWS::S3::Bucket";
 
         let region_matches = is_true_global_resource
             || scope
@@ -4214,8 +4188,8 @@ impl ResourceExplorerWindow {
                 resource.resource_type.clone(),
             );
             if let Some(cached) = cache_lookup.get(&key) {
-                if cached.detailed_properties.is_some() && resource.detailed_properties.is_none() {
-                    resource.detailed_properties = cached.detailed_properties.clone();
+                if cached.detailed_timestamp.is_some() && resource.detailed_timestamp.is_none() {
+                    resource.properties = cached.properties.clone();
                     resource.detailed_timestamp = cached.detailed_timestamp;
                 }
             }
@@ -4248,7 +4222,7 @@ impl ResourceExplorerWindow {
             .iter()
             .filter(|r| {
                 enrichable_types.contains(&r.resource_type.as_str())
-                    && r.detailed_properties.is_none()
+                    && r.detailed_timestamp.is_none()
             })
             .cloned()
             .collect();
@@ -4272,10 +4246,8 @@ impl ResourceExplorerWindow {
 
         // Debug: log cache keys and resources at Phase 2 start
         let cache_keys = cache_for_phase2.resource_keys();
-        let s3_resources_with_details: usize = state
-            .resources
-            .iter()
-            .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+        let s3_resources_with_details: usize = state.resources.iter()
+            .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_timestamp.is_some())
             .count();
 
         tracing::info!(
@@ -4366,7 +4338,7 @@ impl ResourceExplorerWindow {
                             let s3_cache_key = cache.keys().find(|k| k.contains("S3::Bucket"));
                             let s3_with_details_in_cache = s3_cache_key.map(|key| {
                                 cache.get(key).map(|resources| {
-                                    resources.iter().filter(|r| r.detailed_properties.is_some()).count()
+                                    resources.iter().filter(|r| r.detailed_timestamp.is_some()).count()
                                 }).unwrap_or(0)
                             }).unwrap_or(0);
                             tracing::debug!(
@@ -4383,7 +4355,7 @@ impl ResourceExplorerWindow {
 
                             // Debug: Check state.resources after sync
                             let s3_with_details_in_state = s.resources.iter()
-                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_timestamp.is_some())
                                 .count();
                             tracing::info!(
                                 "✅ Phase 2 enrichment completed: {} S3 buckets with detailed_properties in state.resources",
@@ -4392,7 +4364,7 @@ impl ResourceExplorerWindow {
 
                             // Debug: Check state.resources after sync
                             let s3_with_details_in_state = s.resources.iter()
-                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_properties.is_some())
+                                .filter(|r| r.resource_type == "AWS::S3::Bucket" && r.detailed_timestamp.is_some())
                                 .count();
                             tracing::info!(
                                 "✅ Phase 2 enrichment completed: {} S3 buckets with detailed_properties in state.resources",

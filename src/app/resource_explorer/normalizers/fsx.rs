@@ -38,7 +38,6 @@ impl AsyncResourceNormalizer for FsxResourceNormalizer {
             .to_string();
 
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::FSx::FileSystem".to_string(),
@@ -47,9 +46,7 @@ impl AsyncResourceNormalizer for FsxResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -133,7 +130,6 @@ impl AsyncResourceNormalizer for FsxBackupResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::FSx::Backup".to_string(),
@@ -142,9 +138,7 @@ impl AsyncResourceNormalizer for FsxBackupResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -166,7 +160,7 @@ impl AsyncResourceNormalizer for FsxBackupResourceNormalizer {
 
         // FSx backups relate to their source file systems
         if let Some(file_system_id) = entry
-            .raw_properties
+            .properties
             .get("FileSystemId")
             .and_then(|v| v.as_str())
         {

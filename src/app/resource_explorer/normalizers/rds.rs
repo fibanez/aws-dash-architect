@@ -52,7 +52,6 @@ impl AsyncResourceNormalizer for RDSDBInstanceNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::RDS::DBInstance".to_string(),
@@ -61,9 +60,7 @@ impl AsyncResourceNormalizer for RDSDBInstanceNormalizer {
             resource_id: db_instance_identifier.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -84,7 +81,7 @@ impl AsyncResourceNormalizer for RDSDBInstanceNormalizer {
         let mut relationships = Vec::new();
 
         // Find related VPCs and security groups
-        if let Some(vpc_security_groups) = entry.raw_properties.get("VpcSecurityGroups") {
+        if let Some(vpc_security_groups) = entry.properties.get("VpcSecurityGroups") {
             if let Some(security_groups) = vpc_security_groups.as_array() {
                 for sg in security_groups {
                     if let Some(sg_id) = sg.get("VpcSecurityGroupId").and_then(|v| v.as_str()) {
@@ -161,7 +158,6 @@ impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::RDS::DBCluster".to_string(),
@@ -170,9 +166,7 @@ impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
             resource_id: db_cluster_identifier.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -193,7 +187,7 @@ impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
         let mut relationships = Vec::new();
 
         // Find related security groups
-        if let Some(vpc_security_groups) = entry.raw_properties.get("VpcSecurityGroups") {
+        if let Some(vpc_security_groups) = entry.properties.get("VpcSecurityGroups") {
             if let Some(security_groups) = vpc_security_groups.as_array() {
                 for sg in security_groups {
                     if let Some(sg_id) = sg.get("VpcSecurityGroupId").and_then(|v| v.as_str()) {
@@ -215,7 +209,7 @@ impl AsyncResourceNormalizer for RDSDBClusterNormalizer {
         }
 
         // Find related DB cluster members
-        if let Some(members) = entry.raw_properties.get("DBClusterMembers") {
+        if let Some(members) = entry.properties.get("DBClusterMembers") {
             if let Some(member_array) = members.as_array() {
                 for member in member_array {
                     if let Some(instance_id) =
@@ -287,7 +281,6 @@ impl AsyncResourceNormalizer for RDSDBSnapshotNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::RDS::DBSnapshot".to_string(),
@@ -296,9 +289,7 @@ impl AsyncResourceNormalizer for RDSDBSnapshotNormalizer {
             resource_id: snapshot_identifier.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -320,7 +311,7 @@ impl AsyncResourceNormalizer for RDSDBSnapshotNormalizer {
 
         // Find the source DB instance
         if let Some(db_instance_id) = entry
-            .raw_properties
+            .properties
             .get("DBInstanceIdentifier")
             .and_then(|v| v.as_str())
         {
@@ -385,7 +376,6 @@ impl AsyncResourceNormalizer for RDSDBParameterGroupNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::RDS::DBParameterGroup".to_string(),
@@ -394,9 +384,7 @@ impl AsyncResourceNormalizer for RDSDBParameterGroupNormalizer {
             resource_id: parameter_group_name.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -467,7 +455,6 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::RDS::DBSubnetGroup".to_string(),
@@ -476,9 +463,7 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
             resource_id: subnet_group_name.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -499,7 +484,7 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
         let mut relationships = Vec::new();
 
         // Map to VPC if present
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|v| v.as_str()) {
             for resource in all_resources {
                 if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
                     relationships.push(ResourceRelationship {
@@ -513,7 +498,7 @@ impl AsyncResourceNormalizer for RDSDBSubnetGroupNormalizer {
 
         // Map to subnets if present
         if let Some(subnets) = entry
-            .raw_properties
+            .properties
             .get("Subnets")
             .and_then(|v| v.as_array())
         {

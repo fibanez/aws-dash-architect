@@ -45,7 +45,6 @@ impl AsyncResourceNormalizer for RekognitionCollectionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Rekognition::Collection".to_string(),
@@ -54,9 +53,7 @@ impl AsyncResourceNormalizer for RekognitionCollectionNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -152,7 +149,6 @@ impl AsyncResourceNormalizer for RekognitionStreamProcessorNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Rekognition::StreamProcessor".to_string(),
@@ -161,9 +157,7 @@ impl AsyncResourceNormalizer for RekognitionStreamProcessorNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -188,7 +182,7 @@ impl AsyncResourceNormalizer for RekognitionStreamProcessorNormalizer {
             match resource.resource_type.as_str() {
                 "AWS::IAM::Role" => {
                     // Stream processors use IAM roles for permissions
-                    if let Some(role_arn) = entry.raw_properties.get("RoleArn") {
+                    if let Some(role_arn) = entry.properties.get("RoleArn") {
                         if let Some(role_arn_str) = role_arn.as_str() {
                             if role_arn_str.contains(&resource.resource_id) {
                                 relationships.push(ResourceRelationship {
@@ -212,7 +206,7 @@ impl AsyncResourceNormalizer for RekognitionStreamProcessorNormalizer {
                 }
                 "AWS::S3::Bucket" => {
                     // Stream processors can output to S3
-                    if let Some(output) = entry.raw_properties.get("Output") {
+                    if let Some(output) = entry.properties.get("Output") {
                         if let Some(s3_bucket) = output.get("S3Bucket") {
                             if let Some(s3_bucket_str) = s3_bucket.as_str() {
                                 if s3_bucket_str == resource.resource_id {

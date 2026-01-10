@@ -2,6 +2,22 @@ use super::super::credentials::CredentialCoordinator;
 use super::super::query_timing;
 use super::super::state::ResourceTag;
 use anyhow::{Context, Result};
+
+/// Redact sensitive string, showing only last 4 characters
+///
+/// Used for account IDs in logs.
+/// Example: "123456789012" -> "********9012"
+fn redact_sensitive(value: &str) -> String {
+    if value.len() <= 4 {
+        "*".repeat(value.len())
+    } else {
+        format!(
+            "{}{}",
+            "*".repeat(value.len() - 4),
+            &value[value.len() - 4..]
+        )
+    }
+}
 use aws_sdk_acm as acm;
 use aws_sdk_amplify as amplify;
 use aws_sdk_appsync as appsync;
@@ -189,7 +205,7 @@ impl ResourceTaggingService {
             if let Some(cached) = cache.get(&cache_key) {
                 let age = Utc::now() - cached.timestamp;
                 if age < ChronoDuration::minutes(Self::CACHE_TTL_MINUTES) {
-                    tracing::debug!("Tag keys cache hit for {}/{}", account_id, region);
+                    tracing::debug!("Tag keys cache hit for {}/{}", redact_sensitive(account_id), region);
                     return Ok(cached.keys.clone());
                 }
             }

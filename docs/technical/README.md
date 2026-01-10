@@ -5,7 +5,10 @@ This directory contains modular technical documentation for the AWS Dash project
 ## Core Systems
 
 * [Resource Explorer System](resource-explorer-system.md) - Multi-account AWS resource discovery with 200+ resource types and two-phase loading
+* [Multi-Pane Architecture](multi-pane-architecture.md) - Split-pane interface with independent query state and progress tracking per pane
 * [Resource Explorer Caching](resource-explorer-caching.md) - Shared Moka cache with compression for accelerated queries
+* [Memory Management System](memory-management-system.md) - Automatic memory budget enforcement with 80% RAM limit and Arc sharing
+* [Performance Monitoring Infrastructure](performance-monitoring-infrastructure.md) - Debug-only timing instrumentation with memory checkpoints
 * [Query Timing & Monitoring](query-timing-monitoring.md) - Debug-only timing instrumentation for performance troubleshooting
 * [SDK Error Handling](sdk-error-handling.md) - Error categorization and retry tracking for AWS SDK operations
 * [CLI Verification System](cli-verification-system.md) - AWS CLI-based resource data verification

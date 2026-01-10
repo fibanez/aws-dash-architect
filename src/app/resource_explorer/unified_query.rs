@@ -297,7 +297,6 @@ pub struct ResourceFull {
     pub status: Option<String>,
     pub tags: Vec<ResourceTag>,
     pub properties: serde_json::Value,
-    pub raw_properties: serde_json::Value,
     pub detailed_properties: Option<serde_json::Value>,
 }
 
@@ -312,8 +311,8 @@ impl From<&ResourceEntry> for ResourceFull {
             status: entry.status.clone(),
             tags: entry.tags.clone(),
             properties: entry.properties.clone(),
-            raw_properties: entry.raw_properties.clone(),
-            detailed_properties: entry.detailed_properties.clone(),
+            // detailed_properties now merged into properties, expose as Some if enriched
+            detailed_properties: entry.detailed_timestamp.map(|_| entry.properties.clone()),
         }
     }
 }
@@ -409,8 +408,7 @@ mod tests {
             resource_id: "i-1234567890abcdef0".to_string(),
             display_name: "test-instance".to_string(),
             status: Some("running".to_string()),
-            properties: serde_json::json!({"instanceType": "t2.micro"}),
-            raw_properties: serde_json::json!({"InstanceId": "i-1234567890abcdef0"}),
+            properties: serde_json::json!({"InstanceId": "i-1234567890abcdef0", "instanceType": "t2.micro"}),
             detailed_properties: None,
             detailed_timestamp: None,
             tags: vec![

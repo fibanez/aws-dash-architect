@@ -36,7 +36,6 @@ impl AsyncResourceNormalizer for NeptuneDBClusterNormalizer {
             .map(|s| s.to_string());
 
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Neptune::DBCluster".to_string(),
@@ -45,9 +44,7 @@ impl AsyncResourceNormalizer for NeptuneDBClusterNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -133,7 +130,6 @@ impl AsyncResourceNormalizer for NeptuneDBInstanceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Neptune::DBInstance".to_string(),
@@ -142,9 +138,7 @@ impl AsyncResourceNormalizer for NeptuneDBInstanceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -166,7 +160,7 @@ impl AsyncResourceNormalizer for NeptuneDBInstanceNormalizer {
 
         // Neptune instances belong to clusters
         if let Some(cluster_id) = entry
-            .raw_properties
+            .properties
             .get("DBClusterIdentifier")
             .and_then(|v| v.as_str())
         {
@@ -185,7 +179,7 @@ impl AsyncResourceNormalizer for NeptuneDBInstanceNormalizer {
 
         // Neptune instances are protected by security groups
         if let Some(security_groups) = entry
-            .raw_properties
+            .properties
             .get("VpcSecurityGroups")
             .and_then(|v| v.as_array())
         {
@@ -208,7 +202,7 @@ impl AsyncResourceNormalizer for NeptuneDBInstanceNormalizer {
 
         // Neptune instances use subnet groups
         if let Some(subnet_group_name) = entry
-            .raw_properties
+            .properties
             .get("DBSubnetGroupName")
             .and_then(|v| v.as_str())
         {

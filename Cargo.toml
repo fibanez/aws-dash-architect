@@ -196,6 +196,13 @@ aws-smithy-types = "1.1.1"
 wry = "0.53.5"
 tao = "0.34"
 
+# Memory profiling (debug builds only)
+dhat = { version = "0.3", optional = true }
+
+[features]
+default = []
+dhat-heap = ["dhat"]
+
 [dev-dependencies]
 insta = { version = "1.34", features = ["json", "yaml"] }
 pretty_assertions = "1.4"

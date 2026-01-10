@@ -28,7 +28,6 @@ impl AsyncResourceNormalizer for TransferResourceNormalizer {
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Transfer::Server".to_string(),
@@ -37,9 +36,7 @@ impl AsyncResourceNormalizer for TransferResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -122,7 +119,6 @@ impl AsyncResourceNormalizer for TransferUserResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Transfer::User".to_string(),
@@ -131,9 +127,7 @@ impl AsyncResourceNormalizer for TransferUserResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -159,7 +153,7 @@ impl AsyncResourceNormalizer for TransferUserResourceNormalizer {
                 "AWS::Transfer::Server" => {
                     // Users belong to Transfer servers
                     if let Some(server_id) = entry
-                        .raw_properties
+                        .properties
                         .get("ServerId")
                         .and_then(|v| v.as_str())
                     {
@@ -174,7 +168,7 @@ impl AsyncResourceNormalizer for TransferUserResourceNormalizer {
                 }
                 "AWS::IAM::Role" => {
                     // Transfer users use IAM roles for access permissions
-                    if let Some(role) = entry.raw_properties.get("Role").and_then(|v| v.as_str()) {
+                    if let Some(role) = entry.properties.get("Role").and_then(|v| v.as_str()) {
                         if role.contains(&resource.resource_id) {
                             relationships.push(ResourceRelationship {
                                 relationship_type: RelationshipType::Uses,

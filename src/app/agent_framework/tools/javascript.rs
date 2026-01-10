@@ -235,7 +235,7 @@ Available JavaScript APIs:
   }
   **WORKFLOW**: (1) loadCache() to populate, (2) getResourceSchema() to see structure, (3) queryCachedResources() to filter
   **CRITICAL**: ALWAYS call getResourceSchema() FIRST to understand property names before filtering!
-  **CRITICAL**: Properties are MERGED - properties, raw_properties, detailed_properties are combined into single "properties" object
+  **CRITICAL**: Properties are MERGED - properties, properties, detailed_properties are combined into single "properties" object
 - showInExplorer(config): Open Explorer window with dynamic configuration
   Parameters: {
     accounts: string[],

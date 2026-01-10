@@ -246,8 +246,8 @@ pub struct QueryCachedResourcesResult {
     pub status: String,
 
     /// Array of cached resources (full ResourceEntry objects serialized to JSON)
-    /// Always present - empty array if no resources
-    pub resources: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<Vec<serde_json::Value>>,
 
     /// Total count of resources returned
     pub count: usize,
@@ -274,8 +274,8 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
     // Minimize LLM context by returning counts/schemas instead of full resource arrays
 
     // Register loadCache() function
-    let load_cache_fn =
-        v8::Function::new(scope, load_cache_callback).expect("Failed to create loadCache function");
+    let load_cache_fn = v8::Function::new(scope, load_cache_callback)
+        .expect("Failed to create loadCache function");
     let fn_name =
         v8::String::new(scope, "loadCache").expect("Failed to create function name string");
     global.set(scope, fn_name.into(), load_cache_fn.into());
@@ -297,8 +297,8 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
     // Register queryCachedResources() function
     let query_cached_fn = v8::Function::new(scope, query_cached_resources_callback)
         .expect("Failed to create queryCachedResources function");
-    let fn_name = v8::String::new(scope, "queryCachedResources")
-        .expect("Failed to create function name string");
+    let fn_name =
+        v8::String::new(scope, "queryCachedResources").expect("Failed to create function name string");
     global.set(scope, fn_name.into(), query_cached_fn.into());
 
     // BOOKMARK FUNCTIONS
@@ -597,10 +597,8 @@ async fn execute_complete_query(
                     all_res.extend(resources);
                 }
                 Err(e) => {
-                    warn!(
-                        "Query failed for {}:{}:{}: {}",
-                        result.account_id, result.region, result.resource_type, e
-                    );
+                    warn!("Query failed for {}:{}:{}: {}",
+                        result.account_id, result.region, result.resource_type, e);
                 }
             }
         }
@@ -620,8 +618,7 @@ async fn execute_complete_query(
     // This is transparent to the caller - they just get fully-enriched resources.
     // Explorer determines which types need enrichment (security groups, S3 buckets, IAM roles, etc.)
     let enrichable_types = ResourceExplorerState::enrichable_resource_types();
-    let needs_enrichment = resource_types
-        .iter()
+    let needs_enrichment = resource_types.iter()
         .any(|rt| enrichable_types.contains(&rt.as_str()));
 
     if needs_enrichment {
@@ -632,16 +629,13 @@ async fn execute_complete_query(
             .iter()
             .filter(|r| {
                 enrichable_types.contains(&r.resource_type.as_str())
-                    && r.detailed_properties.is_none() // Only enrich if not already enriched
+                    && r.detailed_timestamp.is_none() // Only enrich if not already enriched
             })
             .cloned()
             .collect();
 
         if !resources_to_enrich.is_empty() {
-            info!(
-                "Phase 2: Enriching {} resources with detailed properties",
-                resources_to_enrich.len()
-            );
+            info!("Phase 2: Enriching {} resources with detailed properties", resources_to_enrich.len());
 
             // Create channels for Phase 2 progress tracking
             let (progress_tx, mut progress_rx) = mpsc::channel(100);
@@ -694,10 +688,7 @@ async fn execute_complete_query(
         "Query complete: {} resources (Phase 1: {}, enriched: {})",
         filtered_resources.len(),
         phase1_resources.len(),
-        filtered_resources
-            .iter()
-            .filter(|r| r.detailed_properties.is_some())
-            .count()
+        filtered_resources.iter().filter(|r| r.detailed_timestamp.is_some()).count()
     );
 
     Ok(filtered_resources)
@@ -707,7 +698,7 @@ async fn execute_complete_query(
 ///
 /// Queries AWS resources but returns counts instead of full data to minimize context.
 /// This achieves ~99% context reduction by returning metadata instead of resource arrays.
-pub async fn load_cache_internal(args: LoadCacheArgs) -> Result<LoadCacheResult> {
+async fn load_cache_internal(args: LoadCacheArgs) -> Result<LoadCacheResult> {
     let start_time = chrono::Utc::now();
 
     // Resolve accounts: if None/empty, get ALL configured accounts
@@ -767,10 +758,7 @@ pub async fn load_cache_internal(args: LoadCacheArgs) -> Result<LoadCacheResult>
     }
 
     let total_count = all_resources.len();
-    info!(
-        "loadCache: Returning summary for {} total resources",
-        total_count
-    );
+    info!("loadCache: Returning summary for {} total resources", total_count);
 
     // Return success result
     Ok(LoadCacheResult {
@@ -880,72 +868,33 @@ pub fn execute_get_resource_schema(resource_type: &str) -> Result<GetResourceSch
     })
 }
 
-/// Convert a serde_json::Value to a type string representation
-fn value_to_type_string(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(_) => "string".to_string(),
-        serde_json::Value::Number(_) => "number".to_string(),
-        serde_json::Value::Bool(_) => "boolean".to_string(),
-        serde_json::Value::Array(arr) => {
-            if arr.is_empty() {
-                "array".to_string()
-            } else {
-                // Get the type of array elements (use first element)
-                let element_type = value_to_type_string(&arr[0]);
-                format!("array<{}>", element_type)
-            }
-        }
-        serde_json::Value::Object(_) => "object".to_string(),
-        serde_json::Value::Null => "null".to_string(),
-    }
-}
-
-/// Convert a serde_json::Value to a schema example by recursively replacing values with type indicators
-fn value_to_schema_example(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(obj) => {
-            let mut schema_obj = serde_json::Map::new();
-            for (key, val) in obj {
-                schema_obj.insert(key.clone(), value_to_schema_example(val));
-            }
-            serde_json::Value::Object(schema_obj)
-        }
-        serde_json::Value::Array(arr) => {
-            if arr.is_empty() {
-                serde_json::Value::Array(vec![])
-            } else {
-                // Show schema for first element
-                serde_json::Value::Array(vec![value_to_schema_example(&arr[0])])
-            }
-        }
-        _ => serde_json::Value::String(value_to_type_string(value)),
-    }
-}
-
 /// Internal async implementation of get resource schema
 ///
-/// Searches the ResourceExplorerState cache for up to 1000 resources of the given type.
-/// Merges all properties from all resources to show ALL possible properties.
-/// Replaces actual values with type indicators (string, number, boolean, array, object, null).
-pub async fn get_resource_schema_internal(resource_type: &str) -> Result<GetResourceSchemaResult> {
+/// Searches the ResourceExplorerState cache for ONE example resource of the given type.
+/// Returns the FIRST resource found (deterministic) to show structure and available properties.
+async fn get_resource_schema_internal(resource_type: &str) -> Result<GetResourceSchemaResult> {
     // Get global explorer state
     let explorer_state = get_global_explorer_state()
         .ok_or_else(|| anyhow!("Explorer state not initialized (login required)"))?;
 
     let state_guard = explorer_state.read().await;
 
-    // Collect up to 1000 resources of this type
-    const MAX_RESOURCES_FOR_SCHEMA: usize = 1000;
-    let mut collected_resources: Vec<&ResourceEntry> = Vec::new();
+    // Search cache for ANY resource of this type
+    let mut example_resource: Option<&ResourceEntry> = None;
+    let mut total_count = 0usize;
     let mut unique_accounts: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut unique_regions: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (_cache_key, entries) in &state_guard.cached_queries {
         for entry in entries {
             if entry.resource_type == resource_type {
-                if collected_resources.len() < MAX_RESOURCES_FOR_SCHEMA {
-                    collected_resources.push(entry);
+                // Take first resource as example if not yet set
+                if example_resource.is_none() {
+                    example_resource = Some(entry);
                 }
+
+                // Track statistics
+                total_count += 1;
                 unique_accounts.insert(entry.account_id.clone());
                 unique_regions.insert(entry.region.clone());
             }
@@ -953,82 +902,53 @@ pub async fn get_resource_schema_internal(resource_type: &str) -> Result<GetReso
     }
 
     // Build result
-    if !collected_resources.is_empty() {
-        info!(
-            "Building schema from {} resources of type {}",
-            collected_resources.len(),
-            resource_type
-        );
-
-        // Merge properties from ALL collected resources
-        // Track all property keys and their example values
+    if let Some(example) = example_resource {
+        // Merge all property fields into single object
+        // Order: properties -> properties -> detailed_properties (later overwrites earlier)
         let mut merged_properties = serde_json::Map::new();
 
-        for entry in &collected_resources {
-            // Layer 1: properties (normalized minimal data)
-            if let Some(props) = entry.properties.as_object() {
-                for (key, value) in props {
-                    // Only insert if not already present (keep first occurrence)
-                    if !merged_properties.contains_key(key) {
-                        merged_properties.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-
-            // Layer 2: raw_properties (Phase 1 List API response)
-            if let Some(raw) = entry.raw_properties.as_object() {
-                for (key, value) in raw {
-                    if !merged_properties.contains_key(key) {
-                        merged_properties.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-
-            // Layer 3: detailed_properties (Phase 2 Describe API response)
-            if let Some(detailed) = entry.detailed_properties.as_ref() {
-                if let Some(detailed_obj) = detailed.as_object() {
-                    for (key, value) in detailed_obj {
-                        if !merged_properties.contains_key(key) {
-                            merged_properties.insert(key.clone(), value.clone());
-                        }
-                    }
-                }
+        // Layer 1: properties (normalized minimal data)
+        if let Some(props) = example.properties.as_object() {
+            for (key, value) in props {
+                merged_properties.insert(key.clone(), value.clone());
             }
         }
 
-        info!(
-            "Schema for {} contains {} unique properties",
-            resource_type,
-            merged_properties.len()
-        );
+        // Layer 2: properties (Phase 1 List API response)
+        if let Some(raw) = example.properties.as_object() {
+            for (key, value) in raw {
+                merged_properties.insert(key.clone(), value.clone());
+            }
+        }
 
-        // Convert merged properties to schema (replace values with type indicators)
-        let schema_properties = value_to_schema_example(&serde_json::Value::Object(merged_properties));
+        // Note: detailed_properties are now merged directly into properties during Phase 2
+        // So properties already contains merged data if Phase 2 completed
 
         Ok(GetResourceSchemaResult {
             status: "success".to_string(),
             resource_type: resource_type.to_string(),
             example_resource: Some(ExampleResource {
-                resource_id: format!("<{}>", value_to_type_string(&serde_json::Value::String(String::new()))),
-                display_name: format!("<{}>", value_to_type_string(&serde_json::Value::String(String::new()))),
-                account_id: format!("<{}>", value_to_type_string(&serde_json::Value::String(String::new()))),
-                region: format!("<{}>", value_to_type_string(&serde_json::Value::String(String::new()))),
-                properties: schema_properties,
-                tags: vec![ResourceTag {
-                    key: "<string>".to_string(),
-                    value: "<string>".to_string(),
-                }],
-                status: Some("<string>".to_string()),
+                resource_id: example.resource_id.clone(),
+                display_name: example.display_name.clone(),
+                account_id: example.account_id.clone(),
+                region: example.region.clone(),
+                properties: serde_json::Value::Object(merged_properties),
+                tags: example
+                    .tags
+                    .iter()
+                    .map(|t| ResourceTag {
+                        key: t.key.clone(),
+                        value: t.value.clone(),
+                    })
+                    .collect(),
+                status: example.status.clone(),
             }),
             cache_stats: Some(CacheStats {
-                total_count: collected_resources.len(),
+                total_count,
                 account_count: unique_accounts.len(),
                 region_count: unique_regions.len(),
             }),
-            message: Some(format!(
-                "Schema merged from {} resources showing all possible properties",
-                collected_resources.len()
-            )),
+            message: None,
         })
     } else {
         // Build helpful error message with cache statistics
@@ -1044,10 +964,7 @@ pub async fn get_resource_schema_internal(resource_type: &str) -> Result<GetReso
             }
         }
 
-        let mut message = format!(
-            "No resources of type '{}' found in cache.\n\n",
-            resource_type
-        );
+        let mut message = format!("No resources of type '{}' found in cache.\n\n", resource_type);
 
         if cache_size == 0 {
             message.push_str("Cache is empty. Did you call loadCache() first?");
@@ -1266,9 +1183,7 @@ fn query_cached_resources_callback(
 }
 
 /// Execute queryCachedResources (synchronous wrapper for async code)
-pub fn execute_query_cached_resources(
-    args: QueryCachedResourcesArgs,
-) -> Result<QueryCachedResourcesResult> {
+pub fn execute_query_cached_resources(args: QueryCachedResourcesArgs) -> Result<QueryCachedResourcesResult> {
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
             .block_on(async { query_cached_resources_internal(args).await })
@@ -1280,7 +1195,7 @@ pub fn execute_query_cached_resources(
 /// Thin wrapper around Explorer's query infrastructure (same as loadCache).
 /// The query engine handles caching transparently - we just return full resources
 /// instead of counts.
-pub async fn query_cached_resources_internal(
+async fn query_cached_resources_internal(
     args: QueryCachedResourcesArgs,
 ) -> Result<QueryCachedResourcesResult> {
     use std::collections::HashSet;
@@ -1323,12 +1238,14 @@ pub async fn query_cached_resources_internal(
         }
     };
 
-    // Execute the complete query (same as loadCache)
-    // Both functions execute the query, but return different data:
-    // - loadCache returns counts/metadata
-    // - queryCachedResources returns actual resource objects
-    let all_resources =
-        execute_complete_query(account_ids, region_codes, args.resource_types.clone()).await?;
+    // Call the black-box API - it handles everything (Phase 1, Phase 2, caching)
+    // This encapsulates Explorer's complete workflow transparently
+    let all_resources = execute_complete_query(
+        account_ids,
+        region_codes,
+        args.resource_types.clone(),
+    )
+    .await?;
 
     // Format resources for JavaScript consumption
     // Convert ResourceEntry objects to JavaScript-friendly JSON with merged properties
@@ -1340,7 +1257,7 @@ pub async fn query_cached_resources_internal(
     for entry in &all_resources {
         // Merge all property fields into single object for JavaScript
         // Layer 1: properties (normalized minimal)
-        // Layer 2: raw_properties (Phase 1 List API data)
+        // Layer 2: properties (Phase 1 List API data)
         // Layer 3: detailed_properties (Phase 2 Describe API data)
         let mut merged_properties = serde_json::Map::new();
 
@@ -1351,21 +1268,15 @@ pub async fn query_cached_resources_internal(
             }
         }
 
-        // Layer 2: raw_properties
-        if let Some(raw) = entry.raw_properties.as_object() {
+        // Layer 2: properties
+        if let Some(raw) = entry.properties.as_object() {
             for (key, value) in raw {
                 merged_properties.insert(key.clone(), value.clone());
             }
         }
 
-        // Layer 3: detailed_properties (Phase 2 enrichment)
-        if let Some(detailed) = entry.detailed_properties.as_ref() {
-            if let Some(detailed_obj) = detailed.as_object() {
-                for (key, value) in detailed_obj {
-                    merged_properties.insert(key.clone(), value.clone());
-                }
-            }
-        }
+        // Note: detailed_properties are now merged directly into properties during Phase 2
+        // So properties already contains merged data if Phase 2 completed
 
         // Serialize tags
         let tags_json: Vec<serde_json::Value> = entry
@@ -1408,7 +1319,7 @@ pub async fn query_cached_resources_internal(
 
         Ok(QueryCachedResourcesResult {
             status: "not_found".to_string(),
-            resources: Vec::new(),
+            resources: None,
             count: 0,
             accounts_with_data: Vec::new(),
             regions_with_data: Vec::new(),
@@ -1418,7 +1329,7 @@ pub async fn query_cached_resources_internal(
     } else {
         Ok(QueryCachedResourcesResult {
             status: "success".to_string(),
-            resources: js_resources,
+            resources: Some(js_resources),
             count,
             accounts_with_data: accounts_found.into_iter().collect(),
             regions_with_data: regions_found.into_iter().collect(),
@@ -1880,6 +1791,7 @@ fn build_query_scope(
     })
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1921,6 +1833,7 @@ mod tests {
         assert_eq!(scope.resource_types[2].service_name, "IAM");
     }
 
+
     #[test]
     fn test_categorize_error() {
         // Test access denied
@@ -1958,6 +1871,7 @@ mod tests {
         assert_eq!(code, "UnknownError");
         assert!(!is_warning);
     }
+
 
     #[test]
     fn test_query_bookmarks_args_deserialize() {

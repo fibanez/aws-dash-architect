@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for LambdaFunctionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Lambda::Function".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for LambdaFunctionNormalizer {
             resource_id: function_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -113,7 +110,6 @@ impl AsyncResourceNormalizer for LambdaLayerVersionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Lambda::LayerVersion".to_string(),
@@ -122,9 +118,7 @@ impl AsyncResourceNormalizer for LambdaLayerVersionNormalizer {
             resource_id: layer_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -201,7 +195,6 @@ impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Lambda::EventSourceMapping".to_string(),
@@ -210,9 +203,7 @@ impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
             resource_id: uuid,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -234,7 +225,7 @@ impl AsyncResourceNormalizer for LambdaEventSourceMappingNormalizer {
 
         // Map to Lambda function
         if let Some(function_name) = entry
-            .raw_properties
+            .properties
             .get("FunctionName")
             .and_then(|v| v.as_str())
         {

@@ -1,4 +1,3 @@
-use super::utils::*;
 use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -53,7 +52,6 @@ impl AsyncResourceNormalizer for ElastiCacheCacheClusterNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ElastiCache::CacheCluster".to_string(),
@@ -62,9 +60,7 @@ impl AsyncResourceNormalizer for ElastiCacheCacheClusterNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -86,7 +82,7 @@ impl AsyncResourceNormalizer for ElastiCacheCacheClusterNormalizer {
 
         // ElastiCache clusters are associated with security groups
         if let Some(security_groups) = entry
-            .raw_properties
+            .properties
             .get("SecurityGroups")
             .and_then(|v| v.as_array())
         {
@@ -109,7 +105,7 @@ impl AsyncResourceNormalizer for ElastiCacheCacheClusterNormalizer {
 
         // ElastiCache clusters are deployed in subnet groups
         if let Some(subnet_group_name) = entry
-            .raw_properties
+            .properties
             .get("CacheSubnetGroupName")
             .and_then(|v| v.as_str())
         {
@@ -183,7 +179,6 @@ impl AsyncResourceNormalizer for ElastiCacheReplicationGroupNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ElastiCache::ReplicationGroup".to_string(),
@@ -192,9 +187,7 @@ impl AsyncResourceNormalizer for ElastiCacheReplicationGroupNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -216,7 +209,7 @@ impl AsyncResourceNormalizer for ElastiCacheReplicationGroupNormalizer {
 
         // Replication groups contain member clusters
         if let Some(member_clusters) = entry
-            .raw_properties
+            .properties
             .get("MemberClusters")
             .and_then(|v| v.as_array())
         {

@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for CloudWatchAlarmNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CloudWatch::Alarm".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for CloudWatchAlarmNormalizer {
             resource_id: alarm_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -118,7 +115,6 @@ impl AsyncResourceNormalizer for CloudWatchDashboardNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CloudWatch::Dashboard".to_string(),
@@ -127,9 +123,7 @@ impl AsyncResourceNormalizer for CloudWatchDashboardNormalizer {
             resource_id: dashboard_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -183,7 +177,6 @@ async fn normalize_cloudwatch_simple_resource(
             Vec::new()
         });
 
-    let properties = create_normalized_properties(&raw_response);
 
     Ok(ResourceEntry {
         resource_type: resource_type.to_string(),
@@ -192,9 +185,7 @@ async fn normalize_cloudwatch_simple_resource(
         resource_id,
         display_name,
         status,
-        properties,
-        raw_properties: raw_response,
-        detailed_properties: None,
+        properties: raw_response,
         detailed_timestamp: None,
         tags,
         relationships: Vec::new(),

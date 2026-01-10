@@ -38,7 +38,6 @@ impl AsyncResourceNormalizer for AppRunnerResourceNormalizer {
             .to_string();
 
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::AppRunner::Service".to_string(),
@@ -47,9 +46,7 @@ impl AsyncResourceNormalizer for AppRunnerResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -137,7 +134,6 @@ impl AsyncResourceNormalizer for AppRunnerConnectionResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::AppRunner::Connection".to_string(),
@@ -146,9 +142,7 @@ impl AsyncResourceNormalizer for AppRunnerConnectionResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

@@ -1,4 +1,3 @@
-use super::utils::*;
 use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -50,7 +49,6 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::WorkSpaces::Workspace".to_string(),
@@ -59,9 +57,7 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -87,7 +83,7 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 "AWS::WorkSpaces::Directory" => {
                     // WorkSpaces belong to directories
                     if let Some(directory_id) = entry
-                        .raw_properties
+                        .properties
                         .get("DirectoryId")
                         .and_then(|v| v.as_str())
                     {
@@ -103,7 +99,7 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 "AWS::EC2::Subnet" => {
                     // WorkSpaces use subnets
                     if let Some(subnet_id) = entry
-                        .raw_properties
+                        .properties
                         .get("SubnetId")
                         .and_then(|v| v.as_str())
                     {
@@ -119,7 +115,7 @@ impl AsyncResourceNormalizer for WorkSpacesResourceNormalizer {
                 "AWS::KMS::Key" => {
                     // WorkSpaces can use KMS keys for volume encryption
                     if let Some(volume_encryption_key) = entry
-                        .raw_properties
+                        .properties
                         .get("VolumeEncryptionKey")
                         .and_then(|v| v.as_str())
                     {
@@ -199,7 +195,6 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::WorkSpaces::Directory".to_string(),
@@ -208,9 +203,7 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
             resource_id,
             display_name,
             status: Some(status),
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -235,7 +228,7 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
             match resource.resource_type.as_str() {
                 "AWS::EC2::Subnet" => {
                     // WorkSpaces directories use subnets
-                    if let Some(subnet_ids) = entry.raw_properties.get("SubnetIds") {
+                    if let Some(subnet_ids) = entry.properties.get("SubnetIds") {
                         if let Some(subnets) = subnet_ids.as_array() {
                             for subnet in subnets {
                                 if let Some(subnet_id) = subnet.as_str() {
@@ -254,7 +247,7 @@ impl AsyncResourceNormalizer for WorkSpacesDirectoryResourceNormalizer {
                 "AWS::DirectoryService::Directory" => {
                     // WorkSpaces directories are often backed by Directory Service
                     if let Some(directory_type) = entry
-                        .raw_properties
+                        .properties
                         .get("DirectoryType")
                         .and_then(|v| v.as_str())
                     {

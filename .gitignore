@@ -48,6 +48,11 @@ sso.json
 
 # Temporary files
 *.tmp
+
+# Memory profiling data (large binary files)
+memory-profiles/*.dat
+memory-profiles/*.json
+memory-profiles/*.txt
 *.temp
 .tmp/
 .temp/
@@ -68,3 +73,6 @@ tauri-source/
 
 # MeiliSearch data directory (runtime data)
 data.ms/
+
+# dhat memory profiling output
+dhat-heap.json

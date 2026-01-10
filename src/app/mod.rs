@@ -31,6 +31,7 @@ pub mod aws_regions;
 pub mod dashui;
 pub mod data_plane;
 pub mod fonts;
+pub mod memory_profiling;
 pub mod notifications;
 pub mod resource_explorer;
 pub mod webview;

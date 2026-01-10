@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for ECSClusterNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::Cluster".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for ECSClusterNormalizer {
             resource_id: cluster_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -113,7 +110,6 @@ impl AsyncResourceNormalizer for ECSServiceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::Service".to_string(),
@@ -122,9 +118,7 @@ impl AsyncResourceNormalizer for ECSServiceNormalizer {
             resource_id: service_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -146,7 +140,7 @@ impl AsyncResourceNormalizer for ECSServiceNormalizer {
 
         // Map to cluster
         if let Some(cluster_arn) = entry
-            .raw_properties
+            .properties
             .get("ClusterArn")
             .and_then(|v| v.as_str())
         {
@@ -166,7 +160,7 @@ impl AsyncResourceNormalizer for ECSServiceNormalizer {
 
         // Map to task definition
         if let Some(task_def_arn) = entry
-            .raw_properties
+            .properties
             .get("TaskDefinition")
             .and_then(|v| v.as_str())
         {
@@ -247,7 +241,6 @@ impl AsyncResourceNormalizer for ECSTaskNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::Task".to_string(),
@@ -256,9 +249,7 @@ impl AsyncResourceNormalizer for ECSTaskNormalizer {
             resource_id: task_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -280,7 +271,7 @@ impl AsyncResourceNormalizer for ECSTaskNormalizer {
 
         // Map to cluster
         if let Some(cluster_arn) = entry
-            .raw_properties
+            .properties
             .get("ClusterArn")
             .and_then(|v| v.as_str())
         {
@@ -300,7 +291,7 @@ impl AsyncResourceNormalizer for ECSTaskNormalizer {
 
         // Map to task definition
         if let Some(task_def_arn) = entry
-            .raw_properties
+            .properties
             .get("TaskDefinitionArn")
             .and_then(|v| v.as_str())
         {
@@ -365,7 +356,6 @@ impl AsyncResourceNormalizer for ECSTaskDefinitionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::TaskDefinition".to_string(),
@@ -374,9 +364,7 @@ impl AsyncResourceNormalizer for ECSTaskDefinitionNormalizer {
             resource_id: family,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

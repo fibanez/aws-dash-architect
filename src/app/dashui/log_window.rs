@@ -128,7 +128,13 @@ impl LogWindow {
 
         // Start the watcher thread
         let handle = thread::spawn(move || {
-            let mut last_position = 0u64;
+            // Initialize last_position to EOF (tail mode) to avoid reading entire log history
+            // This prevents allocating 800+ MB on startup for large log files
+            let mut last_position = if let Ok(metadata) = std::fs::metadata(&log_path) {
+                metadata.len()
+            } else {
+                0u64
+            };
 
             loop {
                 thread::sleep(Duration::from_millis(UPDATE_INTERVAL_MS));

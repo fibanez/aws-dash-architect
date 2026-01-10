@@ -6,6 +6,11 @@ use tracing_subscriber::prelude::*;
 // Import AgentTracingLayer for capturing stood:: traces in per-agent logs
 use awsdash::app::agent_framework::logging::tracing::AgentTracingLayer;
 
+// Memory profiling - only active when compiled with --features dhat-heap
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn init_logging() {
     // Check if tokio-console profiling is requested
     // To enable: TOKIO_CONSOLE=1 RUSTFLAGS="--cfg tokio_unstable" cargo run
@@ -34,6 +39,19 @@ fn init_logging() {
             .create(true)
             .open(&log_path)
             .expect("Failed to open log file");
+
+        // Set restrictive permissions (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = file.metadata() {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600); // Owner read/write only
+                if let Err(e) = std::fs::set_permissions(&log_path, perms) {
+                    eprintln!("[SECURITY] Failed to set log file permissions: {}", e);
+                }
+            }
+        }
 
         // Configure tracing with unified formatting for all logs
         // Stood agent library set to TRACE to capture all agent events in per-agent logs
@@ -161,6 +179,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("No webview args, starting normal GUI mode");
     init_perf_timing_path();
+
+    // Initialize memory profiler (only when compiled with --features dhat-heap)
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+    #[cfg(feature = "dhat-heap")]
+    tracing::info!("dhat heap profiler initialized - data will be written to dhat-heap.json on exit");
+
+    // Initialize memory budget (80% of system RAM)
+    awsdash::app::resource_explorer::memory_budget::MemoryBudget::initialize();
 
     // Clean up old agent log files (keep 50 most recent)
     match awsdash::app::agent_framework::AgentLogger::cleanup_old_logs(50) {

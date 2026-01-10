@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CodeBuild::Project".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
             resource_id: project_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -71,7 +68,7 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
         let mut relationships = Vec::new();
 
         // Check for CodeCommit repository relationships in source configuration
-        if let Some(source) = entry.raw_properties.get("Source") {
+        if let Some(source) = entry.properties.get("Source") {
             if let Some(source_type) = source.get("Type").and_then(|v| v.as_str()) {
                 if source_type == "CODECOMMIT" {
                     if let Some(location) = source.get("Location").and_then(|v| v.as_str()) {
@@ -98,7 +95,7 @@ impl AsyncResourceNormalizer for CodeBuildProjectNormalizer {
         }
 
         // Check for S3 bucket relationships in artifacts configuration
-        if let Some(artifacts) = entry.raw_properties.get("Artifacts") {
+        if let Some(artifacts) = entry.properties.get("Artifacts") {
             if let Some(artifacts_type) = artifacts.get("Type").and_then(|v| v.as_str()) {
                 if artifacts_type == "S3" {
                     if let Some(location) = artifacts.get("Location").and_then(|v| v.as_str()) {

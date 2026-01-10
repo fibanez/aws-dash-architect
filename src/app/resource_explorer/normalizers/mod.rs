@@ -940,32 +940,6 @@ pub mod utils {
     }
 
     /// Create normalized properties object from raw AWS response
-    pub fn create_normalized_properties(raw: &serde_json::Value) -> serde_json::Value {
-        let mut normalized = serde_json::Map::new();
-
-        // Extract common fields that we want to normalize across all resource types
-        if let Some(id) = raw
-            .get("InstanceId")
-            .or_else(|| raw.get("VpcId"))
-            .or_else(|| raw.get("GroupId"))
-            .or_else(|| raw.get("RoleId"))
-            .or_else(|| raw.get("UserId"))
-            .or_else(|| raw.get("PolicyId"))
-        {
-            normalized.insert("id".to_string(), id.clone());
-        }
-
-        if let Some(arn) = raw.get("Arn") {
-            normalized.insert("arn".to_string(), arn.clone());
-        }
-
-        if let Some(created) = raw.get("CreateDate").or_else(|| raw.get("LaunchTime")) {
-            normalized.insert("created_date".to_string(), created.clone());
-        }
-
-        serde_json::Value::Object(normalized)
-    }
-
     /// Macro to create ResourceEntry with default child resource fields
     /// This reduces boilerplate when creating ResourceEntry instances
     #[macro_export]
@@ -978,8 +952,6 @@ pub mod utils {
             display_name: $display_name:expr,
             status: $status:expr,
             properties: $properties:expr,
-            raw_properties: $raw_properties:expr,
-            detailed_properties: $detailed_properties:expr,
             detailed_timestamp: $detailed_timestamp:expr,
             tags: $tags:expr,
             relationships: $relationships:expr,
@@ -998,8 +970,6 @@ pub mod utils {
                 display_name: $display_name,
                 status: $status,
                 properties: $properties,
-                raw_properties: $raw_properties,
-                detailed_properties: $detailed_properties,
                 detailed_timestamp: $detailed_timestamp,
                 tags: $tags,
                 relationships: $relationships,

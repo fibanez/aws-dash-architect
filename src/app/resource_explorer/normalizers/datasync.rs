@@ -33,7 +33,6 @@ impl AsyncResourceNormalizer for DataSyncResourceNormalizer {
 
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::DataSync::Task".to_string(),
@@ -42,9 +41,7 @@ impl AsyncResourceNormalizer for DataSyncResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -127,7 +124,6 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::DataSync::Location".to_string(),
@@ -136,9 +132,7 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -160,7 +154,7 @@ impl AsyncResourceNormalizer for DataSyncLocationResourceNormalizer {
 
         // DataSync locations relate to the actual storage services they represent
         if let Some(location_uri) = entry
-            .raw_properties
+            .properties
             .get("LocationUri")
             .and_then(|v| v.as_str())
         {

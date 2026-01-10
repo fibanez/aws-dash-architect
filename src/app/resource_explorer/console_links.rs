@@ -7,8 +7,7 @@ fn encode(value: &str) -> String {
 #[derive(Debug)]
 struct ArnParts<'a> {
     service: &'a str,
-    #[allow(dead_code)]
-    region: &'a str,
+    _region: &'a str,
     account_id: &'a str,
     resource: &'a str,
 }
@@ -25,7 +24,7 @@ fn parse_arn(arn: &str) -> Option<ArnParts<'_>> {
     let resource = parts.next()?;
     Some(ArnParts {
         service,
-        region,
+        _region: region,
         account_id,
         resource,
     })

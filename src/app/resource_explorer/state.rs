@@ -10,10 +10,8 @@ pub struct ResourceEntry {
     pub resource_id: String,
     pub display_name: String, // Human readable name (instance name, role name, etc.)
     pub status: Option<String>, // Instance state, enabled/disabled, etc.
-    pub properties: serde_json::Value, // Normalized AWS API response
-    pub raw_properties: serde_json::Value, // Original AWS API response (from List queries)
-    pub detailed_properties: Option<serde_json::Value>, // Detailed properties from Describe queries
-    pub detailed_timestamp: Option<DateTime<Utc>>, // When detailed data was fetched
+    pub properties: serde_json::Value, // Complete AWS properties (Phase 1 response + Phase 2 enrichment if applicable)
+    pub detailed_timestamp: Option<DateTime<Utc>>, // When Phase 2 enrichment completed (properties were merged)
     pub tags: Vec<ResourceTag>,
     pub relationships: Vec<ResourceRelationship>, // Connections to other resources
     pub parent_resource_id: Option<String>,       // ID of parent resource (for child resources)
@@ -50,10 +48,6 @@ impl ResourceEntry {
 
         // JSON values (approximate based on serialized size)
         size += self.properties.to_string().len();
-        size += self.raw_properties.to_string().len();
-        if let Some(ref detailed) = self.detailed_properties {
-            size += detailed.to_string().len();
-        }
 
         // Tags vector
         size += self.tags.capacity() * std::mem::size_of::<ResourceTag>();
@@ -94,28 +88,26 @@ impl ResourceEntry {
         }
     }
 
-    /// Check if detailed properties are available and fresh
+    /// Check if Phase 2 enrichment has been completed and is fresh
     pub fn has_fresh_detailed_properties(&self, stale_threshold_minutes: i64) -> bool {
-        if let (Some(_), Some(timestamp)) = (&self.detailed_properties, &self.detailed_timestamp) {
+        if let Some(timestamp) = self.detailed_timestamp {
             let now = Utc::now();
-            let age = now.signed_duration_since(*timestamp);
+            let age = now.signed_duration_since(timestamp);
             age.num_minutes() <= stale_threshold_minutes
         } else {
             false
         }
     }
 
-    /// Set detailed properties with current timestamp
-    pub fn set_detailed_properties(&mut self, properties: serde_json::Value) {
-        self.detailed_properties = Some(properties);
+    /// Mark that Phase 2 enrichment has completed
+    /// Note: properties field should already be merged by Phase 2
+    pub fn mark_enriched(&mut self) {
         self.detailed_timestamp = Some(Utc::now());
     }
 
-    /// Get the best available properties (detailed if available, otherwise raw)
+    /// Get the best available properties (always returns merged properties)
     pub fn get_display_properties(&self) -> &serde_json::Value {
-        self.detailed_properties
-            .as_ref()
-            .unwrap_or(&self.raw_properties)
+        &self.properties
     }
 }
 
@@ -614,7 +606,9 @@ pub struct ResourceExplorerState {
     pub show_region_dialog: bool,
     pub show_resource_type_dialog: bool,
     pub show_unified_selection_dialog: bool, // Unified selection dialog (3-panel)
-    pub stale_data_threshold_minutes: i64,   // Data older than this is considered stale
+    pub show_bookmark_dialog: bool, // Show add bookmark dialog
+    pub show_bookmark_manager: bool, // Show bookmark manager
+    pub stale_data_threshold_minutes: i64, // Data older than this is considered stale
     // Tag filtering UI state
     pub show_only_tagged: bool,    // Filter to only resources with tags
     pub show_only_untagged: bool,  // Filter to only resources without tags
@@ -634,24 +628,24 @@ pub struct ResourceExplorerState {
     pub phase1_failed_queries: HashSet<String>,  // Queries that failed to load
     pub phase1_total_queries: usize,             // Total queries requested
     // Phase 1 tag fetching progress (during resource normalization)
-    pub phase1_tag_fetching: bool, // Tag fetching in progress
+    pub phase1_tag_fetching: bool,                // Tag fetching in progress
     pub phase1_tag_resource_type: Option<String>, // Resource type being fetched (e.g., "IAM Role")
-    pub phase1_tag_progress_count: usize, // Tags fetched so far
-    pub phase1_tag_progress_total: usize, // Total resources needing tags
+    pub phase1_tag_progress_count: usize,         // Tags fetched so far
+    pub phase1_tag_progress_total: usize,         // Total resources needing tags
     // Phase 1.5: Tag analysis progress (between Phase 1 and Phase 2)
-    pub phase1_5_in_progress: bool, // Tag analysis is currently running
-    pub phase1_5_stage: Option<String>, // Current stage: "Discovering tags", "Analyzing popularity", etc.
-    pub phase1_5_progress_count: usize, // Resources analyzed so far
-    pub phase1_5_progress_total: usize, // Total resources to analyze
+    pub phase1_5_in_progress: bool,               // Tag analysis is currently running
+    pub phase1_5_stage: Option<String>,           // Current stage: "Discovering tags", "Analyzing popularity", etc.
+    pub phase1_5_progress_count: usize,           // Resources analyzed so far
+    pub phase1_5_progress_total: usize,           // Total resources to analyze
     // Two-phase loading state
     pub phase2_enrichment_in_progress: bool, // Phase 2 enrichment is currently running
     pub phase2_enrichment_completed: bool,   // Signal that Phase 2 enrichment has completed
     pub phase2_current_service: Option<String>, // Current service being enriched (e.g., "S3 buckets")
-    pub phase2_progress_count: usize,           // Resources enriched so far
-    pub phase2_progress_total: usize,           // Total resources to enrich
-    pub phase2_generation: u64,                 // Selection generation for Phase 2 cancellation
+    pub phase2_progress_count: usize,        // Resources enriched so far
+    pub phase2_progress_total: usize,        // Total resources to enrich
+    pub phase2_generation: u64,              // Selection generation for Phase 2 cancellation
     // Tree cache invalidation
-    pub enrichment_version: u64, // Incremented each time resources are enriched (forces tree rebuild)
+    pub enrichment_version: u64,             // Incremented each time resources are enriched (forces tree rebuild)
     pub last_enrichment_rebuild: std::time::Instant, // Last time enrichment_version was incremented (for debouncing)
 }
 
@@ -681,6 +675,8 @@ impl ResourceExplorerState {
             show_region_dialog: false,
             show_resource_type_dialog: false,
             show_unified_selection_dialog: false,
+            show_bookmark_dialog: false,
+            show_bookmark_manager: false,
             stale_data_threshold_minutes: 15, // Consider data stale after 15 minutes
             show_only_tagged: false,
             show_only_untagged: false,
@@ -753,18 +749,11 @@ impl ResourceExplorerState {
     /// Start Phase 1 tracking with the list of query keys
     /// Each key should be in format "account_id:region:resource_type"
     pub fn start_phase1_tracking(&mut self, query_keys: Vec<String>) {
-        tracing::info!(
-            "📋 Phase 1: Starting tracking for {} queries",
-            query_keys.len()
-        );
+        tracing::info!("📋 Phase 1: Starting tracking for {} queries", query_keys.len());
         if query_keys.len() <= 10 {
             tracing::debug!("📋 Phase 1: Query keys: {:?}", query_keys);
         } else {
-            tracing::debug!(
-                "📋 Phase 1: Query keys (first 10 of {}): {:?}",
-                query_keys.len(),
-                &query_keys[..10]
-            );
+            tracing::debug!("📋 Phase 1: Query keys (first 10 of {}): {:?}", query_keys.len(), &query_keys[..10]);
         }
         self.phase1_pending_queries = query_keys.iter().cloned().collect();
         self.phase1_failed_queries.clear();
@@ -777,16 +766,11 @@ impl ResourceExplorerState {
         let was_present = self.phase1_pending_queries.remove(query_key);
         tracing::debug!(
             "✓ Phase 1: {} completed (was_tracked: {}, remaining: {})",
-            query_key,
-            was_present,
-            self.phase1_pending_queries.len()
+            query_key, was_present, self.phase1_pending_queries.len()
         );
         if self.phase1_pending_queries.is_empty() {
-            tracing::info!(
-                "✅ Phase 1: All {} queries completed! (failed: {})",
-                self.phase1_total_queries,
-                self.phase1_failed_queries.len()
-            );
+            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries, self.phase1_failed_queries.len());
         }
     }
 
@@ -797,18 +781,12 @@ impl ResourceExplorerState {
         self.phase1_failed_queries.insert(query_key.to_string());
         tracing::warn!(
             "✗ Phase 1: {} failed (was_tracked: {}, remaining: {}, total_failed: {})",
-            query_key,
-            was_present,
-            self.phase1_pending_queries.len(),
-            self.phase1_failed_queries.len()
+            query_key, was_present, self.phase1_pending_queries.len(), self.phase1_failed_queries.len()
         );
         // Also check if this was the last query
         if self.phase1_pending_queries.is_empty() {
-            tracing::info!(
-                "✅ Phase 1: All {} queries completed! (failed: {})",
-                self.phase1_total_queries,
-                self.phase1_failed_queries.len()
-            );
+            tracing::info!("✅ Phase 1: All {} queries completed! (failed: {})",
+                self.phase1_total_queries, self.phase1_failed_queries.len());
         }
     }
 
@@ -821,12 +799,7 @@ impl ResourceExplorerState {
     pub fn get_phase1_progress(&self) -> (usize, usize, usize, Vec<String>) {
         let mut pending: Vec<String> = self.phase1_pending_queries.iter().cloned().collect();
         pending.sort(); // Alphabetical for consistent display
-        (
-            pending.len(),
-            self.phase1_total_queries,
-            self.phase1_failed_queries.len(),
-            pending,
-        )
+        (pending.len(), self.phase1_total_queries, self.phase1_failed_queries.len(), pending)
     }
 
     /// Get count of failed queries in Phase 1
@@ -853,9 +826,9 @@ impl ResourceExplorerState {
         format!("{}:{}:{}", account_id, region, resource_type)
     }
 
-    /// Check if a resource type needs Phase 2 enrichment and doesn't have details yet
-    pub fn needs_phase2_enrichment(resource_type: &str, has_detailed_properties: bool) -> bool {
-        !has_detailed_properties && Self::enrichable_resource_types().contains(&resource_type)
+    /// Check if a resource type needs Phase 2 enrichment and hasn't been enriched yet
+    pub fn needs_phase2_enrichment(resource_type: &str, has_enrichment_timestamp: bool) -> bool {
+        !has_enrichment_timestamp && Self::enrichable_resource_types().contains(&resource_type)
     }
 
     /// Reset Phase 2 state for a new query
@@ -1200,12 +1173,20 @@ impl ResourceExplorerState {
         self.phase1_5_stage = Some("Discovering tags".to_string());
 
         // Discover tags from resources (populates tag discovery for autocomplete)
-        tracing::info!("Phase 1.5: Starting tag discovery for {} resources", total);
+        tracing::info!(
+            "Phase 1.5: Starting tag discovery for {} resources",
+            total
+        );
         self.tag_discovery.discover_tags(&self.resources);
         self.phase1_5_progress_count = total / 3; // ~33% progress
         tracing::info!(
             "Phase 1.5: Tag discovery complete - {} unique tag keys found",
             self.tag_discovery.tag_key_count()
+        );
+
+        // Memory checkpoint: After tag discovery
+        crate::app::memory_profiling::memory_checkpoint(
+            &format!("after_tag_discovery_{}_resources", total)
         );
 
         // Analyze resources for tag popularity

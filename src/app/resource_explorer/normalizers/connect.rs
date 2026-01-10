@@ -1,4 +1,3 @@
-use super::utils::*;
 use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -50,7 +49,6 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Connect::Instance".to_string(),
@@ -59,9 +57,7 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -86,7 +82,7 @@ impl AsyncResourceNormalizer for ConnectNormalizer {
             match resource.resource_type.as_str() {
                 "AWS::IAM::Role" => {
                     // Connect instances use IAM service roles
-                    if let Some(service_role) = entry.raw_properties.get("ServiceRole") {
+                    if let Some(service_role) = entry.properties.get("ServiceRole") {
                         if let Some(service_role_str) = service_role.as_str() {
                             if service_role_str.contains(&resource.resource_id) {
                                 relationships.push(ResourceRelationship {

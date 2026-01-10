@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for RedshiftResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Redshift::Cluster".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for RedshiftResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for EKSClusterNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EKS::Cluster".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for EKSClusterNormalizer {
             resource_id: cluster_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -71,7 +68,7 @@ impl AsyncResourceNormalizer for EKSClusterNormalizer {
         let mut relationships = Vec::new();
 
         // Find related VPC
-        if let Some(vpc_config) = entry.raw_properties.get("ResourcesVpcConfig") {
+        if let Some(vpc_config) = entry.properties.get("ResourcesVpcConfig") {
             if let Some(vpc_id) = vpc_config.get("VpcId").and_then(|v| v.as_str()) {
                 for resource in all_resources {
                     if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {

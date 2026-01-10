@@ -31,6 +31,9 @@ impl DashApp {
         // Initialize skill system (independent of AWS login)
         app.initialize_skills();
 
+        // Memory checkpoint: After app initialization
+        crate::app::memory_profiling::memory_checkpoint("app_initialized");
+
         app
     }
 

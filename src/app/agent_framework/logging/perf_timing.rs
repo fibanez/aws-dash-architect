@@ -73,6 +73,19 @@ mod debug_impl {
 
         match OpenOptions::new().create(true).append(true).open(&log_path) {
             Ok(file) => {
+                // Set restrictive permissions (owner read/write only)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = file.metadata() {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(0o600); // Owner read/write only
+                        if let Err(e) = std::fs::set_permissions(&log_path, perms) {
+                            eprintln!("[PERF] Failed to set log file permissions: {}", e);
+                        }
+                    }
+                }
+
                 let mut log_file = PERF_LOG_FILE.lock().unwrap();
                 *log_file = Some(file);
                 *initialized = true;
@@ -165,7 +178,7 @@ mod debug_impl {
         });
     }
 
-    /// Log a checkpoint (instant timing point)
+    /// Log a checkpoint (instant timing point) with memory usage
     pub fn log_checkpoint(name: &str, context: Option<&str>) {
         init_perf_log();
         let mut log_file = PERF_LOG_FILE.lock().unwrap();
@@ -174,11 +187,17 @@ mod debug_impl {
             let thread_id = std::thread::current().id();
             let context_str = context.map(|c| format!(" - {}", c)).unwrap_or_default();
 
-            let _ = writeln!(
-                file,
-                "[{}] [{:?}] CHECKPOINT: {}{}",
-                timestamp, thread_id, name, context_str
-            );
+// Get memory usage
+            let memory_str = if let Some(usage) = memory_stats::memory_stats() {
+                // physical_mem is RSS (Resident Set Size) - actual memory used
+                let mem_mb = usage.physical_mem as f64 / 1024.0 / 1024.0;
+                format!(" [mem: {:.1}MB]", mem_mb)
+            } else {
+                String::new()
+            };
+
+            let _ = writeln!(file, "[{}] [{:?}]{} CHECKPOINT: {}{}",
+                timestamp, thread_id, memory_str, name, context_str);
             let _ = file.flush();
         }
     }

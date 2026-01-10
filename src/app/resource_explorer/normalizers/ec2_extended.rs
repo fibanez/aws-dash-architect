@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::TransitGateway".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for EC2TransitGatewayNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -130,7 +127,6 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::VPCPeeringConnection".to_string(),
@@ -139,9 +135,7 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -163,11 +157,11 @@ impl AsyncResourceNormalizer for EC2VPCPeeringConnectionNormalizer {
 
         // Extract VPC IDs from the peering connection
         let accepter_vpc_id = entry
-            .raw_properties
+            .properties
             .get("AccepterVpcId")
             .and_then(|v| v.as_str());
         let requester_vpc_id = entry
-            .raw_properties
+            .properties
             .get("RequesterVpcId")
             .and_then(|v| v.as_str());
 
@@ -238,7 +232,6 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::FlowLog".to_string(),
@@ -247,9 +240,7 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -271,7 +262,7 @@ impl AsyncResourceNormalizer for EC2FlowLogNormalizer {
 
         // Flow logs can be attached to VPCs, subnets, or network interfaces
         if let Some(attached_resource_id) = entry
-            .raw_properties
+            .properties
             .get("AttachedResourceId")
             .and_then(|v| v.as_str())
         {
@@ -330,7 +321,6 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::VolumeAttachment".to_string(),
@@ -339,9 +329,7 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -363,11 +351,11 @@ impl AsyncResourceNormalizer for EC2VolumeAttachmentNormalizer {
 
         // Extract volume and instance IDs from the attachment
         let volume_id = entry
-            .raw_properties
+            .properties
             .get("VolumeId")
             .and_then(|v| v.as_str());
         let instance_id = entry
-            .raw_properties
+            .properties
             .get("InstanceId")
             .and_then(|v| v.as_str());
 
@@ -434,7 +422,6 @@ async fn normalize_ec2_simple_resource(
             Vec::new()
         });
 
-    let properties = create_normalized_properties(&raw_response);
 
     Ok(ResourceEntry {
         resource_type: resource_type.to_string(),
@@ -443,9 +430,7 @@ async fn normalize_ec2_simple_resource(
         resource_id,
         display_name,
         status,
-        properties,
-        raw_properties: raw_response,
-        detailed_properties: None,
+        properties: raw_response,
         detailed_timestamp: None,
         tags,
         relationships: Vec::new(),

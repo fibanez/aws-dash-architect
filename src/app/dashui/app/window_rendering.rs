@@ -2,9 +2,11 @@
 
 use super::{DashApp, FocusedWindow};
 use crate::app::agent_framework::v8_bindings::set_global_aws_identity;
+use crate::app::agent_framework::utils::registry::set_global_aws_client;
 use crate::app::dashui::window_focus::FocusableWindow;
-use crate::app::resource_explorer::{set_global_bookmark_manager, set_global_explorer_state};
+use crate::app::resource_explorer::set_global_bookmark_manager;
 use eframe::egui;
+use std::sync::Arc;
 
 impl DashApp {
     /// Handle command palettes
@@ -88,18 +90,38 @@ impl DashApp {
                         tracing::debug!("AgentManagerWindow AWS identity set");
                     }
 
-                    // Proactively initialize ResourceExplorer with AWS Identity Center
-                    // This ensures the AWS client is available for agent framework tools even if the window isn't open
-                    self.resource_explorer
+                    // Proactively initialize ExplorerManager with AWS Identity Center
+                    // This ensures the AWS client is available for agent framework tools
+                    self.explorer_manager
                         .set_aws_identity_center(Some(aws_identity.clone()));
 
-                    // Set global explorer state and bookmark manager for unified V8 bindings
-                    set_global_explorer_state(Some(self.resource_explorer.get_state()));
+                    // Create AWS client from identity center
+                    if let Ok(identity_center) = aws_identity.lock() {
+                        let default_role = identity_center.default_role_name.clone();
+                        let credential_coordinator = Arc::new(
+                            crate::app::resource_explorer::credentials::CredentialCoordinator::new(
+                                aws_identity.clone(),
+                                default_role,
+                            ),
+                        );
+                        let aws_client = Arc::new(
+                            crate::app::resource_explorer::AWSResourceClient::new(credential_coordinator)
+                        );
+                        self.explorer_manager.set_aws_client(Some(aws_client.clone()));
+
+                        // Set global AWS client for bridge tools
+                        set_global_aws_client(Some(aws_client));
+
+                        tracing::info!("ExplorerManager AWS client created and set");
+                    }
+
+                    // Set global bookmark manager for V8 bindings
+                    // Note: Global explorer state will be set when first window is opened
                     set_global_bookmark_manager(Some(
-                        self.resource_explorer.get_bookmark_manager(),
+                        self.explorer_manager.get_bookmark_manager(),
                     ));
                     tracing::debug!(
-                        "Global explorer state and bookmark manager set for V8 bindings"
+                        "ExplorerManager AWS identity and global bookmark manager set for V8 bindings"
                     );
                 } else {
                     tracing::debug!("Waiting for credentials before initializing windows");
@@ -133,13 +155,18 @@ impl DashApp {
                 // Clear global AwsIdentity for agent framework tools
                 set_global_aws_identity(None);
 
-                // Clear ResourceExplorer AWS client
-                self.resource_explorer.set_aws_identity_center(None);
+                // Close all Explorer windows and clear AWS client
+                // Note: close_all_windows() also clears global explorer state
+                self.explorer_manager.set_aws_identity_center(None);
+                self.explorer_manager.set_aws_client(None);
+                self.explorer_manager.close_all_windows();
 
-                // Clear global explorer state and bookmark manager for V8 bindings
-                set_global_explorer_state(None);
+                // Clear global AWS client for bridge tools
+                set_global_aws_client(None);
+
+                // Clear global bookmark manager for V8 bindings
                 set_global_bookmark_manager(None);
-                tracing::info!("ResourceExplorer cleared on logout");
+                tracing::info!("ExplorerManager cleared and all windows closed on logout");
 
                 // Reset log groups initialization check for next login
                 self.reset_log_groups_init_check();
@@ -199,7 +226,7 @@ impl DashApp {
         }
     }
 
-    /// Open the Pages Manager window in a new webview
+/// Open the Pages Manager window in a new webview
     pub fn open_pages_manager_window(&self) {
         match crate::app::webview::spawn_pages_manager_window() {
             Ok(()) => {
@@ -211,213 +238,256 @@ impl DashApp {
         }
     }
 
-    /// Handle the AWS resource explorer window
-    pub(super) fn handle_resource_explorer_window(&mut self, ctx: &egui::Context) {
-        if self.resource_explorer.is_open() {
-            // Ensure resource explorer has access to AWS Identity Center for real account data
-            self.resource_explorer
-                .set_aws_identity_center(self.aws_identity_center.clone());
+    /// Handle all AWS Explorer window instances
+    ///
+    /// This method manages multiple Explorer windows, each with independent state but shared cache/bookmarks
+    pub(super) fn handle_explorer_windows(&mut self, ctx: &egui::Context) {
+        use crate::app::dashui::window_focus::FocusableWindow;
 
-            // Show the resource explorer window and handle the action
-            let window_action = self.resource_explorer.show(ctx);
+        // Get list of all instance IDs to avoid borrow conflicts
+        let instance_ids: Vec<uuid::Uuid> = self
+            .explorer_manager
+            .instances
+            .iter()
+            .map(|i| i.id())
+            .collect();
 
-            // Handle window action (Minimize vs Terminate)
-            match window_action {
-                crate::app::resource_explorer::WindowAction::None => {
-                    // Window is still open, nothing to do
+        // Track which instances should be closed (after rendering)
+        let mut instances_to_close = Vec::new();
+
+        // Render each Explorer instance
+        for instance_id in instance_ids {
+            if let Some(instance) = self
+                .explorer_manager
+                .instances
+                .iter_mut()
+                .find(|i| i.id() == instance_id)
+            {
+                // Check if this window should be brought to the front
+                let window_id_str = instance.window_id();
+                let bring_to_front = self.window_focus_manager.should_bring_to_front(window_id_str);
+
+                if bring_to_front {
+                    self.window_focus_manager
+                        .clear_bring_to_front(window_id_str);
                 }
-                crate::app::resource_explorer::WindowAction::Minimize => {
-                    // Window was minimized - state is preserved, window is hidden
-                    tracing::info!("Explorer window minimized (state preserved)");
-                }
-                crate::app::resource_explorer::WindowAction::Terminate => {
-                    // Window was terminated - clear state (cache is preserved)
-                    tracing::info!("Explorer window terminated (clearing state)");
-                    self.resource_explorer.reset_state();
+
+                // Render the instance using FocusableWindow trait
+                FocusableWindow::show_with_focus(
+                    instance,
+                    ctx,
+                    self.explorer_manager.shared_context.clone(),
+                    bring_to_front,
+                );
+
+                // Check if window was closed
+                if !instance.is_open {
+                    instances_to_close.push(instance_id);
+                    tracing::info!("Explorer instance {} marked for closure", instance.instance_number());
                 }
             }
+        }
 
-            // Handle any pending actions from the resource explorer
-            let actions = self.resource_explorer.take_pending_actions();
-            for action in actions {
-                match action {
-                    crate::app::resource_explorer::ResourceExplorerAction::OpenCloudWatchLogs {
-                        log_group_name,
-                        resource_name,
-                        account_id,
-                        region,
-                    } => {
-                        // Create a new CloudWatch Logs window for this resource
-                        if let Some(aws_client) = self.resource_explorer.get_aws_client() {
-                            let credential_coordinator = aws_client.get_credential_coordinator();
-                            let mut new_window = crate::app::dashui::CloudWatchLogsWindow::new(credential_coordinator);
+        // Close instances that were marked for closure
+        for instance_id in instances_to_close {
+            self.explorer_manager.close_window(instance_id);
+        }
 
-                            // Open the window with the resource's log group
-                            new_window.open_for_resource(
-                                crate::app::dashui::CloudWatchLogsShowParams {
-                                    log_group_name,
-                                    resource_name,
-                                    account_id,
-                                    region,
-                                },
-                            );
+        // Process V8 ExplorerAction queue (agent scripts requesting Explorer windows)
+        let v8_actions = crate::app::resource_explorer::drain_explorer_actions();
+        for v8_action in v8_actions {
+            match v8_action {
+                crate::app::resource_explorer::ExplorerAction::OpenWithConfig(config) => {
+                    tracing::info!("V8 agent requested new Explorer window with config");
+                    let instance = self.explorer_manager.open_new_window();
+                    // TODO: Apply config to the new instance's state
+                    // For now, just open an empty window
+                    tracing::warn!("V8 config application not yet implemented: {:?}", config);
+                    let _ = instance; // Suppress unused warning
+                }
+            }
+        }
 
-                            // Add to the list of open windows
-                            self.cloudwatch_logs_windows.push(new_window);
-                        }
+        // Collect pending actions from all Explorer instances
+        let actions = self.explorer_manager.take_pending_actions();
+        for action in actions {
+            match action {
+                crate::app::resource_explorer::ResourceExplorerAction::OpenCloudWatchLogs {
+                    log_group_name,
+                    resource_name,
+                    account_id,
+                    region,
+                } => {
+                    // Create a new CloudWatch Logs window for this resource
+                    if let Some(aws_client) = self.explorer_manager.shared_context.get_aws_client() {
+                        let credential_coordinator = aws_client.get_credential_coordinator();
+                        let mut new_window = crate::app::dashui::CloudWatchLogsWindow::new(credential_coordinator);
+
+                        // Open the window with the resource's log group
+                        new_window.open_for_resource(
+                            crate::app::dashui::CloudWatchLogsShowParams {
+                                log_group_name,
+                                resource_name,
+                                account_id,
+                                region,
+                            },
+                        );
+
+                        // Add to the list of open windows
+                        self.cloudwatch_logs_windows.push(new_window);
                     }
-                    crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsole {
-                        resource_type,
-                        resource_id,
-                        resource_name,
-                        resource_arn,
-                        account_id,
-                        region,
-                    } => {
-                        let aws_identity = self.aws_identity_center.clone();
-                        std::thread::spawn(move || {
-                            let Some(aws_identity) = aws_identity else {
-                                tracing::warn!("AWS Console requested but no identity center available");
+                }
+                crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsole {
+                    resource_type,
+                    resource_id,
+                    resource_name,
+                    resource_arn,
+                    account_id,
+                    region,
+                } => {
+                    let aws_identity = self.aws_identity_center.clone();
+                    std::thread::spawn(move || {
+                        let Some(aws_identity) = aws_identity else {
+                            tracing::warn!("AWS Console requested but no identity center available");
+                            return;
+                        };
+
+                        let mut identity_center = match aws_identity.lock() {
+                            Ok(identity) => identity,
+                            Err(_) => {
+                                tracing::warn!("Failed to lock AWS identity center for console launch");
                                 return;
-                            };
-
-                            let mut identity_center = match aws_identity.lock() {
-                                Ok(identity) => identity,
-                                Err(_) => {
-                                    tracing::warn!("Failed to lock AWS identity center for console launch");
-                                    return;
-                                }
-                            };
-
-                            let destination =
-                                crate::app::resource_explorer::console_links::build_console_destination(
-                                    &resource_type,
-                                    &resource_id,
-                                    &region,
-                                    resource_arn.as_deref(),
-                                );
-                            let role_name = identity_center.default_role_name.clone();
-                            let console_url = match identity_center.generate_console_signin_url(
-                                &account_id,
-                                &role_name,
-                                &destination,
-                            ) {
-                                Ok(url) => url,
-                                Err(err) => {
-                                    tracing::warn!("Failed to generate AWS console URL: {}", err);
-                                    return;
-                                }
-                            };
-
-                            let title = format!("AWS Console: {}", resource_name);
-                            if let Err(err) =
-                                crate::app::webview::spawn_webview_process(console_url, title)
-                            {
-                                tracing::warn!("Failed to spawn AWS console webview: {}", err);
                             }
-                        });
-                    }
-                    crate::app::resource_explorer::ResourceExplorerAction::RequestAwsConsoleRoles {
-                        request_id,
-                        account_id,
-                    } => {
-                        let aws_identity = self.aws_identity_center.clone();
-                        let updates = self.resource_explorer.console_role_menu_updates();
-                        std::thread::spawn(move || {
-                            let result = match aws_identity {
-                                Some(aws_identity) => match aws_identity.lock() {
-                                    Ok(identity_center) => {
-                                        identity_center.fetch_console_menu_roles(&account_id)
-                                    }
-                                    Err(_) => Err("Failed to lock AWS Identity Center".to_string()),
-                                },
-                                None => Err("AWS Identity Center not available".to_string()),
-                            };
+                        };
 
-                            if let Ok(mut queue) = updates.lock() {
-                                queue.push(crate::app::resource_explorer::ConsoleRoleMenuUpdate {
-                                    request_id,
-                                    account_id,
-                                    result,
-                                });
-                            }
-                        });
-                    }
-                    crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsoleWithRole {
-                        resource_type,
-                        resource_id,
-                        resource_name,
-                        resource_arn,
-                        account_id,
-                        region,
-                        role_name,
-                    } => {
-                        let aws_identity = self.aws_identity_center.clone();
-                        std::thread::spawn(move || {
-                            let Some(aws_identity) = aws_identity else {
-                                tracing::warn!("AWS Console requested but no identity center available");
-                                return;
-                            };
-
-                            let identity_center = match aws_identity.lock() {
-                                Ok(identity) => identity,
-                                Err(_) => {
-                                    tracing::warn!("Failed to lock AWS identity center for console launch");
-                                    return;
-                                }
-                            };
-
-                            let destination =
-                                crate::app::resource_explorer::console_links::build_console_destination(
-                                    &resource_type,
-                                    &resource_id,
-                                    &region,
-                                    resource_arn.as_deref(),
-                                );
-                            let console_url = match identity_center
-                                .generate_console_signin_url_ephemeral(&account_id, &role_name, &destination)
-                            {
-                                Ok(url) => url,
-                                Err(err) => {
-                                    tracing::warn!("Failed to generate AWS console URL: {}", err);
-                                    return;
-                                }
-                            };
-
-                            let title = format!("AWS Console: {}", resource_name);
-                            if let Err(err) =
-                                crate::app::webview::spawn_webview_process(console_url, title)
-                            {
-                                tracing::warn!("Failed to spawn AWS console webview: {}", err);
-                            }
-                        });
-                    }
-                    crate::app::resource_explorer::ResourceExplorerAction::OpenCloudTrailEvents {
-                        resource_type,
-                        resource_name,
-                        resource_arn,
-                        account_id,
-                        region,
-                    } => {
-                        // Create a new CloudTrail Events window for this resource
-                        if let Some(aws_client) = self.resource_explorer.get_aws_client() {
-                            let credential_coordinator = aws_client.get_credential_coordinator();
-                            let mut new_window = crate::app::dashui::CloudTrailEventsWindow::new(credential_coordinator);
-
-                            // Open the window with the resource's parameters
-                            new_window.open_for_resource(
-                                crate::app::dashui::CloudTrailEventsShowParams {
-                                    resource_type,
-                                    resource_name,
-                                    resource_arn,
-                                    account_id,
-                                    region,
-                                },
+                        let destination =
+                            crate::app::resource_explorer::console_links::build_console_destination(
+                                &resource_type,
+                                &resource_id,
+                                &region,
+                                resource_arn.as_deref(),
                             );
+                        let role_name = identity_center.default_role_name.clone();
+                        let console_url = match identity_center.generate_console_signin_url(
+                            &account_id,
+                            &role_name,
+                            &destination,
+                        ) {
+                            Ok(url) => url,
+                            Err(err) => {
+                                tracing::warn!("Failed to generate AWS console URL: {}", err);
+                                return;
+                            }
+                        };
 
-                            // Add to the list of open windows
-                            self.cloudtrail_events_windows.push(new_window);
+                        let title = format!("AWS Console: {}", resource_name);
+                        if let Err(err) =
+                            crate::app::webview::spawn_webview_process(console_url, title)
+                        {
+                            tracing::warn!("Failed to spawn AWS console webview: {}", err);
                         }
+                    });
+                }
+                crate::app::resource_explorer::ResourceExplorerAction::RequestAwsConsoleRoles {
+                    request_id,
+                    account_id,
+                } => {
+                    let aws_identity = self.aws_identity_center.clone();
+                    let updates = self.explorer_manager.shared_context.console_role_menu_updates();
+                    std::thread::spawn(move || {
+                        let result = match aws_identity {
+                            Some(aws_identity) => match aws_identity.lock() {
+                                Ok(identity_center) => {
+                                    identity_center.fetch_console_menu_roles(&account_id)
+                                }
+                                Err(_) => Err("Failed to lock AWS Identity Center".to_string()),
+                            },
+                            None => Err("AWS Identity Center not available".to_string()),
+                        };
+
+                        if let Ok(mut queue) = updates.lock() {
+                            queue.push(crate::app::resource_explorer::ConsoleRoleMenuUpdate {
+                                request_id,
+                                account_id,
+                                result,
+                            });
+                        }
+                    });
+                }
+                crate::app::resource_explorer::ResourceExplorerAction::OpenAwsConsoleWithRole {
+                    resource_type,
+                    resource_id,
+                    resource_name,
+                    resource_arn,
+                    account_id,
+                    region,
+                    role_name,
+                } => {
+                    let aws_identity = self.aws_identity_center.clone();
+                    std::thread::spawn(move || {
+                        let Some(aws_identity) = aws_identity else {
+                            tracing::warn!("AWS Console requested but no identity center available");
+                            return;
+                        };
+
+                        let identity_center = match aws_identity.lock() {
+                            Ok(identity) => identity,
+                            Err(_) => {
+                                tracing::warn!("Failed to lock AWS identity center for console launch");
+                                return;
+                            }
+                        };
+
+                        let destination =
+                            crate::app::resource_explorer::console_links::build_console_destination(
+                                &resource_type,
+                                &resource_id,
+                                &region,
+                                resource_arn.as_deref(),
+                            );
+                        let console_url = match identity_center
+                            .generate_console_signin_url_ephemeral(&account_id, &role_name, &destination)
+                        {
+                            Ok(url) => url,
+                            Err(err) => {
+                                tracing::warn!("Failed to generate AWS console URL: {}", err);
+                                return;
+                            }
+                        };
+
+                        let title = format!("AWS Console: {}", resource_name);
+                        if let Err(err) =
+                            crate::app::webview::spawn_webview_process(console_url, title)
+                        {
+                            tracing::warn!("Failed to spawn AWS console webview: {}", err);
+                        }
+                    });
+                }
+                crate::app::resource_explorer::ResourceExplorerAction::OpenCloudTrailEvents {
+                    resource_type,
+                    resource_name,
+                    resource_arn,
+                    account_id,
+                    region,
+                } => {
+                    // Create a new CloudTrail Events window for this resource
+                    if let Some(aws_client) = self.explorer_manager.shared_context.get_aws_client() {
+                        let credential_coordinator = aws_client.get_credential_coordinator();
+                        let mut new_window = crate::app::dashui::CloudTrailEventsWindow::new(credential_coordinator);
+
+                        // Open the window with the resource's parameters
+                        new_window.open_for_resource(
+                            crate::app::dashui::CloudTrailEventsShowParams {
+                                resource_type,
+                                resource_name,
+                                resource_arn,
+                                account_id,
+                                region,
+                            },
+                        );
+
+                        // Add to the list of open windows
+                        self.cloudtrail_events_windows.push(new_window);
                     }
                 }
             }

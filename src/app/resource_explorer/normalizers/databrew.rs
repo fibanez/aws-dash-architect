@@ -45,8 +45,6 @@ impl AsyncResourceNormalizer for DataBrewJobNormalizer {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             properties: raw_response.clone(),
-            raw_properties: raw_response,
-            detailed_properties: None,
             detailed_timestamp: None,
             tags: Vec::new(), // Will be filled below
             relationships: Vec::new(),
@@ -125,8 +123,6 @@ impl AsyncResourceNormalizer for DataBrewDatasetNormalizer {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             properties: raw_response.clone(),
-            raw_properties: raw_response,
-            detailed_properties: None,
             detailed_timestamp: None,
             tags: Vec::new(), // Will be filled below
             relationships: Vec::new(),

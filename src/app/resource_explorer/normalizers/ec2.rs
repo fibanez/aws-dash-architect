@@ -38,7 +38,6 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
                 Vec::new() // Graceful degradation
             });
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::Instance".to_string(),
@@ -47,9 +46,7 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
             resource_id: instance_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(), // Will be populated later
@@ -71,7 +68,7 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
 
         // Find security groups this instance uses
         if let Some(security_groups) = entry
-            .raw_properties
+            .properties
             .get("SecurityGroups")
             .and_then(|sg| sg.as_array())
         {
@@ -87,7 +84,7 @@ impl AsyncResourceNormalizer for EC2InstanceNormalizer {
         }
 
         // Find VPC this instance belongs to
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|id| id.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|id| id.as_str()) {
             relationships.push(ResourceRelationship {
                 relationship_type: RelationshipType::MemberOf,
                 target_resource_id: vpc_id.to_string(),
@@ -147,7 +144,6 @@ impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::SecurityGroup".to_string(),
@@ -156,9 +152,7 @@ impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
             resource_id: group_id,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -179,7 +173,7 @@ impl AsyncResourceNormalizer for EC2SecurityGroupNormalizer {
         let mut relationships = Vec::new();
 
         // Find VPC this security group belongs to
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|id| id.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|id| id.as_str()) {
             relationships.push(ResourceRelationship {
                 relationship_type: RelationshipType::MemberOf,
                 target_resource_id: vpc_id.to_string(),
@@ -261,7 +255,6 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
             );
         }
 
-        let properties = create_normalized_properties(&raw_response);
 
         let entry = ResourceEntry {
             resource_type: "AWS::EC2::VPC".to_string(),
@@ -270,9 +263,7 @@ impl AsyncResourceNormalizer for EC2VPCNormalizer {
             resource_id: vpc_id.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -342,7 +333,6 @@ impl AsyncResourceNormalizer for EC2VolumeNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::Volume".to_string(),
@@ -351,9 +341,7 @@ impl AsyncResourceNormalizer for EC2VolumeNormalizer {
             resource_id: volume_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -374,7 +362,7 @@ impl AsyncResourceNormalizer for EC2VolumeNormalizer {
         let mut relationships = Vec::new();
 
         // Find attached instances
-        if let Some(attachments) = entry.raw_properties.get("Attachments") {
+        if let Some(attachments) = entry.properties.get("Attachments") {
             if let Some(attachment_array) = attachments.as_array() {
                 for attachment in attachment_array {
                     if let Some(instance_id) = attachment.get("InstanceId").and_then(|v| v.as_str())
@@ -447,7 +435,6 @@ impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::Snapshot".to_string(),
@@ -456,9 +443,7 @@ impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
             resource_id: snapshot_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -480,7 +465,7 @@ impl AsyncResourceNormalizer for EC2SnapshotNormalizer {
 
         // Find the source volume
         if let Some(volume_id) = entry
-            .raw_properties
+            .properties
             .get("VolumeId")
             .and_then(|v| v.as_str())
         {
@@ -547,7 +532,6 @@ impl AsyncResourceNormalizer for EC2ImageNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::Image".to_string(),
@@ -556,9 +540,7 @@ impl AsyncResourceNormalizer for EC2ImageNormalizer {
             resource_id: image_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -621,7 +603,6 @@ impl AsyncResourceNormalizer for EC2SubnetNormalizer {
                 Vec::new()
             });
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::Subnet".to_string(),
@@ -630,9 +611,7 @@ impl AsyncResourceNormalizer for EC2SubnetNormalizer {
             resource_id: subnet_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -653,7 +632,7 @@ impl AsyncResourceNormalizer for EC2SubnetNormalizer {
         let mut relationships = Vec::new();
 
         // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|v| v.as_str()) {
             for resource in all_resources {
                 if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
                     relationships.push(ResourceRelationship {
@@ -709,7 +688,6 @@ impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
                 Vec::new()
             });
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::InternetGateway".to_string(),
@@ -718,9 +696,7 @@ impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
             resource_id: igw_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -741,7 +717,7 @@ impl AsyncResourceNormalizer for EC2InternetGatewayNormalizer {
         let mut relationships = Vec::new();
 
         // Find attached VPCs
-        if let Some(attachments) = entry.raw_properties.get("Attachments") {
+        if let Some(attachments) = entry.properties.get("Attachments") {
             if let Some(attachment_array) = attachments.as_array() {
                 for attachment in attachment_array {
                     if let Some(vpc_id) = attachment.get("VpcId").and_then(|v| v.as_str()) {
@@ -804,7 +780,6 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::RouteTable".to_string(),
@@ -813,9 +788,7 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
             resource_id: route_table_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -836,7 +809,7 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
         let mut relationships = Vec::new();
 
         // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|v| v.as_str()) {
             for resource in all_resources {
                 if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
                     relationships.push(ResourceRelationship {
@@ -850,7 +823,7 @@ impl AsyncResourceNormalizer for EC2RouteTableNormalizer {
 
         // Find associated subnets from the associations array
         if let Some(associations) = entry
-            .raw_properties
+            .properties
             .get("Associations")
             .and_then(|v| v.as_array())
         {
@@ -931,7 +904,6 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::NatGateway".to_string(),
@@ -940,9 +912,7 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
             resource_id: nat_gateway_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -963,7 +933,7 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
         let mut relationships = Vec::new();
 
         // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|v| v.as_str()) {
             for resource in all_resources {
                 if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
                     relationships.push(ResourceRelationship {
@@ -977,7 +947,7 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
 
         // Find the associated subnet
         if let Some(subnet_id) = entry
-            .raw_properties
+            .properties
             .get("SubnetId")
             .and_then(|v| v.as_str())
         {
@@ -995,7 +965,7 @@ impl AsyncResourceNormalizer for EC2NatGatewayNormalizer {
 
         // Find network interfaces from NAT gateway addresses
         if let Some(addresses) = entry
-            .raw_properties
+            .properties
             .get("NatGatewayAddresses")
             .and_then(|v| v.as_array())
         {
@@ -1046,7 +1016,6 @@ impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
         let display_name = extract_display_name(&raw_response, &instance_id);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::EC2::Instance".to_string(),
@@ -1055,9 +1024,7 @@ impl AsyncResourceNormalizer for EC2NetworkInterfaceNormalizer {
             resource_id: instance_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1121,7 +1088,6 @@ impl AsyncResourceNormalizer for EC2VPCEndpointNormalizer {
         let display_name = extract_display_name(&raw_response, &instance_id);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::EC2::Instance".to_string(),
@@ -1130,9 +1096,7 @@ impl AsyncResourceNormalizer for EC2VPCEndpointNormalizer {
             resource_id: instance_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1210,7 +1174,6 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::NetworkAcl".to_string(),
@@ -1219,9 +1182,7 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
             resource_id: network_acl_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1242,7 +1203,7 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
         let mut relationships = Vec::new();
 
         // Find the parent VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|v| v.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|v| v.as_str()) {
             for resource in all_resources {
                 if resource.resource_type == "AWS::EC2::VPC" && resource.resource_id == vpc_id {
                     relationships.push(ResourceRelationship {
@@ -1256,7 +1217,7 @@ impl AsyncResourceNormalizer for EC2NetworkAclNormalizer {
 
         // Find associated subnets from associations
         if let Some(associations) = entry
-            .raw_properties
+            .properties
             .get("Associations")
             .and_then(|v| v.as_array())
         {
@@ -1319,7 +1280,6 @@ impl AsyncResourceNormalizer for EC2KeyPairNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EC2::KeyPair".to_string(),
@@ -1328,9 +1288,7 @@ impl AsyncResourceNormalizer for EC2KeyPairNormalizer {
             resource_id: key_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

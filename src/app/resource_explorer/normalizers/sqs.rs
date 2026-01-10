@@ -29,7 +29,6 @@ impl AsyncResourceNormalizer for SQSQueueNormalizer {
 
         let display_name = extract_display_name(&raw_response, queue_name);
         let status = extract_status(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::SQS::Queue".to_string(),
@@ -38,9 +37,7 @@ impl AsyncResourceNormalizer for SQSQueueNormalizer {
             resource_id: queue_name.to_string(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags: Vec::new(), // Will be filled below
             relationships: Vec::new(),
@@ -77,7 +74,7 @@ impl AsyncResourceNormalizer for SQSQueueNormalizer {
         let mut relationships = Vec::new();
 
         // Check for Dead Letter Queue relationship
-        if let Some(redrive_policy) = entry.raw_properties.get("RedrivePolicy") {
+        if let Some(redrive_policy) = entry.properties.get("RedrivePolicy") {
             if let Some(redrive_policy_str) = redrive_policy.as_str() {
                 // Parse the RedrivePolicy JSON to extract the deadLetterTargetArn
                 if let Ok(redrive_json) =
@@ -120,7 +117,7 @@ impl AsyncResourceNormalizer for SQSQueueNormalizer {
             if resource.resource_type == "AWS::SQS::Queue"
                 && resource.resource_id != entry.resource_id
             {
-                if let Some(other_redrive_policy) = resource.raw_properties.get("RedrivePolicy") {
+                if let Some(other_redrive_policy) = resource.properties.get("RedrivePolicy") {
                     if let Some(other_redrive_policy_str) = other_redrive_policy.as_str() {
                         if let Ok(other_redrive_json) =
                             serde_json::from_str::<serde_json::Value>(other_redrive_policy_str)

@@ -46,7 +46,6 @@ impl AsyncResourceNormalizer for PollyVoiceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Polly::Voice".to_string(),
@@ -55,9 +54,7 @@ impl AsyncResourceNormalizer for PollyVoiceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -120,7 +117,6 @@ impl AsyncResourceNormalizer for PollyLexiconNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Polly::Lexicon".to_string(),
@@ -129,9 +125,7 @@ impl AsyncResourceNormalizer for PollyLexiconNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -203,7 +197,6 @@ impl AsyncResourceNormalizer for PollySynthesisTaskNormalizer {
 
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Polly::Voice".to_string(),
@@ -212,9 +205,7 @@ impl AsyncResourceNormalizer for PollySynthesisTaskNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

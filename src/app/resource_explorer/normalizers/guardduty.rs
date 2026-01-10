@@ -1,4 +1,3 @@
-use super::utils::*;
 use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -48,7 +47,6 @@ impl AsyncResourceNormalizer for GuardDutyDetectorNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::GuardDuty::Detector".to_string(),
@@ -57,9 +55,7 @@ impl AsyncResourceNormalizer for GuardDutyDetectorNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

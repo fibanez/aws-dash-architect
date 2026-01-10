@@ -169,7 +169,19 @@ mod inner {
                 .open(&log_path)
                 .ok();
 
+            // Set restrictive permissions (owner read/write only)
             if file.is_some() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(&log_path) {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(0o600); // Owner read/write only
+                        if let Err(e) = std::fs::set_permissions(&log_path, perms) {
+                            tracing::warn!("Failed to set query timing log permissions: {}", e);
+                        }
+                    }
+                }
                 tracing::info!("Query timing log: {:?}", log_path);
             } else {
                 tracing::warn!("Failed to create query timing log at {:?}", log_path);

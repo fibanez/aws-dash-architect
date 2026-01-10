@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::resource_explorer::normalizers::utils::create_normalized_properties;
 use crate::app::resource_explorer::state::{RelationshipType, ResourceEntry, ResourceRelationship};
 use crate::app::resource_explorer::{assign_account_color, assign_region_color};
 use anyhow::Result;
@@ -37,7 +36,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -65,9 +63,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeNormalizer {
             resource_id: runtime_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -91,10 +87,10 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeNormalizer {
         for resource in all_resources {
             if resource.resource_type == "AWS::BedrockAgentCore::Memory" {
                 // Check if memory is referenced in runtime config
-                if let Some(memory_arn) = entry.raw_properties.get("MemoryArn") {
+                if let Some(memory_arn) = entry.properties.get("MemoryArn") {
                     if let Some(memory_arn_str) = memory_arn.as_str() {
                         if resource
-                            .raw_properties
+                            .properties
                             .get("MemoryArn")
                             .and_then(|v| v.as_str())
                             == Some(memory_arn_str)
@@ -160,7 +156,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeEndpointNormalizer 
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -188,9 +183,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeEndpointNormalizer 
             resource_id: endpoint_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -211,7 +204,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeEndpointNormalizer 
         let mut relationships = Vec::new();
 
         // Endpoints belong to Agent Runtimes
-        if let Some(runtime_id) = entry.raw_properties.get("AgentRuntimeId") {
+        if let Some(runtime_id) = entry.properties.get("AgentRuntimeId") {
             if let Some(runtime_id_str) = runtime_id.as_str() {
                 for resource in all_resources {
                     if resource.resource_type == "AWS::BedrockAgentCore::AgentRuntime"
@@ -266,7 +259,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -289,9 +281,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryNormalizer {
             resource_id: memory_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -349,7 +339,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -377,9 +366,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayNormalizer {
             resource_id: gateway_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -437,7 +424,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -465,9 +451,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserNormalizer {
             resource_id: browser_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -525,7 +509,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -553,9 +536,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterNormalizer {
             resource_id: interpreter_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -604,7 +585,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreApiKeyCredentialProviderNormali
 
         let display_name = name.clone();
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -628,9 +608,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreApiKeyCredentialProviderNormali
             resource_id: name,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -679,7 +657,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreOAuth2CredentialProviderNormali
 
         let display_name = name.clone();
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -703,9 +680,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreOAuth2CredentialProviderNormali
             resource_id: name,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -754,7 +729,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreWorkloadIdentityNormalizer {
 
         let display_name = name.clone();
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -782,9 +756,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreWorkloadIdentityNormalizer {
             resource_id: name,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -856,7 +828,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeVersionNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -888,9 +859,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreAgentRuntimeVersionNormalizer {
             ),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -969,7 +938,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayTargetNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -1001,9 +969,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreGatewayTargetNormalizer {
             ),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1075,7 +1041,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryRecordNormalizer {
 
         let display_name = format!("Memory Record {}", &record_id[..record_id.len().min(8)]);
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -1107,9 +1072,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreMemoryRecordNormalizer {
             ),
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1188,7 +1151,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreEventNormalizer {
             &session_id[..session_id.len().min(8)]
         );
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -1215,9 +1177,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreEventNormalizer {
             ),
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1298,7 +1258,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserSessionNormalizer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -1330,9 +1289,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreBrowserSessionNormalizer {
             ),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1416,7 +1373,6 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterSessionNormalize
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let properties = create_normalized_properties(&raw_response);
         // Fetch tags asynchronously from AWS API with caching
 
         let tags = aws_client
@@ -1450,9 +1406,7 @@ impl AsyncResourceNormalizer for BedrockAgentCoreCodeInterpreterSessionNormalize
             ),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

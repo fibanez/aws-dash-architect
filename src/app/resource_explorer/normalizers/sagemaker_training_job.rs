@@ -63,8 +63,6 @@ impl AsyncResourceNormalizer for SageMakerTrainingJobNormalizer {
             display_name,
             status,
             properties: serde_json::Value::Object(properties),
-            raw_properties: raw_response,
-            detailed_properties: None,
             detailed_timestamp: None,
             tags: Vec::new(),
             relationships: Vec::new(), // Will be populated by extract_relationships

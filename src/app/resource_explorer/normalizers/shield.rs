@@ -44,7 +44,6 @@ impl AsyncResourceNormalizer for ShieldProtectionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Shield::Protection".to_string(),
@@ -53,9 +52,7 @@ impl AsyncResourceNormalizer for ShieldProtectionNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -77,14 +74,14 @@ impl AsyncResourceNormalizer for ShieldProtectionNormalizer {
 
         // Shield protections protect specific AWS resources
         if let Some(resource_arn) = entry
-            .raw_properties
+            .properties
             .get("ResourceArn")
             .and_then(|v| v.as_str())
         {
             // Find the protected resource
             for resource in all_resources {
                 // Check if this resource matches the ARN protected by Shield
-                if let Some(arn) = resource.raw_properties.get("Arn").and_then(|v| v.as_str()) {
+                if let Some(arn) = resource.properties.get("Arn").and_then(|v| v.as_str()) {
                     if arn == resource_arn {
                         relationships.push(ResourceRelationship {
                             relationship_type:
@@ -141,7 +138,6 @@ impl AsyncResourceNormalizer for ShieldSubscriptionNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Shield::Subscription".to_string(),
@@ -150,9 +146,7 @@ impl AsyncResourceNormalizer for ShieldSubscriptionNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

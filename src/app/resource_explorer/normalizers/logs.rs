@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for LogsResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Logs::LogGroup".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for LogsResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -104,7 +101,6 @@ async fn normalize_logs_simple_resource(
             Vec::new()
         });
 
-    let properties = create_normalized_properties(&raw_response);
 
     Ok(ResourceEntry {
         resource_type: resource_type.to_string(),
@@ -113,9 +109,7 @@ async fn normalize_logs_simple_resource(
         resource_id,
         display_name,
         status,
-        properties,
-        raw_properties: raw_response,
-        detailed_properties: None,
+        properties: raw_response,
         detailed_timestamp: None,
         tags,
         relationships: Vec::new(),

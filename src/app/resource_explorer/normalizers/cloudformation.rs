@@ -53,7 +53,6 @@ impl AsyncResourceNormalizer for CloudFormationStackNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CloudFormation::Stack".to_string(),
@@ -62,9 +61,7 @@ impl AsyncResourceNormalizer for CloudFormationStackNormalizer {
             resource_id: stack_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

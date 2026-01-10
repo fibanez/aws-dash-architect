@@ -45,7 +45,6 @@ impl AsyncResourceNormalizer for BackupPlanNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Backup::BackupPlan".to_string(),
@@ -54,9 +53,7 @@ impl AsyncResourceNormalizer for BackupPlanNormalizer {
             resource_id: backup_plan_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -77,7 +74,7 @@ impl AsyncResourceNormalizer for BackupPlanNormalizer {
         let mut relationships = Vec::new();
 
         // Map to backup vaults referenced in the backup plan rules
-        if let Some(rules) = entry.raw_properties.get("Rules").and_then(|v| v.as_array()) {
+        if let Some(rules) = entry.properties.get("Rules").and_then(|v| v.as_array()) {
             for rule in rules {
                 if let Some(target_vault) = rule.get("TargetBackupVault").and_then(|v| v.as_str()) {
                     for resource in all_resources {
@@ -143,7 +140,6 @@ impl AsyncResourceNormalizer for BackupVaultNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Backup::BackupVault".to_string(),
@@ -152,9 +148,7 @@ impl AsyncResourceNormalizer for BackupVaultNormalizer {
             resource_id: backup_vault_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

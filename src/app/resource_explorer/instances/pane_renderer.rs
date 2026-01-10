@@ -6,16 +6,46 @@
 
 use crate::app::resource_explorer::aws_client::AWSResourceClient;
 use crate::app::resource_explorer::state::{
-    BooleanOperator, GroupingMode, ResourceEntry, ResourceExplorerState, TagClickAction, TagFilter,
-    TagFilterGroup, TagFilterType,
+    BooleanOperator, GroupingMode, ResourceEntry, ResourceExplorerState, TagClickAction,
+    TagFilter, TagFilterGroup, TagFilterType,
 };
 use crate::app::resource_explorer::tree::TreeRenderer;
 use crate::app::resource_explorer::widgets::tag_filter_builder::TagFilterBuilderWidget;
 use crate::app::resource_explorer::PropertyFilterGroup;
 use egui::{Color32, Context, Ui};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use uuid::Uuid;
+
+/// Global cache for memory stats to avoid reading /proc every frame
+static MEMORY_STATS_CACHE: Mutex<Option<(memory_stats::MemoryStats, Instant)>> =
+    Mutex::new(None);
+const MEMORY_STATS_CACHE_DURATION: Duration = Duration::from_millis(500);
+
+/// Get cached memory stats, refreshing at most every 500ms
+///
+/// This avoids reading /proc/self/status on every frame for every pane,
+/// which was causing 2 MB * 2,350 reads = 4.7 GB of allocations in 2.2 seconds.
+fn get_cached_memory_stats() -> Option<memory_stats::MemoryStats> {
+    let mut cache = MEMORY_STATS_CACHE.lock().ok()?;
+
+    // Check if we have a recent cached value
+    if let Some((stats, timestamp)) = cache.as_ref() {
+        if timestamp.elapsed() < MEMORY_STATS_CACHE_DURATION {
+            return Some(stats.clone());
+        }
+    }
+
+    // Cache expired or doesn't exist - fetch new stats
+    if let Some(new_stats) = memory_stats::memory_stats() {
+        *cache = Some((new_stats.clone(), Instant::now()));
+        Some(new_stats)
+    } else {
+        None
+    }
+}
 
 /// Actions that can be triggered by pane rendering
 ///
@@ -24,11 +54,14 @@ use tokio::sync::RwLock;
 #[derive(Debug, Clone)]
 pub enum PaneAction {
     /// Remove an account from the query scope
-    RemoveAccount(String),
+    /// Contains account_id and the source pane_id that requested it
+    RemoveAccount { account_id: String, source_pane_id: Uuid },
     /// Remove a region from the query scope
-    RemoveRegion(String),
+    /// Contains region_code and the source pane_id that requested it
+    RemoveRegion { region_code: String, source_pane_id: Uuid },
     /// Remove a resource type from the query scope
-    RemoveResourceType(String),
+    /// Contains resource_type and the source pane_id that requested it
+    RemoveResourceType { resource_type: String, source_pane_id: Uuid },
     /// Open the tag filter builder dialog
     ShowTagFilterBuilder,
     /// Open the property filter builder dialog
@@ -37,6 +70,11 @@ pub enum PaneAction {
     ShowTagHierarchyBuilder,
     /// Open the property hierarchy builder dialog
     ShowPropertyHierarchyBuilder,
+    /// Apply a bookmark to this pane's state
+    /// Contains bookmark_id and the source pane_id that requested it
+    ApplyBookmark { bookmark_id: String, source_pane_id: Uuid },
+    /// Show the failed queries dialog with error details
+    ShowFailedQueriesDialog,
 }
 
 /// Renderer for a single explorer pane
@@ -111,42 +149,442 @@ impl PaneRenderer {
         self.frame_count = 0;
     }
 
+    /// Take pending ResourceExplorerActions from the tree renderer
+    ///
+    /// These are actions like opening CloudWatch Logs, CloudTrail Events, or AWS Console
+    /// that should be processed by the main application.
+    pub fn take_pending_actions(&mut self) -> Vec<crate::app::resource_explorer::ResourceExplorerAction> {
+        std::mem::take(&mut self.tree_renderer.pending_explorer_actions)
+    }
+
     // ========================================================================
     // Main Render Method
     // ========================================================================
 
-    /// Render the complete pane content
+    /// Render the complete pane content with unique IDs
     ///
     /// This method orchestrates all pane rendering components:
+    /// - Left sidebar with grouping controls and filters
     /// - Active selection tags (accounts, regions, resource types)
     /// - Search bar for filtering
     /// - Tree view of resources
     ///
+    /// The pane_id parameter is used to make all widget IDs unique across panes.
+    ///
     /// Returns a list of actions triggered during rendering (e.g., tag removals)
-    pub fn render(&mut self, ui: &mut Ui, state: &mut ResourceExplorerState) -> Vec<PaneAction> {
+    pub fn render_with_id(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut ResourceExplorerState,
+        pane_id: Uuid,
+        shared_context: &super::manager::ExplorerSharedContext,
+    ) -> Vec<PaneAction> {
         self.tick();
 
         let mut actions = Vec::new();
 
-        // Render active selection tags (closeable tags for accounts, regions, resource types)
-        if !state.query_scope.is_empty() {
-            actions.extend(Self::render_active_tags(ui, state));
-            ui.separator();
-        }
+        // Left sidebar for grouping and filter controls
+        // Use pane ID to make sidebar unique across split panes
+        egui::SidePanel::left(format!("explorer_sidebar_{}", pane_id))
+            .default_width(180.0)
+            .min_width(150.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                actions.extend(Self::render_sidebar(ui, state));
+            });
 
-        // Render search bar
-        Self::render_search_bar(ui, state);
-        ui.separator();
+        // Central panel with main content
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            // Bottom status bar (at pane level, not window level)
+            egui::TopBottomPanel::bottom(format!("pane_status_bar_{}", pane_id))
+                .show_separator_line(false) // No thick horizontal line at bottom
+                .show_inside(ui, |ui| {
+                    if let Some(status_action) = Self::render_status_bar(ui, state) {
+                        actions.push(status_action);
+                    }
+                });
 
-        // Render tree view (uses self.tree_renderer)
-        Self::render_tree_view(ui, state, &mut self.tree_renderer);
+            // Main content area
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                // Render toolbar (Bookmarks, Select, Refresh, Reset, Cache)
+                if let Some((bookmark_id, source_pane_id)) = Self::render_toolbar(ui, state, shared_context, pane_id) {
+                    actions.push(PaneAction::ApplyBookmark { bookmark_id, source_pane_id });
+                }
+                ui.separator();
+
+                // Render active selection tags (closeable tags for accounts, regions, resource types)
+                if !state.query_scope.is_empty() {
+                    actions.extend(Self::render_active_tags(ui, state, pane_id));
+                    ui.separator();
+                }
+
+                // Render search bar
+                Self::render_search_bar(ui, state);
+                ui.separator();
+
+                // Render tree view with unique ID (uses self.tree_renderer)
+                Self::render_tree_view_with_id(ui, state, &mut self.tree_renderer, pane_id);
+            });
+        });
 
         actions
+    }
+
+    /// Legacy render method (kept for backwards compatibility)
+    ///
+    /// Calls render_with_id with a default UUID and empty shared context
+    #[allow(dead_code)]
+    pub fn render(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut ResourceExplorerState,
+        shared_context: &super::manager::ExplorerSharedContext,
+    ) -> Vec<PaneAction> {
+        self.render_with_id(ui, state, Uuid::new_v4(), shared_context)
     }
 
     // ========================================================================
     // Static Rendering Functions (extracted from window.rs)
     // ========================================================================
+
+    /// Render the toolbar with main action buttons
+    ///
+    /// Based on window.rs render_unified_toolbar (lines 1808-1942)
+    /// Returns: clicked_bookmark_id
+    pub fn render_toolbar(
+        ui: &mut Ui,
+        state: &mut ResourceExplorerState,
+        shared_context: &super::manager::ExplorerSharedContext,
+        pane_id: Uuid,
+    ) -> Option<(String, Uuid)> {
+        let mut clicked_bookmark_id: Option<String> = None;
+
+        ui.horizontal(|ui| {
+            // Bookmarks menu button with full hierarchy
+            ui.menu_button("Bookmarks", |ui| {
+                // Render top-level bookmarks and folders
+                Self::render_bookmark_menu_level(
+                    ui,
+                    None, // Top level (no parent folder)
+                    state,
+                    shared_context,
+                    &mut clicked_bookmark_id,
+                );
+
+                ui.separator();
+                if ui.button("Add Bookmark").clicked() {
+                    state.show_bookmark_dialog = true;
+                    ui.close();
+                }
+                if ui.button("Manage Bookmarks").clicked() {
+                    state.show_bookmark_manager = true;
+                    ui.close();
+                }
+            });
+
+            // Separator before action buttons
+            if ui.available_width() > 400.0 {
+                ui.separator();
+            }
+
+            // Main "Select" button opens unified selection dialog
+            if ui.button("Select").clicked() {
+                state.show_unified_selection_dialog = true;
+            }
+
+            // Dropdown menu for individual selection dialogs (power user shortcuts)
+            ui.menu_button("v", |ui| {
+                if ui.button("Add Account").clicked() {
+                    state.show_account_dialog = true;
+                    ui.close();
+                }
+                if ui.button("Add Region").clicked() {
+                    state.show_region_dialog = true;
+                    ui.close();
+                }
+                if ui.button("Add Resource").clicked() {
+                    state.show_resource_type_dialog = true;
+                    ui.close();
+                }
+            });
+
+            ui.separator();
+
+            if ui.button("Refresh").clicked() {
+                state.show_refresh_dialog = true;
+            }
+
+            if ui
+                .button("Reset")
+                .on_hover_text("Reset all selections to default state")
+                .clicked()
+            {
+                state.clear_all_selections();
+            }
+
+            // TODO: Add Verify with CLI button (DEBUG only)
+
+            // Show loading indicator if queries are active
+            if state.is_loading() {
+                ui.separator();
+                ui.spinner();
+                ui.label(format!(
+                    "Loading... ({} queries)",
+                    state.loading_tasks.len()
+                ));
+            }
+        });
+
+        clicked_bookmark_id.map(|id| (id, pane_id))
+    }
+
+    /// Recursively render a level of the bookmark menu hierarchy
+    ///
+    /// Based on window.rs render_bookmark_menu_level (lines 1948-2037)
+    fn render_bookmark_menu_level(
+        ui: &mut Ui,
+        parent_folder_id: Option<String>,
+        state: &ResourceExplorerState,
+        shared_context: &super::manager::ExplorerSharedContext,
+        clicked_bookmark_id: &mut Option<String>,
+    ) {
+        // Get bookmarks at this level
+        let bookmarks: Vec<_> = shared_context
+            .bookmarks
+            .read()
+            .unwrap()
+            .get_bookmarks_in_folder(parent_folder_id.as_ref())
+            .into_iter()
+            .cloned()
+            .collect();
+
+        // Render bookmarks
+        for bookmark in &bookmarks {
+            let is_active = bookmark.matches_state(state);
+            let button_text = if is_active {
+                format!("[Active] {}", bookmark.name)
+            } else {
+                bookmark.name.clone()
+            };
+
+            let response = if is_active {
+                ui.add(egui::Button::new(&button_text).fill(ui.visuals().selection.bg_fill))
+            } else {
+                ui.button(&button_text)
+            };
+
+            if response.clicked() {
+                *clicked_bookmark_id = Some(bookmark.id.clone());
+                ui.close();
+            }
+
+            // Show tooltip with bookmark details
+            response.on_hover_ui(|ui| {
+                ui.label(format!("Bookmark: {}", bookmark.name));
+                if let Some(desc) = &bookmark.description {
+                    ui.label(format!("Description: {}", desc));
+                }
+                ui.separator();
+                ui.label(format!("Accounts: {}", bookmark.account_ids.len()));
+                ui.label(format!("Regions: {}", bookmark.region_codes.len()));
+                ui.label(format!(
+                    "Resource Types: {}",
+                    bookmark.resource_type_ids.len()
+                ));
+                ui.label(format!("Grouping: {:?}", bookmark.grouping));
+                ui.separator();
+                ui.label(format!("Used {} times", bookmark.access_count));
+            });
+        }
+
+        // Get folders at this level
+        let folders: Vec<_> = shared_context
+            .bookmarks
+            .read()
+            .unwrap()
+            .get_subfolders(parent_folder_id.as_ref())
+            .into_iter()
+            .cloned()
+            .collect();
+
+        // Show separator between bookmarks and folders if both exist
+        if !bookmarks.is_empty() && !folders.is_empty() {
+            ui.separator();
+        }
+
+        // Render folders as nested submenus
+        for folder in &folders {
+            ui.menu_button(format!("Folder: {}", folder.name), |ui| {
+                // Recursively render folder contents
+                Self::render_bookmark_menu_level(
+                    ui,
+                    Some(folder.id.clone()),
+                    state,
+                    shared_context,
+                    clicked_bookmark_id,
+                );
+            });
+        }
+
+        // Show "empty" message if no bookmarks or folders at this level
+        if bookmarks.is_empty() && folders.is_empty() {
+            ui.label(egui::RichText::new("(no bookmarks)").italics().weak());
+        }
+    }
+
+    /// Render the status bar at the bottom of the pane
+    ///
+    /// Shows loading progress, failed queries, memory stats, and cache info
+    /// Based on window.rs lines 448-837
+    /// Returns: action to show failed queries dialog if clicked
+    pub fn render_status_bar(ui: &mut Ui, state: &ResourceExplorerState) -> Option<PaneAction> {
+        let mut action = None;
+        ui.horizontal(|ui| {
+            // Left section (scrollable for long status messages)
+            egui::ScrollArea::horizontal()
+                .id_salt("status_bar_scroll")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    // Check for Phase 1 (resource listing) progress
+                    if state.is_phase1_in_progress() {
+                        let (pending_count, total, failed_count, _pending_list) = state.get_phase1_progress();
+                        ui.spinner();
+
+                        let status_text = if failed_count > 0 {
+                            format!(
+                                "Phase 1: Loading resources... ({}/{}, {} left, {} failed)",
+                                total - pending_count,
+                                total,
+                                pending_count,
+                                failed_count
+                            )
+                        } else if pending_count > 0 {
+                            format!(
+                                "Phase 1: Loading resources... ({}/{}, {} left)",
+                                total - pending_count,
+                                total,
+                                pending_count
+                            )
+                        } else {
+                            format!(
+                                "Phase 1: Loading resources... ({}/{})",
+                                total - pending_count,
+                                total
+                            )
+                        };
+
+                        ui.label(
+                            egui::RichText::new(status_text)
+                                .color(Color32::from_rgb(100, 180, 255))
+                                .small(),
+                        );
+                    } else if state.phase2_enrichment_in_progress {
+                        // Phase 2 enrichment progress with service and count
+                        ui.spinner();
+                        let progress_text = if let Some(ref service) = state.phase2_current_service {
+                            format!(
+                                "Phase 2: {} ({}/{})",
+                                service,
+                                state.phase2_progress_count,
+                                state.phase2_progress_total
+                            )
+                        } else {
+                            format!(
+                                "Phase 2: Enriching details... ({}/{})",
+                                state.phase2_progress_count,
+                                state.phase2_progress_total
+                            )
+                        };
+                        ui.label(
+                            egui::RichText::new(progress_text)
+                                .color(Color32::from_rgb(255, 180, 100))
+                                .small(),
+                        );
+                    } else if state.is_loading() {
+                        // Generic loading state
+                        ui.spinner();
+                        ui.label(
+                            egui::RichText::new("Loading...")
+                                .color(Color32::from_rgb(100, 180, 255))
+                                .small(),
+                        );
+                    } else {
+                        // Ready state
+                        ui.label(
+                            egui::RichText::new("Ready")
+                                .color(Color32::GRAY)
+                                .small(),
+                        );
+                    }
+
+                    // Show failed queries indicator (persistent after Phase 1 completes) - CLICKABLE
+                    let failed_count = state.phase1_failed_queries.len();
+                    if failed_count > 0 {
+                        let response = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!("[{} queries failed]", failed_count))
+                                    .color(Color32::from_rgb(255, 150, 50))
+                                    .small()
+                            ).sense(egui::Sense::click())
+                        );
+
+                        if response.clicked() {
+                            action = Some(PaneAction::ShowFailedQueriesDialog);
+                        }
+
+                        response.on_hover_ui(|ui| {
+                            ui.label(egui::RichText::new("Failed Queries").strong());
+                            ui.separator();
+                            ui.label("Some queries failed due to errors or regional unavailability.");
+                            ui.label("This may be due to permissions, service availability, or network issues.");
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new("Click to see details and error categories.").weak());
+                        });
+                    }
+                });
+
+            // Right section: Memory and cache stats
+            // Format: "220MB | 45.2MB cache | 150 active, 234 queries"
+            // - 220MB: Physical memory used by application process
+            // - 45.2MB cache: Compressed cache size
+            // - 150 active: Number of resources currently displayed in this pane
+            // - 234 queries: Number of resource queries cached
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let shared_cache = super::super::cache::shared_cache();
+                shared_cache.run_pending_tasks();
+                let cache_stats = shared_cache.memory_stats();
+                let active_count = state.resources.len();
+
+                if let Some(usage) = get_cached_memory_stats() {
+                    let physical_mb = usage.physical_mem as f64 / (1024.0 * 1024.0);
+                    let cache_mb = cache_stats.total_size() as f64 / (1024.0 * 1024.0);
+
+                    let cache_info = if cache_stats.resource_entry_count > 0 {
+                        format!(
+                            "{:.1}MB cache | {} active, {} queries",
+                            cache_mb, active_count, cache_stats.resource_entry_count
+                        )
+                    } else {
+                        format!("{} active", active_count)
+                    };
+
+                    ui.label(
+                        egui::RichText::new(format!("{:.0}MB | {}", physical_mb, cache_info))
+                            .small()
+                            .color(Color32::GRAY),
+                    );
+                } else {
+                    let cache_mb = cache_stats.total_size() as f64 / (1024.0 * 1024.0);
+                    ui.label(
+                        egui::RichText::new(format!("{} active, {:.1}MB cached", active_count, cache_mb))
+                            .small()
+                            .color(Color32::GRAY),
+                    );
+                }
+            });
+        });
+        action
+    }
 
     /// Render the search bar
     pub fn render_search_bar(ui: &mut Ui, state: &mut ResourceExplorerState) {
@@ -394,17 +832,20 @@ impl PaneRenderer {
         actions
     }
 
-    /// Render the tree view of resources
-    pub fn render_tree_view(
+    /// Render the tree view of resources with unique ID
+    pub fn render_tree_view_with_id(
         ui: &mut Ui,
         state: &ResourceExplorerState,
         tree_renderer: &mut TreeRenderer,
+        pane_id: Uuid,
     ) {
         // Update Phase 2 status for tree renderer
         tree_renderer.phase2_in_progress = state.phase2_enrichment_in_progress;
 
         // Use remaining available space for the tree view with scrolling
+        // Use pane_id to make ScrollArea unique across split panes
         egui::ScrollArea::vertical()
+            .id_salt(format!("tree_scroll_{}", pane_id))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if state.query_scope.is_empty() {
@@ -470,8 +911,22 @@ impl PaneRenderer {
             });
     }
 
+    /// Legacy render_tree_view (for backwards compatibility)
+    #[allow(dead_code)]
+    pub fn render_tree_view(
+        ui: &mut Ui,
+        state: &ResourceExplorerState,
+        tree_renderer: &mut TreeRenderer,
+    ) {
+        Self::render_tree_view_with_id(ui, state, tree_renderer, Uuid::new_v4())
+    }
+
     /// Render active selection tags and return any removal actions
-    pub fn render_active_tags(ui: &mut Ui, state: &mut ResourceExplorerState) -> Vec<PaneAction> {
+    pub fn render_active_tags(
+        ui: &mut Ui,
+        state: &mut ResourceExplorerState,
+        pane_id: Uuid,
+    ) -> Vec<PaneAction> {
         let mut actions = Vec::new();
 
         // Count total tags
@@ -516,7 +971,10 @@ impl PaneRenderer {
                     &account.display_name,
                     account.color,
                 ) {
-                    actions.push(PaneAction::RemoveAccount(account.account_id.clone()));
+                    actions.push(PaneAction::RemoveAccount {
+                        account_id: account.account_id.clone(),
+                        source_pane_id: pane_id,
+                    });
                 }
                 ui.add_space(2.0);
                 tags_shown += 1;
@@ -533,7 +991,10 @@ impl PaneRenderer {
                     &region.display_name,
                     region.color,
                 ) {
-                    actions.push(PaneAction::RemoveRegion(region.region_code.clone()));
+                    actions.push(PaneAction::RemoveRegion {
+                        region_code: region.region_code.clone(),
+                        source_pane_id: pane_id,
+                    });
                 }
                 ui.add_space(2.0);
                 tags_shown += 1;
@@ -557,9 +1018,10 @@ impl PaneRenderer {
                     &resource_type.display_name,
                     resource_count,
                 ) {
-                    actions.push(PaneAction::RemoveResourceType(
-                        resource_type.resource_type.clone(),
-                    ));
+                    actions.push(PaneAction::RemoveResourceType {
+                        resource_type: resource_type.resource_type.clone(),
+                        source_pane_id: pane_id,
+                    });
                 }
                 ui.add_space(2.0);
                 tags_shown += 1;
@@ -690,7 +1152,7 @@ impl PaneRenderer {
                 r.account_id == account_id && r.region == region && r.resource_id == resource_id
             }) {
                 // Skip if we already have detailed properties
-                if resource.detailed_properties.is_some() {
+                if resource.detailed_timestamp.is_some() {
                     continue;
                 }
 
@@ -732,7 +1194,10 @@ impl PaneRenderer {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    tracing::error!("Failed to create tokio runtime for detailed loading: {}", e);
+                    tracing::error!(
+                        "Failed to create tokio runtime for detailed loading: {}",
+                        e
+                    );
                     return;
                 }
             };
@@ -749,7 +1214,7 @@ impl PaneRenderer {
             });
 
             match result {
-                Ok(detailed_properties) => {
+                Ok(_detailed_properties) => {
                     // Update the resource with detailed properties
                     if let Ok(mut state) = state_arc.try_write() {
                         // Find and update the resource in the state
@@ -758,7 +1223,7 @@ impl PaneRenderer {
                                 && r.region == resource_clone.region
                                 && r.resource_id == resource_clone.resource_id
                         }) {
-                            existing_resource.set_detailed_properties(detailed_properties);
+                            existing_resource.mark_enriched(); // detailed_properties);
                             tracing::info!(
                                 "Successfully loaded detailed properties for: {}",
                                 existing_resource.display_name
@@ -802,8 +1267,10 @@ impl PaneRenderer {
         ui: &mut Ui,
         account_id: &str,
         display_name: &str,
-        color: Color32,
+        _color: Color32, // Ignored - using consistent yellow per UI spec
     ) -> bool {
+        // Per UI spec (EXPLORER_UI_MAP.md line 293): All accounts use yellow background
+        let color = Color32::from_rgb(255, 220, 100);
         let text_color = crate::app::resource_explorer::colors::get_contrasting_text_color(color);
         let label_text = if display_name.is_empty() || display_name == account_id {
             format!("Account: {}", account_id)
@@ -822,8 +1289,11 @@ impl PaneRenderer {
                     ui.label(egui::RichText::new(&label_text).size(9.0).color(text_color));
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(egui::RichText::new("x").size(9.0).color(text_color))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(
+                            egui::RichText::new("x")
+                                .size(9.0)
+                                .color(text_color)
+                        ).sense(egui::Sense::click())
                     );
                     if x_response.clicked() {
                         clicked = true;
@@ -839,8 +1309,10 @@ impl PaneRenderer {
         ui: &mut Ui,
         region_code: &str,
         display_name: &str,
-        color: Color32,
+        _color: Color32, // Ignored - using consistent light green per UI spec
     ) -> bool {
+        // Per UI spec (EXPLORER_UI_MAP.md line 297): All regions use light green background
+        let color = Color32::from_rgb(144, 238, 144);
         let text_color = crate::app::resource_explorer::colors::get_contrasting_text_color(color);
         let label_text = if display_name.is_empty() || display_name == region_code {
             format!("Region: {}", region_code)
@@ -859,8 +1331,11 @@ impl PaneRenderer {
                     ui.label(egui::RichText::new(&label_text).size(9.0).color(text_color));
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(egui::RichText::new("x").size(9.0).color(text_color))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(
+                            egui::RichText::new("x")
+                                .size(9.0)
+                                .color(text_color)
+                        ).sense(egui::Sense::click())
                     );
                     if x_response.clicked() {
                         clicked = true;
@@ -884,23 +1359,30 @@ impl PaneRenderer {
             format!("{} ({})", display_name, count)
         };
 
+        // Resource types use dynamic grey that works in all themes
+        let color = if ui.visuals().dark_mode {
+            Color32::from_rgb(80, 80, 80) // Dark grey for dark theme
+        } else {
+            Color32::from_rgb(200, 200, 200) // Light grey for light theme
+        };
+        let text_color = crate::app::resource_explorer::colors::get_contrasting_text_color(color);
+
         let mut clicked = false;
         egui::Frame::new()
-            .fill(Color32::from_rgb(100, 100, 100))
+            .fill(color)
             .corner_radius(3.0)
             .inner_margin(egui::Margin::symmetric(5, 2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.label(
-                        egui::RichText::new(&label_text)
-                            .size(9.0)
-                            .color(Color32::WHITE),
-                    );
+                    ui.label(egui::RichText::new(&label_text).size(9.0).color(text_color));
                     // Clickable x label instead of button - matches tag background
                     let x_response = ui.add(
-                        egui::Label::new(egui::RichText::new("x").size(9.0).color(Color32::WHITE))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(
+                            egui::RichText::new("x")
+                                .size(9.0)
+                                .color(text_color)
+                        ).sense(egui::Sense::click())
                     );
                     if x_response.clicked() {
                         clicked = true;

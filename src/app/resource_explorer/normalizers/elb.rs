@@ -1,4 +1,4 @@
-use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
+use super::{AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -49,7 +49,6 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ElasticLoadBalancing::LoadBalancer".to_string(),
@@ -58,9 +57,7 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
             resource_id: lb_name.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -81,7 +78,7 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
         let mut relationships = Vec::new();
 
         // Relationship to VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|id| id.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|id| id.as_str()) {
             relationships.push(ResourceRelationship {
                 relationship_type: RelationshipType::MemberOf,
                 target_resource_id: vpc_id.to_string(),
@@ -91,7 +88,7 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
 
         // Relationships to subnets
         if let Some(subnets) = entry
-            .raw_properties
+            .properties
             .get("Subnets")
             .and_then(|s| s.as_array())
         {
@@ -108,7 +105,7 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
 
         // Relationships to security groups
         if let Some(security_groups) = entry
-            .raw_properties
+            .properties
             .get("SecurityGroups")
             .and_then(|sg| sg.as_array())
         {
@@ -125,7 +122,7 @@ impl AsyncResourceNormalizer for ELBLoadBalancerNormalizer {
 
         // Relationships to EC2 instances
         if let Some(instances) = entry
-            .raw_properties
+            .properties
             .get("Instances")
             .and_then(|i| i.as_array())
         {

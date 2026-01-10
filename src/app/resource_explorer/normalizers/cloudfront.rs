@@ -40,7 +40,6 @@ impl AsyncResourceNormalizer for CloudFrontDistributionNormalizer {
             .map(|s| s.to_string());
 
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::CloudFront::Distribution".to_string(),
@@ -49,9 +48,7 @@ impl AsyncResourceNormalizer for CloudFrontDistributionNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

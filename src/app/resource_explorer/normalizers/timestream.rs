@@ -40,7 +40,6 @@ impl AsyncResourceNormalizer for TimestreamResourceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Timestream::Database".to_string(),
@@ -49,9 +48,7 @@ impl AsyncResourceNormalizer for TimestreamResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -92,7 +89,7 @@ impl AsyncResourceNormalizer for TimestreamResourceNormalizer {
                 }
                 "AWS::IAM::Role" => {
                     // Timestream uses IAM roles for permissions
-                    if let Some(service_role) = entry.raw_properties.get("ServiceRole") {
+                    if let Some(service_role) = entry.properties.get("ServiceRole") {
                         if let Some(role_arn) = service_role.as_str() {
                             if role_arn.contains(&resource.resource_id) {
                                 relationships.push(ResourceRelationship {

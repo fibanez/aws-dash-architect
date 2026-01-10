@@ -42,7 +42,6 @@ impl AsyncResourceNormalizer for CloudTrailNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CloudTrail::Trail".to_string(),
@@ -51,9 +50,7 @@ impl AsyncResourceNormalizer for CloudTrailNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -136,7 +133,6 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::CloudTrail::Event".to_string(),
@@ -145,9 +141,7 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -169,7 +163,7 @@ impl AsyncResourceNormalizer for CloudTrailEventNormalizer {
 
         // CloudTrail events can be related to the resources they operated on
         if let Some(resources) = entry
-            .raw_properties
+            .properties
             .get("Resources")
             .and_then(|r| r.as_array())
         {

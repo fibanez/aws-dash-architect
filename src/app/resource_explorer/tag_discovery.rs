@@ -267,7 +267,7 @@ mod tests {
             display_name: "test-instance".to_string(),
             status: Some("running".to_string()),
             properties: serde_json::json!({}),
-            raw_properties: serde_json::json!({}),
+            properties: serde_json::json!({}),
             detailed_properties: None,
             detailed_timestamp: None,
             tags: tags

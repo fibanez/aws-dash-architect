@@ -1,4 +1,3 @@
-use super::utils::*;
 use super::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -51,7 +50,6 @@ impl AsyncResourceNormalizer for LexBotNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Lex::Bot".to_string(),
@@ -60,9 +58,7 @@ impl AsyncResourceNormalizer for LexBotNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -87,7 +83,7 @@ impl AsyncResourceNormalizer for LexBotNormalizer {
             match resource.resource_type.as_str() {
                 "AWS::IAM::Role" => {
                     // Lex bots use IAM service roles
-                    if let Some(role_arn) = entry.raw_properties.get("RoleArn") {
+                    if let Some(role_arn) = entry.properties.get("RoleArn") {
                         if let Some(role_arn_str) = role_arn.as_str() {
                             if role_arn_str.contains(&resource.resource_id) {
                                 relationships.push(ResourceRelationship {

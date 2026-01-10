@@ -116,7 +116,7 @@ impl PropertyHierarchyBuilderWidget {
                                 && key.path != "detailed_properties"
                                 && key.path != "detailed_timestamp"
                                 && key.path != "display_name"
-                                && key.path != "raw_properties"
+                                && key.path != "properties"
                                 && key.path != "properties"
                         })
                         .take(100)

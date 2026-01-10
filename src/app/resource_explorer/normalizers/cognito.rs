@@ -66,7 +66,6 @@ impl AsyncResourceNormalizer for CognitoNormalizer {
         let tags = utils::extract_tags(&raw_response);
 
         // Create normalized properties
-        let normalized_properties = utils::create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: resource_type.to_string(),
@@ -75,9 +74,7 @@ impl AsyncResourceNormalizer for CognitoNormalizer {
             resource_id,
             display_name,
             status,
-            properties: normalized_properties,
-            raw_properties: raw_response.clone(),
-            detailed_properties: Some(raw_response),
+            properties: raw_response.clone(),
             detailed_timestamp: Some(query_timestamp),
             tags,
             relationships: Vec::new(), // Will be filled by extract_relationships

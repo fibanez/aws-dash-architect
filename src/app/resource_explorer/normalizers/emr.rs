@@ -41,7 +41,6 @@ impl AsyncResourceNormalizer for EmrClusterNormalizer {
                 Vec::new()
 
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EMR::Cluster".to_string(),
@@ -50,9 +49,7 @@ impl AsyncResourceNormalizer for EmrClusterNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

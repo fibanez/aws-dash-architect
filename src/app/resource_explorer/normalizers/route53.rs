@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for Route53HostedZoneNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Route53::HostedZone".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for Route53HostedZoneNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

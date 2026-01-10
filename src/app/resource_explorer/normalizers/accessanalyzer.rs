@@ -45,7 +45,6 @@ impl AsyncResourceNormalizer for AccessAnalyzerNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::AccessAnalyzer::Analyzer".to_string(),
@@ -54,9 +53,7 @@ impl AsyncResourceNormalizer for AccessAnalyzerNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

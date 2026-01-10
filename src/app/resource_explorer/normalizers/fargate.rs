@@ -40,7 +40,6 @@ impl AsyncResourceNormalizer for ECSFargateServiceNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::FargateService".to_string(),
@@ -49,9 +48,7 @@ impl AsyncResourceNormalizer for ECSFargateServiceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -73,14 +70,14 @@ impl AsyncResourceNormalizer for ECSFargateServiceNormalizer {
 
         // Fargate services relate to clusters
         if let Some(cluster_arn) = entry
-            .raw_properties
+            .properties
             .get("ClusterArn")
             .and_then(|v| v.as_str())
         {
             for resource in all_resources {
                 if resource.resource_type == "AWS::ECS::Cluster" {
                     if let Some(resource_arn) = resource
-                        .raw_properties
+                        .properties
                         .get("ClusterArn")
                         .and_then(|v| v.as_str())
                     {
@@ -141,7 +138,6 @@ impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ECS::FargateTask".to_string(),
@@ -150,9 +146,7 @@ impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -174,7 +168,7 @@ impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
 
         // Fargate tasks relate to clusters and services
         if let Some(cluster_arn) = entry
-            .raw_properties
+            .properties
             .get("ClusterArn")
             .and_then(|v| v.as_str())
         {
@@ -182,7 +176,7 @@ impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
                 match resource.resource_type.as_str() {
                     "AWS::ECS::Cluster" => {
                         if let Some(resource_arn) = resource
-                            .raw_properties
+                            .properties
                             .get("ClusterArn")
                             .and_then(|v| v.as_str())
                         {
@@ -197,12 +191,12 @@ impl AsyncResourceNormalizer for ECSFargateTaskNormalizer {
                     }
                     "AWS::ECS::Service" | "AWS::ECS::FargateService" => {
                         if let Some(service_arn) = entry
-                            .raw_properties
+                            .properties
                             .get("ServiceArn")
                             .and_then(|v| v.as_str())
                         {
                             if let Some(resource_arn) = resource
-                                .raw_properties
+                                .properties
                                 .get("ServiceArn")
                                 .and_then(|v| v.as_str())
                             {
@@ -264,7 +258,6 @@ impl AsyncResourceNormalizer for EKSFargateProfileNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::EKS::FargateProfile".to_string(),
@@ -273,9 +266,7 @@ impl AsyncResourceNormalizer for EKSFargateProfileNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -297,7 +288,7 @@ impl AsyncResourceNormalizer for EKSFargateProfileNormalizer {
 
         // Fargate profiles relate to EKS clusters
         if let Some(cluster_name) = entry
-            .raw_properties
+            .properties
             .get("ClusterName")
             .and_then(|v| v.as_str())
         {

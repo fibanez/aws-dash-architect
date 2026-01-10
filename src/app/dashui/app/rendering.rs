@@ -73,10 +73,11 @@ impl DashApp {
                         tracing::info!("AWS Login window opened from Dash menu");
                     }
                     menu::MenuAction::AWSExplorer => {
-                        // Check if logged in to AWS before opening Explorer
+                        // Check if logged in to AWS before creating new Explorer window
                         if self.is_aws_logged_in() {
-                            self.resource_explorer.set_open(true);
-                            tracing::info!("AWS Explorer opened from Dash menu");
+                            let instance = self.explorer_manager.open_new_window();
+                            tracing::info!("New AWS Explorer window created from Dash menu: instance {}", instance.instance_number());
+                            // TODO M4: Implement focus management via FocusableWindow trait
                         } else {
                             self.show_login_required_notification("AWS Explorer");
                             tracing::warn!("AWS Explorer access denied - not logged in");
@@ -276,9 +277,11 @@ impl DashApp {
                         self.aws_login_window.reset_position();
                     }
                     CommandAction::AWSExplorer => {
-                        // Check if logged in to AWS before opening Explorer
+                        // Check if logged in to AWS before creating new Explorer window
                         if self.is_aws_logged_in() {
-                            self.resource_explorer.set_open(true);
+                            let instance = self.explorer_manager.open_new_window();
+                            tracing::info!("New AWS Explorer window created from command palette: instance {}", instance.instance_number());
+                            // TODO M4: Implement focus management via FocusableWindow trait
                         } else {
                             self.show_login_required_notification("AWS Explorer");
                             tracing::warn!("AWS Explorer access denied - not logged in");
@@ -368,7 +371,7 @@ impl DashApp {
                 .as_ref()
                 .is_some_and(|w| w.is_open())
             || self.verification_window.visible
-            || self.resource_explorer.is_open()
+            || self.explorer_manager.has_open_windows()
         {
             ctx.request_repaint();
         }

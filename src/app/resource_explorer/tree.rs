@@ -6,6 +6,20 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::collections::HashMap;
 
+/// Redact sensitive string, showing only last 4 characters
+///
+/// Used for account IDs, resource IDs, and other sensitive identifiers in logs.
+/// Example: "123456789012" -> "********9012"
+fn redact_sensitive(value: &str) -> String {
+    if value.len() <= 4 {
+        "*".repeat(value.len())
+    } else {
+        format!("{}{}",
+            "*".repeat(value.len() - 4),
+            &value[value.len() - 4..])
+    }
+}
+
 /// Tree node structure for hierarchical display
 #[derive(Debug, Clone)]
 pub struct TreeNode {
@@ -13,7 +27,7 @@ pub struct TreeNode {
     pub display_name: String,
     pub color: Option<Color32>,
     pub children: Vec<TreeNode>,
-    pub resource_entries: Vec<ResourceEntry>, // Leaf nodes contain actual resources
+    pub resource_indices: Vec<usize>, // Indices into state.resources array
     pub expanded: bool,
     pub node_type: NodeType,
 }
@@ -33,7 +47,7 @@ impl TreeNode {
             display_name,
             color: None,
             children: Vec::new(),
-            resource_entries: Vec::new(),
+            resource_indices: Vec::new(),
             expanded: false,
             node_type,
         }
@@ -80,8 +94,8 @@ impl TreeNode {
         self.children.push(child);
     }
 
-    pub fn add_resource(&mut self, resource: ResourceEntry) {
-        self.resource_entries.push(resource);
+    pub fn add_resource_index(&mut self, index: usize) {
+        self.resource_indices.push(index);
     }
 
     pub fn is_leaf(&self) -> bool {
@@ -89,7 +103,7 @@ impl TreeNode {
     }
 
     pub fn total_resources(&self) -> usize {
-        self.resource_entries.len()
+        self.resource_indices.len()
             + self
                 .children
                 .iter()
@@ -107,12 +121,25 @@ impl TreeBuilder {
         primary_grouping: GroupingMode,
         search_filter: &str,
     ) -> TreeNode {
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.build_tree.start", &format!("resources: {}", resources.len()));
+
+        // Build index map: resource_id -> position in original resources slice
+        let resource_index_map: HashMap<String, usize> = resources
+            .iter()
+            .enumerate()
+            .map(|(idx, r)| (r.resource_id.clone(), idx))
+            .collect();
+
         // Only start search filtering after 3 characters to reduce tree rebuilds
         let filtered_resources = if search_filter.len() < 3 {
             resources.to_vec()
         } else {
             Self::filter_resources(resources, search_filter)
         };
+
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.build_tree.after_filter", &format!("filtered: {}", filtered_resources.len()));
 
         // Separate parent resources from child resources
         // Child resources will be attached to their parents, not shown at top level
@@ -136,6 +163,7 @@ impl TreeBuilder {
                     &parent_resources,
                     tag_keys,
                     &filtered_resources,
+                    &resource_index_map,
                 );
 
                 // Add total count to root node display name
@@ -154,6 +182,7 @@ impl TreeBuilder {
                     &parent_resources,
                     property_paths,
                     &filtered_resources,
+                    &resource_index_map,
                 );
 
                 // Add total count to root node display name
@@ -222,11 +251,13 @@ impl TreeBuilder {
                     let mut sorted_resources = type_resources.clone();
                     Self::sort_resources_by_name(&mut sorted_resources);
                     for resource in &sorted_resources {
-                        type_node.add_resource(resource.clone());
+                        if let Some(&idx) = resource_index_map.get(&resource.resource_id) {
+                            type_node.add_resource_index(idx);
+                        }
                     }
 
                     // Attach child resources to their parent resources
-                    Self::attach_child_resources(&mut type_node, &filtered_resources);
+                    Self::attach_child_resources(&mut type_node, &filtered_resources, &resource_index_map);
 
                     primary_node.add_child(type_node);
                 }
@@ -268,11 +299,13 @@ impl TreeBuilder {
                     let mut sorted_resources = account_region_resources.clone();
                     Self::sort_resources_by_name(&mut sorted_resources);
                     for resource in &sorted_resources {
-                        sub_node.add_resource(resource.clone());
+                        if let Some(&idx) = resource_index_map.get(&resource.resource_id) {
+                            sub_node.add_resource_index(idx);
+                        }
                     }
 
                     // Attach child resources to their parent resources
-                    Self::attach_child_resources(&mut sub_node, &filtered_resources);
+                    Self::attach_child_resources(&mut sub_node, &filtered_resources, &resource_index_map);
 
                     primary_node.add_child(sub_node);
                 }
@@ -285,17 +318,25 @@ impl TreeBuilder {
         let total_resources = filtered_resources.len();
         root.display_name = format!("AWS Resources ({})", total_resources);
 
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.build_tree.complete", &format!("nodes: {}", root.total_resources()));
+
         root
     }
 
     /// Attach child resources as tree nodes under their parent resources
     /// This creates a hierarchical structure for resources with parent-child relationships
-    fn attach_child_resources(parent_node: &mut TreeNode, all_resources: &[ResourceEntry]) {
-        // Iterate through all resource entries in this node
-        // We need to clone the resource_entries to avoid borrowing issues
-        let parent_resources = parent_node.resource_entries.clone();
+    fn attach_child_resources(
+        parent_node: &mut TreeNode,
+        all_resources: &[ResourceEntry],
+        resource_index_map: &HashMap<String, usize>,
+    ) {
+        // Iterate through all resource indices in this node
+        // Look up the actual resources from all_resources
+        let parent_indices = parent_node.resource_indices.clone();
 
-        for parent_resource in &parent_resources {
+        for &parent_idx in &parent_indices {
+            let parent_resource = &all_resources[parent_idx];
             // Find all child resources for this parent
             let children: Vec<ResourceEntry> = all_resources
                 .iter()
@@ -345,11 +386,13 @@ impl TreeBuilder {
                     let mut sorted_children = child_resources.clone();
                     Self::sort_resources_by_name(&mut sorted_children);
                     for child_resource in &sorted_children {
-                        child_node.add_resource(child_resource.clone());
+                        if let Some(&idx) = resource_index_map.get(&child_resource.resource_id) {
+                            child_node.add_resource_index(idx);
+                        }
                     }
 
                     // Recursively attach grandchildren
-                    Self::attach_child_resources(&mut child_node, all_resources);
+                    Self::attach_child_resources(&mut child_node, all_resources, resource_index_map);
 
                     // Add the child node to the parent node
                     parent_node.add_child(child_node);
@@ -372,6 +415,7 @@ impl TreeBuilder {
         resources: &[ResourceEntry],
         tag_keys: &[String],
         all_resources: &[ResourceEntry],
+        resource_index_map: &HashMap<String, usize>,
     ) {
         if tag_keys.is_empty() || resources.is_empty() {
             return;
@@ -440,6 +484,7 @@ impl TreeBuilder {
                     group_resources,
                     remaining_tag_keys,
                     all_resources,
+                    resource_index_map,
                 );
             } else {
                 // This is the last level - group by resource type and add resources
@@ -465,11 +510,13 @@ impl TreeBuilder {
                     let mut sorted_resources = type_resources.clone();
                     Self::sort_resources_by_name(&mut sorted_resources);
                     for resource in &sorted_resources {
-                        type_node.add_resource(resource.clone());
+                        if let Some(&idx) = resource_index_map.get(&resource.resource_id) {
+                            type_node.add_resource_index(idx);
+                        }
                     }
 
                     // Attach child resources to their parent resources
-                    Self::attach_child_resources(&mut type_node, all_resources);
+                    Self::attach_child_resources(&mut type_node, all_resources, resource_index_map);
 
                     tag_node.add_child(type_node);
                 }
@@ -482,7 +529,7 @@ impl TreeBuilder {
     /// Build a hierarchical tree structure based on multiple property paths
     ///
     /// This method recursively groups resources by property values in the specified order.
-    /// For example, with property_paths = ["raw_properties.State", "raw_properties.InstanceType"]:
+    /// For example, with property_paths = ["properties.State", "properties.InstanceType"]:
     /// - Level 1: Group by State (running, stopped, etc.)
     /// - Level 2: Under each State, group by InstanceType (t2.micro, m5.large, etc.)
     ///
@@ -492,6 +539,7 @@ impl TreeBuilder {
         resources: &[ResourceEntry],
         property_paths: &[String],
         all_resources: &[ResourceEntry],
+        resource_index_map: &HashMap<String, usize>,
     ) {
         if property_paths.is_empty() || resources.is_empty() {
             return;
@@ -565,6 +613,7 @@ impl TreeBuilder {
                     group_resources,
                     remaining_property_paths,
                     all_resources,
+                    resource_index_map,
                 );
             } else {
                 // This is the last level - group by resource type and add resources
@@ -590,11 +639,13 @@ impl TreeBuilder {
                     let mut sorted_resources = type_resources.clone();
                     Self::sort_resources_by_name(&mut sorted_resources);
                     for resource in &sorted_resources {
-                        type_node.add_resource(resource.clone());
+                        if let Some(&idx) = resource_index_map.get(&resource.resource_id) {
+                            type_node.add_resource_index(idx);
+                        }
                     }
 
                     // Attach child resources to their parent resources
-                    Self::attach_child_resources(&mut type_node, all_resources);
+                    Self::attach_child_resources(&mut type_node, all_resources, resource_index_map);
 
                     property_node.add_child(type_node);
                 }
@@ -806,11 +857,10 @@ impl TreeBuilder {
     /// Extract a property value from a ResourceEntry using dot notation
     ///
     /// This searches across multiple property fields in order of preference:
-    /// 1. detailed_properties (most complete)
-    /// 2. raw_properties (original AWS response)
-    /// 3. properties (minimal normalized data)
+    /// 1. properties (merged data from Phase 1 + Phase 2)
+    /// 2. properties (original AWS response)
     ///
-    /// Property paths can have prefixes like "raw_properties.State" or just "State"
+    /// Property paths can have prefixes like "properties.State" or just "State"
     fn extract_property_value_from_resource(
         resource: &ResourceEntry,
         property_path: &str,
@@ -824,13 +874,13 @@ impl TreeBuilder {
         // Determine which field to search and the actual path within that field
         let (search_field, actual_path) = if property_path.starts_with("detailed_properties.") {
             (
-                "detailed",
+                "properties",
                 property_path.strip_prefix("detailed_properties.").unwrap(),
             )
-        } else if property_path.starts_with("raw_properties.") {
+        } else if property_path.starts_with("properties.") {
             (
                 "raw",
-                property_path.strip_prefix("raw_properties.").unwrap(),
+                property_path.strip_prefix("properties.").unwrap(),
             )
         } else if property_path.starts_with("properties.") {
             (
@@ -838,7 +888,7 @@ impl TreeBuilder {
                 property_path.strip_prefix("properties.").unwrap(),
             )
         } else {
-            // No prefix - search in order: detailed → raw → properties
+            // No prefix - search in order: properties → raw
             ("auto", property_path)
         };
 
@@ -850,28 +900,12 @@ impl TreeBuilder {
 
         // Try extraction based on strategy
         match search_field {
-            "detailed" => {
-                if let Some(ref detailed) = resource.detailed_properties {
-                    Self::extract_from_json(detailed, actual_path)
-                } else {
-                    tracing::debug!("  detailed_properties not available");
-                    None
-                }
-            }
-            "raw" => Self::extract_from_json(&resource.raw_properties, actual_path),
+            "raw" => Self::extract_from_json(&resource.properties, actual_path),
             "properties" => Self::extract_from_json(&resource.properties, actual_path),
             "auto" => {
-                // Try detailed first, then raw, then properties
-                if let Some(ref detailed) = resource.detailed_properties {
-                    if let Some(value) = Self::extract_from_json(detailed, actual_path) {
-                        tracing::debug!("  Found in detailed_properties");
-                        return Some(value);
-                    }
-                }
-
-                if let Some(value) = Self::extract_from_json(&resource.raw_properties, actual_path)
-                {
-                    tracing::debug!("  Found in raw_properties");
+                // Try properties first (has merged Phase 2 data if available)
+                if let Some(value) = Self::extract_from_json(&resource.properties, actual_path) {
+                    tracing::debug!("  Found in properties");
                     return Some(value);
                 }
 
@@ -1261,6 +1295,9 @@ impl TreeRenderer {
         tag_popularity: &super::tag_badges::TagPopularityTracker,
         enrichment_version: u64,
     ) {
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.render_cached.start", &format!("resources: {}", resources.len()));
+
         // Update badge support (clone to store in renderer)
         self.badge_selector = Some(badge_selector.clone());
         self.tag_popularity = Some(tag_popularity.clone());
@@ -1275,33 +1312,57 @@ impl TreeRenderer {
         // Only rebuild tree if cache key has changed
         if self.cache_key != new_cache_key || self.cached_tree.is_none() {
             tracing::debug!("Tree cache miss - rebuilding tree structure");
+            #[cfg(debug_assertions)]
+            crate::perf_checkpoint!("tree.render_cached.cache_miss", "rebuilding");
+
             self.is_rebuilding = true; // Enable verbose logging during rebuild
             let tree = TreeBuilder::build_tree(resources, primary_grouping, search_filter);
             self.cached_tree = Some(tree);
             self.cache_key = new_cache_key;
+
+            #[cfg(debug_assertions)]
+            crate::perf_checkpoint!("tree.render_cached.rebuild_complete", "");
+
+            // Memory checkpoint: After tree rebuild (selection/grouping change)
+            crate::app::memory_profiling::memory_checkpoint(
+                &format!("after_tree_rebuild_{}_resources", resources.len())
+            );
         } else {
+            #[cfg(debug_assertions)]
+            crate::perf_checkpoint!("tree.render_cached.cache_hit", "using cached tree");
+
             self.is_rebuilding = false; // Disable verbose logging for cached renders
         }
 
-        // Render the cached tree (clone to avoid borrow checker issues)
-        if let Some(tree) = self.cached_tree.clone() {
-            self.render_node(ui, &tree, 0, search_filter);
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.render_cached.before_render_node", "");
+
+        // Render the cached tree (borrow instead of clone)
+        // Temporarily take ownership to avoid borrow checker issues, then put it back
+        if let Some(tree) = self.cached_tree.take() {
+            self.render_node(ui, &tree, resources, 0, search_filter);
+            self.cached_tree = Some(tree);
         }
+
+        #[cfg(debug_assertions)]
+        crate::perf_checkpoint!("tree.render_cached.complete", "");
 
         // Reset rebuild flag after rendering
         self.is_rebuilding = false;
     }
 
-    /// Legacy method for backward compatibility
-    pub fn render_tree(&mut self, ui: &mut Ui, tree: &TreeNode, search_filter: &str) {
-        self.render_node(ui, tree, 0, search_filter);
-    }
-
-    fn render_node(&mut self, ui: &mut Ui, node: &TreeNode, depth: usize, search_filter: &str) {
+    fn render_node(
+        &mut self,
+        ui: &mut Ui,
+        node: &TreeNode,
+        resources: &[super::state::ResourceEntry],
+        depth: usize,
+        search_filter: &str,
+    ) {
         // LOG: Track tree node rendering only during rebuild to avoid flooding
         if self.is_rebuilding {
             tracing::trace!("AWS Explorer: Rendering tree node - Type={:?}, ID={}, DisplayName={}, Depth={}, ChildCount={}, ResourceCount={}",
-                           node.node_type, node.id, node.display_name, depth, node.children.len(), node.resource_entries.len());
+                           node.node_type, node.id, node.display_name, depth, node.children.len(), node.resource_indices.len());
         }
 
         // Helper function to render the actual node content
@@ -1340,18 +1401,20 @@ impl TreeRenderer {
                         .show(ui, |ui| {
                             // Render children
                             for child in &node.children {
-                                self.render_node(ui, child, depth + 1, search_filter);
+                                self.render_node(ui, child, resources, depth + 1, search_filter);
                             }
 
                             // Render individual resources if this is a leaf node with resources
-                            for resource in &node.resource_entries {
+                            for &resource_idx in &node.resource_indices {
+                                let resource = &resources[resource_idx];
                                 self.render_resource_node(ui, resource, search_filter);
                             }
                         });
                 });
             } else {
                 // For leaf nodes, render resources directly
-                for resource in &node.resource_entries {
+                for &resource_idx in &node.resource_indices {
+                    let resource = &resources[resource_idx];
                     self.render_resource_node(ui, resource, search_filter);
                 }
             }
@@ -1387,13 +1450,14 @@ impl TreeRenderer {
         );
 
         // LOG: Track resource addition only during rebuild to avoid flooding
+        // Account IDs and Resource IDs are redacted for security (show last 4 digits only)
         if self.is_rebuilding {
             tracing::debug!("AWS Explorer: Adding resource to tree - Region={}, Account={}, ResourceType={}, NodeId={}, ResourceId={}, DisplayName={}",
                            resource.region,
-                           resource.account_id,
+                           redact_sensitive(&resource.account_id),
                            resource.resource_type,
                            resource_node_id,
-                           resource.resource_id,
+                           redact_sensitive(&resource.resource_id),
                            resource.display_name);
         }
 
@@ -1488,7 +1552,7 @@ impl TreeRenderer {
                         .map(|value| value.to_string())
                         .or_else(|| {
                             resource
-                                .raw_properties
+                                .properties
                                 .get("Arn")
                                 .and_then(|v| v.as_str())
                                 .map(|value| value.to_string())
@@ -1610,7 +1674,12 @@ impl TreeRenderer {
             }).inner;
 
             // Only request detailed properties when the header is actually expanded AND clicked
-            if response.header_response.clicked() && response.openness > 0.0 && resource.detailed_properties.is_none() {
+            // AND only for enrichable resource types (ones that need Phase 2 enrichment)
+            let enrichable_types = super::state::ResourceExplorerState::enrichable_resource_types();
+            let is_enrichable = enrichable_types.contains(&resource.resource_type.as_str());
+
+            if response.header_response.clicked() && response.openness > 0.0
+                && resource.detailed_timestamp.is_none() && is_enrichable {
                 let resource_key = format!("{}:{}:{}", resource.account_id, resource.region, resource.resource_id);
                 // Only request if not already pending and not previously failed
                 if !self.pending_detail_requests.contains(&resource_key)
@@ -1655,7 +1724,7 @@ impl TreeRenderer {
                                     // Otherwise build it from resource metadata
                                     let resource_arn = extract_or_build_arn(
                                         &resource.resource_type,
-                                        &resource.raw_properties,
+                                        &resource.properties,
                                         &resource.region,
                                         &resource.account_id,
                                         &resource.resource_id,
@@ -1804,7 +1873,7 @@ impl TreeRenderer {
                 };
 
                 // JSON Tree viewer - direct rendering without wrappers
-                if resource.detailed_properties.is_some() {
+                if resource.detailed_timestamp.is_some() {
                     let json_data = resource.get_display_properties();
                     ui.scope(|ui| {
                         ui.style_mut()
@@ -1825,33 +1894,17 @@ impl TreeRenderer {
                         }
                     });
                 } else {
+                    // No detailed_properties yet - display properties with optional loading indicator
                     let resource_key = format!(
                         "{}:{}:{}",
                         resource.account_id, resource.region, resource.resource_id
                     );
+
+                    // Show loading indicator if detailed properties are being fetched
                     if self.failed_detail_requests.contains(&resource_key) {
                         ui.horizontal(|ui| {
                             ui.colored_label(Color32::from_rgb(255, 165, 0), "!");
                             ui.label("Detailed properties not available for this resource type");
-                        });
-                        let json_data = resource.get_display_properties();
-                        ui.scope(|ui| {
-                            ui.style_mut()
-                                .text_styles
-                                .get_mut(&egui::TextStyle::Monospace)
-                                .unwrap()
-                                .size = 10.3;
-
-                            let response = JsonTree::new(
-                                format!("resource_json_basic_{}", resource_id),
-                                json_data,
-                            )
-                            .default_expand(expand_mode)
-                            .show(ui);
-
-                            if should_reset {
-                                response.reset_expanded(ui);
-                            }
                         });
                     } else if self.pending_detail_requests.contains(&resource_key) {
                         ui.horizontal(|ui| {
@@ -1875,27 +1928,28 @@ impl TreeRenderer {
                                 );
                             });
                         }
-
-                        let json_data = resource.get_display_properties();
-                        ui.scope(|ui| {
-                            ui.style_mut()
-                                .text_styles
-                                .get_mut(&egui::TextStyle::Monospace)
-                                .unwrap()
-                                .size = 10.3;
-
-                            let response = JsonTree::new(
-                                format!("resource_json_fallback_{}", resource_id),
-                                json_data,
-                            )
-                            .default_expand(expand_mode)
-                            .show(ui);
-
-                            if should_reset {
-                                response.reset_expanded(ui);
-                            }
-                        });
                     }
+
+                    // Always display Phase 1 properties (properties) immediately
+                    let json_data = resource.get_display_properties();
+                    ui.scope(|ui| {
+                        ui.style_mut()
+                            .text_styles
+                            .get_mut(&egui::TextStyle::Monospace)
+                            .unwrap()
+                            .size = 10.3;
+
+                        let response = JsonTree::new(
+                            format!("resource_json_{}", resource_id),
+                            json_data,
+                        )
+                        .default_expand(expand_mode)
+                        .show(ui);
+
+                        if should_reset {
+                            response.reset_expanded(ui);
+                        }
+                    });
                 }
 
                 // Footer with actions
@@ -2469,6 +2523,7 @@ impl TreeRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::resource_explorer::ConsoleRoleMenuUpdate;
 
     #[test]
     fn test_console_role_menu_update_applies_only_for_matching_request() {
@@ -2477,7 +2532,7 @@ mod tests {
             .console_role_menu
             .reset_for_account("123456789012".to_string(), 1);
 
-        renderer.apply_console_role_menu_update(super::ConsoleRoleMenuUpdate {
+        renderer.apply_console_role_menu_update(ConsoleRoleMenuUpdate {
             request_id: 2,
             account_id: "123456789012".to_string(),
             result: Ok(vec!["RoleA".to_string()]),
@@ -2487,7 +2542,7 @@ mod tests {
             ConsoleRoleMenuStatus::Loading
         ));
 
-        renderer.apply_console_role_menu_update(super::ConsoleRoleMenuUpdate {
+        renderer.apply_console_role_menu_update(ConsoleRoleMenuUpdate {
             request_id: 1,
             account_id: "123456789012".to_string(),
             result: Ok(vec!["RoleA".to_string()]),
@@ -2501,19 +2556,19 @@ mod tests {
 
 /// Extract ARN from resource properties or build it from metadata
 ///
-/// Tries to extract ARN from raw_properties first (Lambda has FunctionArn, EC2 has Arn, etc.),
+/// Tries to extract ARN from properties first (Lambda has FunctionArn, EC2 has Arn, etc.),
 /// then falls back to constructing it based on AWS resource type patterns.
 ///
 /// Note: This ARN is for display purposes. CloudTrail filtering uses resource_id (resource name), not ARN.
 fn extract_or_build_arn(
     resource_type: &str,
-    raw_properties: &serde_json::Value,
+    properties: &serde_json::Value,
     region: &str,
     account_id: &str,
     resource_id: &str,
 ) -> String {
     // Try to extract ARN from properties first (only if it's an object)
-    if let Some(props_map) = raw_properties.as_object() {
+    if let Some(props_map) = properties.as_object() {
         // Different AWS services store ARN in different property names
         let arn_property_names = match resource_type {
             "AWS::Lambda::Function" => vec!["FunctionArn", "Arn"],

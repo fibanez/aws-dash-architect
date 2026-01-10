@@ -1,4 +1,4 @@
-use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
+use super::{AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -43,7 +43,6 @@ impl AsyncResourceNormalizer for IAMRoleNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::IAM::Role".to_string(),
@@ -52,9 +51,7 @@ impl AsyncResourceNormalizer for IAMRoleNormalizer {
             resource_id: role_id,
             display_name,
             status: None, // IAM roles don't have a state
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -76,7 +73,7 @@ impl AsyncResourceNormalizer for IAMRoleNormalizer {
 
         // Find attached policies (if we have them in the data)
         if let Some(attached_policies) = entry
-            .raw_properties
+            .properties
             .get("AttachedManagedPolicies")
             .and_then(|policies| policies.as_array())
         {
@@ -141,7 +138,6 @@ impl AsyncResourceNormalizer for IAMUserNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::IAM::User".to_string(),
@@ -150,9 +146,7 @@ impl AsyncResourceNormalizer for IAMUserNormalizer {
             resource_id: user_id,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -174,7 +168,7 @@ impl AsyncResourceNormalizer for IAMUserNormalizer {
 
         // Find attached policies
         if let Some(attached_policies) = entry
-            .raw_properties
+            .properties
             .get("AttachedManagedPolicies")
             .and_then(|policies| policies.as_array())
         {
@@ -193,7 +187,7 @@ impl AsyncResourceNormalizer for IAMUserNormalizer {
 
         // Find groups this user belongs to
         if let Some(groups) = entry
-            .raw_properties
+            .properties
             .get("Groups")
             .and_then(|groups| groups.as_array())
         {
@@ -255,7 +249,6 @@ impl AsyncResourceNormalizer for IAMPolicyNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::IAM::Policy".to_string(),
@@ -264,9 +257,7 @@ impl AsyncResourceNormalizer for IAMPolicyNormalizer {
             resource_id: policy_id,
             display_name,
             status: None,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

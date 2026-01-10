@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for EventBridgeEventBusNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Events::EventBus".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for EventBridgeEventBusNormalizer {
             resource_id: event_bus_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -113,7 +110,6 @@ impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Events::Rule".to_string(),
@@ -122,9 +118,7 @@ impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
             resource_id: rule_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -146,7 +140,7 @@ impl AsyncResourceNormalizer for EventBridgeRuleNormalizer {
 
         // Map to event bus if specified
         if let Some(event_bus_name) = entry
-            .raw_properties
+            .properties
             .get("EventBusName")
             .and_then(|v| v.as_str())
         {

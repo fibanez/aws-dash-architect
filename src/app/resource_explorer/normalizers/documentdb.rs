@@ -28,7 +28,6 @@ impl AsyncResourceNormalizer for DocumentDbResourceNormalizer {
         let display_name = extract_display_name(&raw_response, &resource_id);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::DocumentDB::Cluster".to_string(),
@@ -37,9 +36,7 @@ impl AsyncResourceNormalizer for DocumentDbResourceNormalizer {
             resource_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

@@ -572,6 +572,9 @@ impl AwsLoginWindow {
                                     tracing::info!(
                                         "Credentials stored and login state set to LoggedIn"
                                     );
+
+                                    // Memory checkpoint: After IAM login complete
+                                    crate::app::memory_profiling::memory_checkpoint("after_iam_login");
                                 }
                                 Err(err) => {
                                     tracing::error!(

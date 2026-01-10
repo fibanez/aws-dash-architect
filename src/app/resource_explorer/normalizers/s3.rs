@@ -52,7 +52,6 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::S3::Bucket".to_string(),
@@ -61,9 +60,7 @@ impl AsyncResourceNormalizer for S3BucketNormalizer {
             resource_id: bucket_name.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

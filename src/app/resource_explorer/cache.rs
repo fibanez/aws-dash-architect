@@ -12,10 +12,8 @@
 //! - Runtime-adjustable cache size
 //! - Smart eviction (TinyLFU + LRU)
 
-use chrono::{DateTime, Utc};
 use moka::sync::Cache;
 use once_cell::sync::OnceCell;
-use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,15 +24,8 @@ use super::state::ResourceEntry;
 // Types
 // ============================================================================
 
-/// Key for looking up detailed properties: (account_id, region, resource_type, resource_id)
-pub type ResourceKey = (String, String, String, String);
-
-/// Detailed properties loaded via Phase 2 enrichment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DetailedData {
-    pub properties: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
-}
+// DetailedData cache removed - properties are now merged directly into ResourceEntry.properties
+// during Phase 2 enrichment. This eliminates duplicate storage and simplifies the architecture.
 
 /// Memory statistics from the cache
 #[derive(Debug, Clone, Default)]
@@ -43,10 +34,6 @@ pub struct CacheMemoryStats {
     pub resource_entry_count: u64,
     /// Weighted size of resource cache in bytes
     pub resource_weighted_size: u64,
-    /// Number of entries in detailed properties cache
-    pub detailed_entry_count: u64,
-    /// Weighted size of detailed properties cache in bytes
-    pub detailed_weighted_size: u64,
     /// Total uncompressed size tracked (for compression ratio calculation)
     pub total_uncompressed_size: u64,
 }
@@ -54,7 +41,7 @@ pub struct CacheMemoryStats {
 impl CacheMemoryStats {
     /// Total cache size in bytes
     pub fn total_size(&self) -> u64 {
-        self.resource_weighted_size + self.detailed_weighted_size
+        self.resource_weighted_size
     }
 
     /// Compression ratio (uncompressed / compressed)
@@ -170,10 +157,8 @@ impl CompressedData {
 /// Compression is transparent - callers use insert()/get() with uncompressed data.
 pub struct SharedResourceCache {
     /// Main cache: query_key -> compressed resource entries
+    /// After Phase 2 enrichment, ResourceEntry.properties contains merged data
     resources: Cache<String, CompressedData>,
-
-    /// Separate cache for Phase 2 detailed properties
-    detailed_properties: Cache<ResourceKey, CompressedData>,
 
     /// Configuration
     config: CacheConfig,
@@ -199,30 +184,8 @@ impl SharedResourceCache {
             })
             .build();
 
-        let detailed_properties = Cache::builder()
-            .max_capacity(config.max_detailed_bytes)
-            .weigher(|_key: &ResourceKey, value: &CompressedData| -> u32 {
-                value.compressed_size() as u32
-            })
-            .time_to_idle(Duration::from_secs(config.idle_timeout_secs))
-            .eviction_listener(|key, _value, cause| {
-                let key_str = format!("{}:{}:{}:{}", key.0, key.1, key.2, key.3);
-                let reason = format!("{:?}", cause);
-                super::query_timing::log_cache_eviction("DETAILED", &key_str, &reason);
-                tracing::debug!(
-                    "Detailed properties cache evicted '{}:{}:{}:{}': {:?}",
-                    key.0,
-                    key.1,
-                    key.2,
-                    key.3,
-                    cause
-                );
-            })
-            .build();
-
         Self {
             resources,
-            detailed_properties,
             config,
             total_uncompressed: std::sync::atomic::AtomicU64::new(0),
         }
@@ -245,22 +208,15 @@ impl SharedResourceCache {
         let compressed = CompressedData::compress(&serialized);
 
         // Track uncompressed size for stats
-        self.total_uncompressed.fetch_add(
-            uncompressed_size as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        self.total_uncompressed
+            .fetch_add(uncompressed_size as u64, std::sync::atomic::Ordering::Relaxed);
 
         self.resources.insert(key.clone(), compressed.clone());
 
         let elapsed_ms = start.elapsed().as_millis();
         super::query_timing::log_cache_op(
             "INSERT",
-            &format!(
-                "{} ({} entries, {}KB)",
-                key,
-                entries.len(),
-                uncompressed_size / 1024
-            ),
+            &format!("{} ({} entries, {}KB)", key, entries.len(), uncompressed_size / 1024),
             elapsed_ms,
         );
 
@@ -305,7 +261,10 @@ impl SharedResourceCache {
 
     /// Get all cache keys (for iteration/debugging)
     pub fn resource_keys(&self) -> Vec<String> {
-        self.resources.iter().map(|(k, _)| (*k).clone()).collect()
+        self.resources
+            .iter()
+            .map(|(k, _)| (*k).clone())
+            .collect()
     }
 
     // ========================================================================
@@ -356,42 +315,8 @@ impl SharedResourceCache {
 
     /// Store detailed properties - transparent compression
     /// Uses JSON serialization (required for serde_json::Value compatibility)
-    pub fn insert_detailed(&self, key: ResourceKey, data: DetailedData) {
-        let serialized = serde_json::to_vec(&data).expect("JSON serialization failed");
-        let uncompressed_size = serialized.len();
-
-        let compressed = CompressedData::compress(&serialized);
-
-        self.total_uncompressed.fetch_add(
-            uncompressed_size as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-
-        self.detailed_properties.insert(key, compressed);
-    }
-
-    /// Get detailed properties - transparent decompression
-    pub fn get_detailed(&self, key: &ResourceKey) -> Option<DetailedData> {
-        self.detailed_properties.get(key).map(|compressed| {
-            let decompressed = compressed.decompress();
-            serde_json::from_slice(&decompressed).expect("JSON deserialization failed")
-        })
-    }
-
-    /// Check if detailed properties exist for a resource
-    pub fn contains_detailed(&self, key: &ResourceKey) -> bool {
-        self.detailed_properties.contains_key(key)
-    }
-
-    /// Create a ResourceKey from a ResourceEntry
-    pub fn resource_key(entry: &ResourceEntry) -> ResourceKey {
-        (
-            entry.account_id.clone(),
-            entry.region.clone(),
-            entry.resource_type.clone(),
-            entry.resource_id.clone(),
-        )
-    }
+    // DetailedData cache methods removed - Phase 2 now merges properties directly
+    // into ResourceEntry.properties instead of maintaining a separate cache
 
     // ========================================================================
     // Cache Management
@@ -402,8 +327,6 @@ impl SharedResourceCache {
         CacheMemoryStats {
             resource_entry_count: self.resources.entry_count(),
             resource_weighted_size: self.resources.weighted_size(),
-            detailed_entry_count: self.detailed_properties.entry_count(),
-            detailed_weighted_size: self.detailed_properties.weighted_size(),
             total_uncompressed_size: self
                 .total_uncompressed
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -416,8 +339,8 @@ impl SharedResourceCache {
         super::query_timing::log_cache_stats(
             stats.resource_entry_count,
             stats.resource_weighted_size,
-            stats.detailed_entry_count,
-            stats.detailed_weighted_size,
+            0, // detailed cache removed
+            0, // detailed cache removed
             stats.total_uncompressed_size,
         );
     }
@@ -431,26 +354,22 @@ impl SharedResourceCache {
     /// Note: Moka doesn't support true runtime resize. This clears the cache
     /// and updates internal config. New capacity applies to fresh entries.
     pub fn resize(&self, new_total_mb: u64) {
-        let new_resource_bytes = new_total_mb * 1024 * 1024 * 80 / 100;
-        let new_detailed_bytes = new_total_mb * 1024 * 1024 * 20 / 100;
+        let _new_resource_bytes = new_total_mb * 1024 * 1024;
 
         // Clear existing entries - Moka will enforce new capacity on new inserts
         // Note: True capacity change requires cache recreation (app restart)
         self.clear();
 
         tracing::info!(
-            "Cache cleared for resize to {}MB (resources: {}MB, details: {}MB). \
+            "Cache cleared for resize to {}MB. \
              Full capacity change takes effect on app restart.",
-            new_total_mb,
-            new_resource_bytes / 1024 / 1024,
-            new_detailed_bytes / 1024 / 1024
+            new_total_mb
         );
     }
 
     /// Clear all cached data
     pub fn clear(&self) {
         self.resources.invalidate_all();
-        self.detailed_properties.invalidate_all();
         self.total_uncompressed
             .store(0, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("Cache cleared");
@@ -459,7 +378,6 @@ impl SharedResourceCache {
     /// Run pending maintenance tasks (eviction, etc.)
     pub fn run_pending_tasks(&self) {
         self.resources.run_pending_tasks();
-        self.detailed_properties.run_pending_tasks();
     }
 }
 
@@ -520,6 +438,7 @@ pub fn shared_cache() -> Arc<SharedResourceCache> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn create_test_entry(id: &str) -> ResourceEntry {
         ResourceEntry {
@@ -530,7 +449,7 @@ mod tests {
             display_name: format!("test-{}", id),
             status: Some("running".to_string()),
             properties: serde_json::json!({"instanceType": "t2.micro"}),
-            raw_properties: serde_json::json!({"InstanceId": id}),
+            properties: serde_json::json!({"InstanceId": id}),
             detailed_properties: None,
             detailed_timestamp: None,
             tags: vec![],
@@ -554,9 +473,7 @@ mod tests {
 
         cache.insert_resources("test-key".to_string(), entries.clone());
 
-        let retrieved = cache
-            .get_resources("test-key")
-            .expect("should find cached entries");
+        let retrieved = cache.get_resources("test-key").expect("should find cached entries");
         assert_eq!(retrieved.len(), 10);
         assert_eq!(retrieved[0].resource_id, "i-00000000");
     }
@@ -589,31 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detailed_properties() {
-        let cache = SharedResourceCache::new(CacheConfig::with_size_mb(100));
-
-        let key: ResourceKey = (
-            "123456789012".to_string(),
-            "us-east-1".to_string(),
-            "AWS::EC2::Instance".to_string(),
-            "i-12345678".to_string(),
-        );
-
-        let data = DetailedData {
-            properties: serde_json::json!({
-                "detailed": "properties",
-                "with": ["nested", "data"]
-            }),
-            timestamp: Utc::now(),
-        };
-
-        cache.insert_detailed(key.clone(), data);
-
-        let retrieved = cache
-            .get_detailed(&key)
-            .expect("should find detailed properties");
-        assert_eq!(retrieved.properties["detailed"], "properties");
-    }
 
     #[test]
     fn test_cache_clear() {

@@ -21,7 +21,7 @@ use super::window_selector::WindowSelector;
 use super::{HintMode, HintOverlay, KeyMappingRegistry, NavigableWidgetManager, NavigationState};
 use crate::app::aws_identity::AwsIdentityCenter;
 use crate::app::notifications::NotificationManager;
-use crate::app::resource_explorer::ResourceExplorer;
+use crate::app::resource_explorer::instances::ExplorerManager;
 use eframe::egui;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -114,7 +114,7 @@ pub struct DashApp {
     #[serde(skip)]
     pub cloudtrail_events_windows: Vec<CloudTrailEventsWindow>,
     #[serde(skip)]
-    pub resource_explorer: ResourceExplorer,
+    pub explorer_manager: ExplorerManager,
     #[serde(skip)]
     pub pending_deployment_task: Option<DeploymentTaskHandle>,
     #[serde(skip)]
@@ -198,7 +198,7 @@ impl Default for DashApp {
             verification_window: VerificationWindow::default(),
             cloudwatch_logs_windows: Vec::new(),
             cloudtrail_events_windows: Vec::new(),
-            resource_explorer: ResourceExplorer::new(),
+            explorer_manager: ExplorerManager::new(),
             pending_deployment_task: None,
             notification_manager: NotificationManager::new(),
             current_template_hash: None,
@@ -363,7 +363,7 @@ impl eframe::App for DashApp {
         self.handle_notification_details_window(ctx);
 
         let pre_explorer = std::time::Instant::now();
-        self.handle_resource_explorer_window(ctx);
+        self.handle_explorer_windows(ctx);
         let explorer_duration = pre_explorer.elapsed();
 
         self.handle_window_selector(ctx);

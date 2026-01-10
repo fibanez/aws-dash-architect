@@ -56,7 +56,6 @@ impl AsyncResourceNormalizer for BedrockModelNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -65,9 +64,7 @@ impl AsyncResourceNormalizer for BedrockModelNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -136,7 +133,6 @@ impl AsyncResourceNormalizer for BedrockInferenceProfileNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -145,9 +141,7 @@ impl AsyncResourceNormalizer for BedrockInferenceProfileNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -230,7 +224,6 @@ impl AsyncResourceNormalizer for BedrockGuardrailNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -239,9 +232,7 @@ impl AsyncResourceNormalizer for BedrockGuardrailNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -324,7 +315,6 @@ impl AsyncResourceNormalizer for BedrockProvisionedModelThroughputNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -333,9 +323,7 @@ impl AsyncResourceNormalizer for BedrockProvisionedModelThroughputNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -418,7 +406,6 @@ impl AsyncResourceNormalizer for BedrockAgentNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -427,9 +414,7 @@ impl AsyncResourceNormalizer for BedrockAgentNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -512,7 +497,6 @@ impl AsyncResourceNormalizer for BedrockKnowledgeBaseNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -521,9 +505,7 @@ impl AsyncResourceNormalizer for BedrockKnowledgeBaseNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -606,7 +588,6 @@ impl AsyncResourceNormalizer for BedrockCustomModelNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -615,9 +596,7 @@ impl AsyncResourceNormalizer for BedrockCustomModelNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -700,7 +679,6 @@ impl AsyncResourceNormalizer for BedrockImportedModelNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -709,9 +687,7 @@ impl AsyncResourceNormalizer for BedrockImportedModelNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -794,7 +770,6 @@ impl AsyncResourceNormalizer for BedrockEvaluationJobNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -803,9 +778,7 @@ impl AsyncResourceNormalizer for BedrockEvaluationJobNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -888,7 +861,6 @@ impl AsyncResourceNormalizer for BedrockModelInvocationJobNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -897,9 +869,7 @@ impl AsyncResourceNormalizer for BedrockModelInvocationJobNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -982,7 +952,6 @@ impl AsyncResourceNormalizer for BedrockPromptNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -991,9 +960,7 @@ impl AsyncResourceNormalizer for BedrockPromptNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1076,7 +1043,6 @@ impl AsyncResourceNormalizer for BedrockFlowNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1085,9 +1051,7 @@ impl AsyncResourceNormalizer for BedrockFlowNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1170,7 +1134,6 @@ impl AsyncResourceNormalizer for BedrockAgentAliasNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1179,9 +1142,7 @@ impl AsyncResourceNormalizer for BedrockAgentAliasNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1264,7 +1225,6 @@ impl AsyncResourceNormalizer for BedrockAgentActionGroupNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1273,9 +1233,7 @@ impl AsyncResourceNormalizer for BedrockAgentActionGroupNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1358,7 +1316,6 @@ impl AsyncResourceNormalizer for BedrockDataSourceNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1367,9 +1324,7 @@ impl AsyncResourceNormalizer for BedrockDataSourceNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1452,7 +1407,6 @@ impl AsyncResourceNormalizer for BedrockModelCustomizationJobNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1461,9 +1415,7 @@ impl AsyncResourceNormalizer for BedrockModelCustomizationJobNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1546,7 +1498,6 @@ impl AsyncResourceNormalizer for BedrockIngestionJobNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1555,9 +1506,7 @@ impl AsyncResourceNormalizer for BedrockIngestionJobNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -1640,7 +1589,6 @@ impl AsyncResourceNormalizer for BedrockFlowAliasNormalizer {
         };
 
         let tags = extract_tags(&raw_response); // Fallback to local extraction for sync path // Fallback to local extraction for sync path
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Bedrock::Model".to_string(),
@@ -1649,9 +1597,7 @@ impl AsyncResourceNormalizer for BedrockFlowAliasNormalizer {
             resource_id: model_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

@@ -45,7 +45,6 @@ impl AsyncResourceNormalizer for MQBrokerNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::AmazonMQ::Broker".to_string(),
@@ -54,9 +53,7 @@ impl AsyncResourceNormalizer for MQBrokerNormalizer {
             resource_id: broker_id,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -77,7 +74,7 @@ impl AsyncResourceNormalizer for MQBrokerNormalizer {
         let mut relationships = Vec::new();
 
         // Check for subnet relationships (if broker is VPC-deployed)
-        if let Some(subnet_ids) = entry.raw_properties.get("SubnetIds") {
+        if let Some(subnet_ids) = entry.properties.get("SubnetIds") {
             if let Some(subnet_array) = subnet_ids.as_array() {
                 for subnet_id_value in subnet_array {
                     if let Some(subnet_id) = subnet_id_value.as_str() {
@@ -99,7 +96,7 @@ impl AsyncResourceNormalizer for MQBrokerNormalizer {
         }
 
         // Check for security group relationships
-        if let Some(security_groups) = entry.raw_properties.get("SecurityGroups") {
+        if let Some(security_groups) = entry.properties.get("SecurityGroups") {
             if let Some(sg_array) = security_groups.as_array() {
                 for sg_value in sg_array {
                     if let Some(sg_id) = sg_value.as_str() {

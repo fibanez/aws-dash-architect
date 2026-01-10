@@ -33,7 +33,6 @@ impl AsyncResourceNormalizer for BatchJobQueueNormalizer {
 
         let status = utils::extract_status(&raw_response);
         let tags = utils::extract_tags(&raw_response);
-        let normalized_properties = utils::create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Batch::JobQueue".to_string(),
@@ -42,9 +41,7 @@ impl AsyncResourceNormalizer for BatchJobQueueNormalizer {
             resource_id,
             display_name,
             status,
-            properties: normalized_properties,
-            raw_properties: raw_response.clone(),
-            detailed_properties: Some(raw_response),
+            properties: raw_response.clone(),
             detailed_timestamp: Some(query_timestamp),
             tags,
             relationships: Vec::new(),
@@ -111,7 +108,6 @@ impl AsyncResourceNormalizer for BatchComputeEnvironmentNormalizer {
 
         let status = utils::extract_status(&raw_response);
         let tags = utils::extract_tags(&raw_response);
-        let normalized_properties = utils::create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::Batch::JobQueue".to_string(),
@@ -120,9 +116,7 @@ impl AsyncResourceNormalizer for BatchComputeEnvironmentNormalizer {
             resource_id,
             display_name,
             status,
-            properties: normalized_properties,
-            raw_properties: raw_response.clone(),
-            detailed_properties: Some(raw_response),
+            properties: raw_response.clone(),
             detailed_timestamp: Some(query_timestamp),
             tags,
             relationships: Vec::new(),

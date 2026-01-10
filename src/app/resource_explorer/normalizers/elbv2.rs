@@ -1,4 +1,4 @@
-use super::{utils::*, AWSResourceClient, AsyncResourceNormalizer};
+use super::{AWSResourceClient, AsyncResourceNormalizer};
 use crate::app::resource_explorer::state::*;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -58,7 +58,6 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ElasticLoadBalancingV2::LoadBalancer".to_string(),
@@ -67,9 +66,7 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
             resource_id: lb_arn.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -90,7 +87,7 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
         let mut relationships = Vec::new();
 
         // Relationship to VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|id| id.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|id| id.as_str()) {
             relationships.push(ResourceRelationship {
                 relationship_type: RelationshipType::MemberOf,
                 target_resource_id: vpc_id.to_string(),
@@ -100,7 +97,7 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
 
         // Relationships to subnets (from availability zones)
         if let Some(azs) = entry
-            .raw_properties
+            .properties
             .get("AvailabilityZones")
             .and_then(|az| az.as_array())
         {
@@ -117,7 +114,7 @@ impl AsyncResourceNormalizer for ELBv2LoadBalancerNormalizer {
 
         // Relationships to security groups
         if let Some(security_groups) = entry
-            .raw_properties
+            .properties
             .get("SecurityGroups")
             .and_then(|sg| sg.as_array())
         {
@@ -199,7 +196,6 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::ElasticLoadBalancingV2::TargetGroup".to_string(),
@@ -208,9 +204,7 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
             resource_id: tg_arn.clone(),
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -231,7 +225,7 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
         let mut relationships = Vec::new();
 
         // Relationship to VPC
-        if let Some(vpc_id) = entry.raw_properties.get("VpcId").and_then(|id| id.as_str()) {
+        if let Some(vpc_id) = entry.properties.get("VpcId").and_then(|id| id.as_str()) {
             relationships.push(ResourceRelationship {
                 relationship_type: RelationshipType::MemberOf,
                 target_resource_id: vpc_id.to_string(),
@@ -241,7 +235,7 @@ impl AsyncResourceNormalizer for ELBv2TargetGroupNormalizer {
 
         // Relationships to load balancers
         if let Some(lb_arns) = entry
-            .raw_properties
+            .properties
             .get("LoadBalancerArns")
             .and_then(|arns| arns.as_array())
         {

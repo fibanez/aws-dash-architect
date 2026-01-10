@@ -124,12 +124,43 @@ ui.label("  ├─ Child");                  // NO - box-drawing
 ### Build Commands
 
 - Build: `cargo build`
+- Build with memory profiling: `cargo build --features dhat-heap`
 - Check: `cargo check`
 - Web build: `trunk build`
 - Lint: `cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::all`
 - Format: `cargo fmt --all`
 - Full check: `./check.sh` (runs all checks in sequence with chunked tests)
 - Single test: `cargo test <test_name>` (use test scripts for memory-monitored execution)
+
+### Memory Profiling
+
+**dhat-rs** heap profiler is available for debug builds to track memory allocations:
+
+**Enable profiling:**
+```bash
+cargo build --features dhat-heap
+target/debug/awsdash
+```
+
+**Automatic checkpoints** are captured at key lifecycle points:
+- `app_initialized` - After egui initialization
+- `after_iam_login` - After successful IAM Identity Center login
+- `after_tag_discovery_N_resources` - After Phase 1.5 tag discovery completes
+- `after_phase2_complete_N_resources` - After Phase 2 enrichment completes
+- `after_tree_rebuild_N_resources` - After tree rebuild (grouping/selection changes)
+
+**View results:**
+- Profile data written to: `dhat-heap.json` (current directory on exit)
+- Open in DHAT viewer: https://nnethercote.github.io/dh_view/dh_view.html
+- Upload `dhat-heap.json` to view memory usage, peak allocations, and call stacks
+
+**Memory checkpoint logs:**
+All checkpoints logged to `~/.local/share/awsdash/logs/awsdash.log` with format:
+```
+[MEMORY CHECKPOINT: <label>] total: X blocks / Y MB, current: X blocks / Y MB, peak: X blocks / Y MB
+```
+
+**Note:** Memory profiling has minimal runtime overhead. Checkpoints are no-op in builds without `--features dhat-heap`.
 
 ### Application Logs
 

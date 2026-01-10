@@ -27,7 +27,6 @@ impl AsyncResourceNormalizer for CodePipelinePipelineNormalizer {
         let display_name = extract_display_name(&raw_response, &pipeline_name);
         let status = extract_status(&raw_response);
         let tags = extract_tags(&raw_response);
-        let properties = create_normalized_properties(&raw_response);
 
         let mut entry = ResourceEntry {
             resource_type: "AWS::CodePipeline::Pipeline".to_string(),
@@ -36,9 +35,7 @@ impl AsyncResourceNormalizer for CodePipelinePipelineNormalizer {
             resource_id: pipeline_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),

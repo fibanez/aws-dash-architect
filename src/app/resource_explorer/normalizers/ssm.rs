@@ -39,7 +39,6 @@ impl AsyncResourceNormalizer for SSMParameterNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::SSM::Parameter".to_string(),
@@ -48,9 +47,7 @@ impl AsyncResourceNormalizer for SSMParameterNormalizer {
             resource_id: parameter_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
@@ -113,7 +110,6 @@ impl AsyncResourceNormalizer for SSMDocumentNormalizer {
 
                 Vec::new()
             });
-        let properties = create_normalized_properties(&raw_response);
 
         Ok(ResourceEntry {
             resource_type: "AWS::SSM::Document".to_string(),
@@ -122,9 +118,7 @@ impl AsyncResourceNormalizer for SSMDocumentNormalizer {
             resource_id: document_name,
             display_name,
             status,
-            properties,
-            raw_properties: raw_response,
-            detailed_properties: None,
+            properties: raw_response,
             detailed_timestamp: None,
             tags,
             relationships: Vec::new(),
