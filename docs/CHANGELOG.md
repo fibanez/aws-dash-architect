@@ -3,6 +3,9 @@
 ## [Unreleased] - 0.1.3
 
 ### January 2026
+- **Webview API System**: HTTP API server with token authentication and custom wry://localhost protocol for secure webview-to-Rust communication
+- **Page Builder System**: AI worker agents create HTML/CSS/JS applications with workspace management, collision detection, and file operation tools
+- **Pages Manager UI**: Webview-based page management interface with fuzzy search, sortable columns, and Ant Design styled table
 - **Resource Explorer UI**: Added unified three-panel selection dialog and collapsible active selection tags for improved resource filtering
 - **Resource Explorer Caching**: Shared Moka cache with transparent compression, memory auto-sizing, and multi-pane architecture for accelerated queries
 - **Query Monitoring**: Timing instrumentation and SDK error categorization with global retry tracking and persistent service availability indicators
