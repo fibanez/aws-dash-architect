@@ -1,6 +1,6 @@
 # <img src="dash-icon.png" width="160" height="160" align="left" padding="20" alt="Dash Architect Icon"> AWS Dash
 
-See all your AWS accounts, all your regions, in one window.
+All your AWS accounts. All your regions. One place.
 
 <br clear="left"></br>
 &nbsp;
@@ -10,13 +10,17 @@ See all your AWS accounts, all your regions, in one window.
 
 [![Release](https://img.shields.io/github/v/release/fibanez/aws-dash?include_prereleases&style=for-the-badge)](https://github.com/fibanez/aws-dash/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge)](/LICENSE-APACHE)
-[![Build](https://img.shields.io/github/actions/workflow/status/fibanez/aws-dash/release.yml?style=for-the-badge)](https://github.com/fibanez/aws-dash/actions/workflows/release.yml)
-
 &nbsp;
 
 AWS environments grow. Accounts multiply. Regions scatter. Finding what you need becomes a hunt across consoles and CLI sessions.
 
-AWS Dash brings everything into one place. Browse resources across accounts and regions the way you browse files on your computer. No context switching. No tab sprawl.
+AWS Dash brings everything into one place. Browse resources across accounts and regions. Build pages that fit your workflows. No context switching. No tab sprawl.
+
+&nbsp;
+
+### Make it yours
+
+Create dashboards tailored to your environment. Track what matters to your team. Automate your specific operations. Generic tools serve everyone the same way. Dash becomes yours.
 
 &nbsp;
 
