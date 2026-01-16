@@ -14,7 +14,7 @@ pub mod workspace_validation;
 //Re-export all tools for easy access
 pub use context::*;
 pub use file_operations::{
-    DeleteFileTool, EditFileTool, GetApiDocsTool, ListFilesTool, OpenPageTool, ReadFileTool, WriteFileTool,
+    CopyFileTool, DeleteFileTool, EditFileTool, GetApiDocsTool, ListFilesTool, OpenPageTool, ReadFileTool, WriteFileTool,
 };
 pub use javascript::ExecuteJavaScriptTool;
 pub use orchestration::{EditPageTool, StartTaskTool, StartPageBuilderTool, ThinkTool};

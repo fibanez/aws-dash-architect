@@ -18,6 +18,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::app::agent_framework::vfs::{get_current_vfs_id, with_vfs_mut};
+
 use crate::app::agent_framework::utils::registry::get_global_aws_client;
 use crate::app::resource_explorer::state::{
     AccountSelection, QueryScope, RegionSelection, ResourceEntry, ResourceExplorerState,
@@ -27,7 +29,7 @@ use crate::app::resource_explorer::unified_query::{
     BookmarkInfo, DetailLevel, QueryError, QueryWarning, ResourceFull, ResourceSummary,
     ResourceWithTags, UnifiedQueryResult,
 };
-use crate::app::resource_explorer::{get_global_bookmark_manager, get_global_explorer_state};
+use crate::app::resource_explorer::get_global_bookmark_manager;
 
 // ============================================================================
 // Context-Optimized Resource Query Structs
@@ -246,6 +248,7 @@ pub struct QueryCachedResourcesResult {
     pub status: String,
 
     /// Array of cached resources (full ResourceEntry objects serialized to JSON)
+    /// Note: When VFS is used, this will be None and detailsPath will contain the VFS path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<Vec<serde_json::Value>>,
 
@@ -264,6 +267,14 @@ pub struct QueryCachedResourcesResult {
     /// Message (helpful if status is not_found)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// Path to full resources in VFS (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details_path: Option<String>,
+
+    /// Sample of resource IDs for context (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_resource_ids: Option<Vec<String>>,
 }
 
 /// Register resource-related functions into V8 context
@@ -870,33 +881,41 @@ pub fn execute_get_resource_schema(resource_type: &str) -> Result<GetResourceSch
 
 /// Internal async implementation of get resource schema
 ///
-/// Searches the ResourceExplorerState cache for ONE example resource of the given type.
+/// Searches the shared Moka cache for ONE example resource of the given type.
 /// Returns the FIRST resource found (deterministic) to show structure and available properties.
 async fn get_resource_schema_internal(resource_type: &str) -> Result<GetResourceSchemaResult> {
-    // Get global explorer state
-    let explorer_state = get_global_explorer_state()
-        .ok_or_else(|| anyhow!("Explorer state not initialized (login required)"))?;
+    use std::collections::HashSet;
 
-    let state_guard = explorer_state.read().await;
+    // Get the shared Moka cache (same cache used by loadCache and queryCachedResources)
+    let cache = crate::app::resource_explorer::cache::shared_cache();
 
     // Search cache for ANY resource of this type
-    let mut example_resource: Option<&ResourceEntry> = None;
+    let mut example_resource: Option<Arc<ResourceEntry>> = None;
     let mut total_count = 0usize;
-    let mut unique_accounts: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut unique_regions: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut unique_accounts: HashSet<String> = HashSet::new();
+    let mut unique_regions: HashSet<String> = HashSet::new();
 
-    for (_cache_key, entries) in &state_guard.cached_queries {
-        for entry in entries {
-            if entry.resource_type == resource_type {
-                // Take first resource as example if not yet set
-                if example_resource.is_none() {
-                    example_resource = Some(entry);
+    // Iterate through all cache keys to find matching resources
+    // Cache key format: "account:region:resource_type"
+    for cache_key in cache.resource_keys() {
+        // Check if this cache entry is for the requested resource type
+        let parts: Vec<&str> = cache_key.split(':').collect();
+        if parts.len() == 3 && parts[2] == resource_type {
+            // Get resources from this cache entry
+            if let Some(entries) = cache.get_resources(&cache_key) {
+                for entry in entries {
+                    if entry.resource_type == resource_type {
+                        // Take first resource as example if not yet set
+                        if example_resource.is_none() {
+                            example_resource = Some(Arc::clone(&entry));
+                        }
+
+                        // Track statistics
+                        total_count += 1;
+                        unique_accounts.insert(entry.account_id.clone());
+                        unique_regions.insert(entry.region.clone());
+                    }
                 }
-
-                // Track statistics
-                total_count += 1;
-                unique_accounts.insert(entry.account_id.clone());
-                unique_regions.insert(entry.region.clone());
             }
         }
     }
@@ -952,12 +971,11 @@ async fn get_resource_schema_internal(resource_type: &str) -> Result<GetResource
         })
     } else {
         // Build helpful error message with cache statistics
-        use std::collections::HashSet;
-
-        let cache_size = state_guard.cached_queries.len();
+        let cache_keys = cache.resource_keys();
+        let cache_size = cache_keys.len();
         let mut cache_types = HashSet::new();
 
-        for cache_key in state_guard.cached_queries.keys() {
+        for cache_key in &cache_keys {
             let parts: Vec<&str> = cache_key.split(':').collect();
             if parts.len() == 3 {
                 cache_types.insert(parts[2].to_string());
@@ -1091,7 +1109,8 @@ fn show_in_explorer_callback(
 /// Callback for queryCachedResources() JavaScript function
 ///
 /// Queries cached resources by account, region, and resource type.
-/// Returns actual ResourceEntry objects (not just counts) for filtering/analysis.
+/// When VFS is available, saves full resources to VFS and returns summary.
+/// Otherwise returns actual ResourceEntry objects inline.
 fn query_cached_resources_callback(
     scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments<'_>,
@@ -1135,7 +1154,7 @@ fn query_cached_resources_callback(
     };
 
     // Execute query synchronously (wraps async code)
-    let result = match execute_query_cached_resources(query_args) {
+    let mut result = match execute_query_cached_resources(query_args) {
         Ok(r) => r,
         Err(e) => {
             let msg = v8::String::new(scope, &format!("Query failed: {}", e)).unwrap();
@@ -1144,6 +1163,70 @@ fn query_cached_resources_callback(
             return;
         }
     };
+
+    // If VFS is available and we have resources, save to VFS and return summary
+    if let Some(vfs_id) = get_current_vfs_id() {
+        if let Some(ref resources) = result.resources {
+            if !resources.is_empty() {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let vfs_path = format!("/results/resources_{}.json", timestamp);
+
+                // Serialize resources to JSON for VFS storage
+                let resources_json = match serde_json::to_string_pretty(resources) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!("Failed to serialize resources for VFS: {}", e);
+                        String::new()
+                    }
+                };
+
+                if !resources_json.is_empty() {
+                    // Write to VFS
+                    let write_result = with_vfs_mut(&vfs_id, |vfs| {
+                        vfs.write_file(&vfs_path, resources_json.as_bytes())
+                    });
+
+                    match write_result {
+                        Some(Ok(())) => {
+                            debug!(
+                                "Saved {} resources to VFS path: {}",
+                                resources.len(),
+                                vfs_path
+                            );
+
+                            // Extract sample resource IDs for context
+                            let sample_ids: Vec<String> = resources
+                                .iter()
+                                .take(5)
+                                .filter_map(|r| r.get("resourceId").and_then(|v| v.as_str()).map(String::from))
+                                .collect();
+
+                            // Update result: remove inline resources, add VFS path
+                            result.resources = None;
+                            result.details_path = Some(vfs_path.clone());
+                            result.sample_resource_ids = Some(sample_ids);
+                            result.message = Some(format!(
+                                "Found {} resources. Full data saved to VFS. Use vfs.readJson('{}') to access.",
+                                result.count,
+                                vfs_path
+                            ));
+                        }
+                        Some(Err(e)) => {
+                            warn!("Failed to write resources to VFS: {}", e);
+                            // Fall back to inline return
+                        }
+                        None => {
+                            warn!("VFS not found for id: {}", vfs_id);
+                            // Fall back to inline return
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Serialize result to JSON string
     let json_str = match serde_json::to_string(&result) {
@@ -1325,6 +1408,8 @@ async fn query_cached_resources_internal(
             regions_with_data: Vec::new(),
             resource_types_found: Vec::new(),
             message: Some(message),
+            details_path: None,
+            sample_resource_ids: None,
         })
     } else {
         Ok(QueryCachedResourcesResult {
@@ -1335,6 +1420,8 @@ async fn query_cached_resources_internal(
             regions_with_data: regions_found.into_iter().collect(),
             resource_types_found: types_found.into_iter().collect(),
             message: None,
+            details_path: None,
+            sample_resource_ids: None,
         })
     }
 }

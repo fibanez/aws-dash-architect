@@ -2,19 +2,25 @@
 //!
 //! This tool allows Page Builder agents to list files and directories in their workspace.
 //! All file paths are validated to prevent directory traversal attacks.
+//! Supports both disk-based and VFS-based workspaces.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use stood::tools::{Tool, ToolError, ToolResult};
 
+use super::workspace::WorkspaceType;
+
 /// Tool for listing files in the Page Builder workspace
 #[derive(Debug, Clone)]
 pub struct ListFilesTool {
+    workspace: WorkspaceType,
+    /// Keep for backwards compatibility with tests
+    #[allow(dead_code)]
     workspace_root: PathBuf,
 }
 
@@ -40,34 +46,25 @@ struct ListFilesResult {
 }
 
 impl ListFilesTool {
+    /// Create a new ListFilesTool for the specified page workspace
+    ///
+    /// # Arguments
+    /// * `page_name` - Name of the page, or VFS pattern `vfs:{vfs_id}:{page_id}`
     pub fn new(page_name: &str) -> Result<Self> {
-        let workspace_root = dirs::data_local_dir()
-            .context("Failed to get local data directory")?
-            .join("awsdash/pages")
-            .join(page_name);
+        let workspace = WorkspaceType::from_workspace_name(page_name)?;
 
-        std::fs::create_dir_all(&workspace_root)
-            .with_context(|| format!("Failed to create workspace directory: {:?}", workspace_root))?;
-
-        Ok(Self { workspace_root })
-    }
-
-    fn validate_path(&self, relative_path: Option<&str>) -> Result<PathBuf> {
-        let path = match relative_path {
-            Some(p) => {
-                if p.contains("..") || p.starts_with('/') {
-                    anyhow::bail!("Invalid path: directory traversal not allowed");
-                }
-                self.workspace_root.join(p)
+        // Extract path for backwards compatibility
+        let workspace_root = match &workspace {
+            WorkspaceType::Disk { path } => path.clone(),
+            WorkspaceType::Vfs { page_id, .. } => {
+                PathBuf::from(format!("/vfs/pages/{}", page_id))
             }
-            None => self.workspace_root.clone(),
         };
 
-        if !path.starts_with(&self.workspace_root) {
-            anyhow::bail!("Path outside workspace");
-        }
-
-        Ok(path)
+        Ok(Self {
+            workspace,
+            workspace_root,
+        })
     }
 }
 
@@ -107,62 +104,31 @@ impl Tool for ListFilesTool {
             None => ListFilesParams { path: None },
         };
 
-        let full_path = match self.validate_path(params.path.as_deref()) {
-            Ok(path) => path,
-            Err(e) => {
+        // Validate path if provided
+        if let Some(ref path) = params.path {
+            if let Err(e) = self.workspace.validate_path(path) {
                 return Ok(ToolResult::error(format!("Invalid path: {}", e)));
+            }
+        }
+
+        // List directory using workspace abstraction
+        let entries = match self.workspace.list_dir(params.path.as_deref()) {
+            Ok(entries) => entries,
+            Err(e) => {
+                return Ok(ToolResult::error(format!("Failed to list directory: {}", e)));
             }
         };
 
-        if !full_path.exists() {
-            return Ok(ToolResult::error("Directory not found".to_string()));
-        }
-
-        if !full_path.is_dir() {
-            return Ok(ToolResult::error("Path is not a directory".to_string()));
-        }
-
-        let mut files = Vec::new();
-
-        match std::fs::read_dir(&full_path) {
-            Ok(entries) => {
-                for entry_result in entries {
-                    match entry_result {
-                        Ok(entry) => {
-                            if let Ok(metadata) = entry.metadata() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-
-                                let relative_path = match entry
-                                    .path()
-                                    .strip_prefix(&self.workspace_root)
-                                {
-                                    Ok(p) => p.to_string_lossy().to_string(),
-                                    Err(_) => continue,
-                                };
-
-                                files.push(FileEntry {
-                                    name,
-                                    path: relative_path,
-                                    is_directory: metadata.is_dir(),
-                                    size_bytes: metadata.len(),
-                                });
-                            }
-                        }
-                        Err(_) => continue,
-                    }
-                }
-            }
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Failed to read directory: {}", e)));
-            }
-        }
-
-        // Sort: directories first, then alphabetically
-        files.sort_by(|a, b| match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        });
+        // Convert to FileEntry format
+        let files: Vec<FileEntry> = entries
+            .into_iter()
+            .map(|e| FileEntry {
+                name: e.name,
+                path: e.path,
+                is_directory: e.is_directory,
+                size_bytes: e.size_bytes,
+            })
+            .collect();
 
         let result = ListFilesResult {
             total_count: files.len(),

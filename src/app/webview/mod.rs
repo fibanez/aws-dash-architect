@@ -18,7 +18,6 @@ use tao::{
 use wry::WebViewBuilder;
 
 mod api_server;
-mod api_test_window; // Kept for debugging - not used in UI
 mod commands;
 mod page_manager;
 mod pages_manager_window;
@@ -50,19 +49,6 @@ fn get_api_server_info() -> Option<(String, String)> {
 
 /// DashApp JavaScript library (embedded)
 const DASHAPP_JS: &str = include_str!("dashapp.js");
-
-/// Generate a unique invoke key for this webview instance
-///
-/// Security: Each webview process has a unique key generated at startup.
-/// Only scripts initialized by our code have this key, preventing unauthorized API access.
-fn generate_invoke_key() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    (0..4)
-        .map(|_| rng.gen::<u32>().to_string())
-        .collect::<Vec<_>>()
-        .join("-")
-}
 
 /// Get MIME type based on file extension
 fn get_mime_type(path: &str) -> &'static str {
@@ -124,29 +110,83 @@ pub fn spawn_webview_process(url: String, title: String) -> std::io::Result<()> 
 ///
 /// This is used by the Page Builder agent to preview the page it's building.
 /// The page must have an index.html file in its workspace directory.
+///
+/// Supports both disk-based pages (simple name like "my-dashboard") and
+/// VFS-based pages (pattern like "vfs:{vfs_id}:{page_id}").
+///
+/// For VFS pages: The index.html is read from VFS here (main process), but
+/// other assets (css, js) are fetched by the webview subprocess via HTTP
+/// proxy to the API server's /vfs endpoint.
 pub async fn open_page_preview(page_name: &str, _page_url: &str) -> anyhow::Result<()> {
     tracing::info!("Opening page preview for: {}", page_name);
 
-    // Get the page's index.html path
-    let page_path = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not find local data directory"))?
-        .join("awsdash/pages")
-        .join(page_name)
-        .join("index.html");
+    // Determine if this is a VFS-based or disk-based page
+    let html = if page_name.starts_with("vfs:") {
+        // VFS-based page: parse pattern vfs:{vfs_id}:{page_id}
+        let parts: Vec<&str> = page_name.splitn(3, ':').collect();
+        if parts.len() != 3 || parts[1].is_empty() || parts[2].is_empty() {
+            return Err(anyhow::anyhow!(
+                "Invalid VFS workspace format '{}'. Expected 'vfs:{{vfs_id}}:{{page_id}}'",
+                page_name
+            ));
+        }
 
-    if !page_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Page index.html not found at {:?}",
-            page_path
-        ));
-    }
+        let vfs_id = parts[1];
+        let page_id = parts[2];
+        let vfs_path = format!("/pages/{}/index.html", page_id);
 
-    // Read the HTML from disk
-    let html = std::fs::read_to_string(&page_path)?;
-    tracing::info!("Loaded page HTML from {:?} ({} bytes)", page_path, html.len());
+        tracing::info!(
+            "Reading index.html from VFS: vfs_id={}, path={}",
+            vfs_id,
+            vfs_path
+        );
 
-    // Spawn webview process with HTML that will load assets from disk via wry://localhost/pages/
-    let title = format!("Preview: {}", page_name);
+        // Read index.html from VFS (this runs in main process, so VFS is accessible)
+        use crate::app::agent_framework::vfs::registry::with_vfs;
+        let content = with_vfs(vfs_id, |vfs| vfs.read_file(&vfs_path).map(|c| c.to_vec()));
+
+        match content {
+            Some(Ok(bytes)) => String::from_utf8(bytes).map_err(|e| {
+                anyhow::anyhow!("VFS index.html is not valid UTF-8: {}", e)
+            })?,
+            Some(Err(e)) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to read index.html from VFS at '{}': {}",
+                    vfs_path,
+                    e
+                ));
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "VFS not found for id '{}'. The agent session may have ended.",
+                    vfs_id
+                ));
+            }
+        }
+    } else {
+        // Disk-based page: read from filesystem
+        let page_path = dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not find local data directory"))?
+            .join("awsdash/pages")
+            .join(page_name)
+            .join("index.html");
+
+        if !page_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Page index.html not found at {:?}",
+                page_path
+            ));
+        }
+
+        std::fs::read_to_string(&page_path)?
+    };
+
+    tracing::info!("Loaded page HTML ({} bytes)", html.len());
+
+    // Spawn webview process with HTML
+    // The subprocess custom protocol handler will proxy VFS asset requests
+    // to the main process API server's /vfs endpoint
+    let title = format!("Preview: {}", page_name.split(':').last().unwrap_or(page_name));
     spawn_webview_process_with_html(html, title)?;
 
     tracing::info!("Page preview webview spawned for: {}", page_name);
@@ -269,6 +309,9 @@ pub fn run_webview(content: WebviewContent, title: String) -> wry::Result<()> {
         WebviewContent::Html(html) => {
             tracing::info!("Using embedded HTML ({} bytes) via wry://localhost protocol", html.len());
             let html_clone = html.clone();
+            // Clone API info for use inside the closure
+            let api_url_for_vfs = api_url.clone();
+            let api_token_for_vfs = api_token.clone();
 
             // Register wry://localhost custom protocol
             // This gives the page origin "wry://localhost" which webkit allows to make fetch() requests
@@ -285,10 +328,8 @@ pub fn run_webview(content: WebviewContent, title: String) -> wry::Result<()> {
                         .unwrap()
                         .map(Into::into)
                 }
-                // Serve files from disk for paths like wry://localhost/pages/{name}/...
+                // Serve files from disk or VFS for paths like wry://localhost/pages/{name}/...
                 else if let Some(path) = uri.strip_prefix("wry://localhost/pages/") {
-                    tracing::info!("📂 Serving page file from disk: {}", path);
-
                     // Parse page name and file path
                     // Format: pages/{page_name}/{file_path}
                     let parts: Vec<&str> = path.splitn(2, '/').collect();
@@ -304,39 +345,130 @@ pub fn run_webview(content: WebviewContent, title: String) -> wry::Result<()> {
                     let page_name = parts[0];
                     let file_path = parts[1];
 
-                    // Sanitize path and get full disk path
-                    let disk_path = match sanitize_page_path(page_name, file_path) {
-                        Some(p) => p,
-                        None => {
-                            tracing::warn!("❌ Path sanitization failed for: {}", path);
+                    // Check if this is a VFS-backed page (pattern: vfs:{vfs_id}:{page_id})
+                    if page_name.starts_with("vfs:") {
+                        tracing::info!("📂 Serving page file from VFS: {}", path);
+
+                        // Parse VFS pattern: vfs:{vfs_id}:{page_id}
+                        let vfs_parts: Vec<&str> = page_name.splitn(3, ':').collect();
+                        if vfs_parts.len() != 3 {
+                            tracing::warn!("❌ Invalid VFS page path format: {}", page_name);
                             return wry::http::Response::builder()
-                                .status(403)
-                                .body(b"Forbidden: Invalid path".to_vec())
+                                .status(400)
+                                .body(b"Invalid VFS path format".to_vec())
                                 .unwrap()
                                 .map(Into::into);
                         }
-                    };
 
-                    // Read file from disk
-                    match std::fs::read(&disk_path) {
-                        Ok(contents) => {
-                            let mime_type = get_mime_type(file_path);
-                            tracing::info!("✅ Served {} ({} bytes, type: {})", file_path, contents.len(), mime_type);
+                        let vfs_id = vfs_parts[1];
+                        let vfs_page_id = vfs_parts[2];
 
-                            wry::http::Response::builder()
-                                .header("Content-Type", mime_type)
-                                .header("Access-Control-Allow-Origin", "*")
-                                .body(contents)
-                                .unwrap()
-                                .map(Into::into)
+                        // VFS is in the main process - we need to fetch via HTTP API
+                        // API endpoint: GET /vfs/{vfs_id}/pages/{page_id}/{file_path}
+                        let vfs_api_url = format!(
+                            "{}/vfs/{}/pages/{}/{}",
+                            api_url_for_vfs, vfs_id, vfs_page_id, file_path
+                        );
+
+                        tracing::info!("📡 Proxying VFS request to API: {}", vfs_api_url);
+
+                        // Make blocking HTTP request to main process API server
+                        let client = reqwest::blocking::Client::new();
+                        match client
+                            .get(&vfs_api_url)
+                            .header("X-API-Token", &api_token_for_vfs)
+                            .send()
+                        {
+                            Ok(response) => {
+                                let status = response.status();
+                                if status.is_success() {
+                                    let content_type = response
+                                        .headers()
+                                        .get("Content-Type")
+                                        .and_then(|v| v.to_str().ok())
+                                        .unwrap_or("application/octet-stream")
+                                        .to_string();
+
+                                    match response.bytes() {
+                                        Ok(bytes) => {
+                                            tracing::info!(
+                                                "✅ VFS proxy success: {} ({} bytes, type: {})",
+                                                file_path,
+                                                bytes.len(),
+                                                content_type
+                                            );
+                                            wry::http::Response::builder()
+                                                .header("Content-Type", content_type)
+                                                .header("Access-Control-Allow-Origin", "*")
+                                                .body(bytes.to_vec())
+                                                .unwrap()
+                                                .map(Into::into)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("❌ Failed to read VFS response body: {}", e);
+                                            wry::http::Response::builder()
+                                                .status(500)
+                                                .body(format!("Failed to read response: {}", e).into_bytes())
+                                                .unwrap()
+                                                .map(Into::into)
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!("❌ VFS API returned {}: {}", status, file_path);
+                                    wry::http::Response::builder()
+                                        .status(status.as_u16())
+                                        .body(format!("VFS file not found: {}", file_path).into_bytes())
+                                        .unwrap()
+                                        .map(Into::into)
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("❌ VFS API request failed: {}", e);
+                                wry::http::Response::builder()
+                                    .status(502)
+                                    .body(format!("Failed to fetch from VFS API: {}", e).into_bytes())
+                                    .unwrap()
+                                    .map(Into::into)
+                            }
                         }
-                        Err(e) => {
-                            tracing::warn!("❌ Failed to read file {:?}: {}", disk_path, e);
-                            wry::http::Response::builder()
-                                .status(404)
-                                .body(format!("File not found: {}", file_path).into_bytes())
-                                .unwrap()
-                                .map(Into::into)
+                    } else {
+                        // Disk-based page serving
+                        tracing::info!("📂 Serving page file from disk: {}", path);
+
+                        // Sanitize path and get full disk path
+                        let disk_path = match sanitize_page_path(page_name, file_path) {
+                            Some(p) => p,
+                            None => {
+                                tracing::warn!("❌ Path sanitization failed for: {}", path);
+                                return wry::http::Response::builder()
+                                    .status(403)
+                                    .body(b"Forbidden: Invalid path".to_vec())
+                                    .unwrap()
+                                    .map(Into::into);
+                            }
+                        };
+
+                        // Read file from disk
+                        match std::fs::read(&disk_path) {
+                            Ok(contents) => {
+                                let mime_type = get_mime_type(file_path);
+                                tracing::info!("✅ Served {} ({} bytes, type: {})", file_path, contents.len(), mime_type);
+
+                                wry::http::Response::builder()
+                                    .header("Content-Type", mime_type)
+                                    .header("Access-Control-Allow-Origin", "*")
+                                    .body(contents)
+                                    .unwrap()
+                                    .map(Into::into)
+                            }
+                            Err(e) => {
+                                tracing::warn!("❌ Failed to read file {:?}: {}", disk_path, e);
+                                wry::http::Response::builder()
+                                    .status(404)
+                                    .body(format!("File not found: {}", file_path).into_bytes())
+                                    .unwrap()
+                                    .map(Into::into)
+                            }
                         }
                     }
                 }

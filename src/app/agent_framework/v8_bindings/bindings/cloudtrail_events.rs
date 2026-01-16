@@ -6,8 +6,9 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info, warn};
 
+use crate::app::agent_framework::vfs::{get_current_vfs_id, with_vfs_mut};
 use crate::app::data_plane::cloudtrail_events::{
     CloudTrailEventsClient, LookupAttribute, LookupAttributeKey, LookupOptions,
 };
@@ -90,12 +91,22 @@ pub struct CloudTrailEventInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudTrailEventsResult {
-    /// Events returned
-    pub events: Vec<CloudTrailEventInfo>,
+    /// Events returned (None when saved to VFS)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<CloudTrailEventInfo>>,
     /// Pagination token
     pub next_token: Option<String>,
     /// Total events in this result
     pub total_events: usize,
+    /// Path to full events in VFS (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details_path: Option<String>,
+    /// Sample of event names for context (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_event_names: Option<Vec<String>>,
+    /// Message explaining how to access full data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Register CloudTrail Events functions into V8 context
@@ -165,7 +176,7 @@ fn get_cloudtrail_events_callback(
     };
 
     // Step 4: Execute lookup (async operation in blocking context)
-    let result = match execute_lookup(lookup_args) {
+    let mut result = match execute_lookup(lookup_args) {
         Ok(result) => result,
         Err(e) => {
             let msg =
@@ -175,6 +186,70 @@ fn get_cloudtrail_events_callback(
             return;
         }
     };
+
+    // Step 4.5: If VFS is available and we have events, save to VFS and return summary
+    if let Some(vfs_id) = get_current_vfs_id() {
+        if let Some(ref events) = result.events {
+            if !events.is_empty() {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let vfs_path = format!("/results/cloudtrail_events_{}.json", timestamp);
+
+                // Serialize events to JSON for VFS storage
+                let events_json = match serde_json::to_string_pretty(events) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!("Failed to serialize CloudTrail events for VFS: {}", e);
+                        String::new()
+                    }
+                };
+
+                if !events_json.is_empty() {
+                    // Write to VFS
+                    let write_result = with_vfs_mut(&vfs_id, |vfs| {
+                        vfs.write_file(&vfs_path, events_json.as_bytes())
+                    });
+
+                    match write_result {
+                        Some(Ok(())) => {
+                            debug!(
+                                "Saved {} CloudTrail events to VFS path: {}",
+                                events.len(),
+                                vfs_path
+                            );
+
+                            // Extract sample event names for context (first 5)
+                            let sample_event_names: Vec<String> = events
+                                .iter()
+                                .take(5)
+                                .map(|e| e.event_name.clone())
+                                .collect();
+
+                            // Update result: remove inline events, add VFS path
+                            result.events = None;
+                            result.details_path = Some(vfs_path.clone());
+                            result.sample_event_names = Some(sample_event_names);
+                            result.message = Some(format!(
+                                "Found {} CloudTrail events. Full data saved to VFS. Use vfs.readJson('{}') to access.",
+                                result.total_events,
+                                vfs_path
+                            ));
+                        }
+                        Some(Err(e)) => {
+                            warn!("Failed to write CloudTrail events to VFS: {}", e);
+                            // Fall back to inline return
+                        }
+                        None => {
+                            warn!("VFS not found for id: {}", vfs_id);
+                            // Fall back to inline return
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Step 5: Serialize result to JSON
     let result_json = match serde_json::to_string(&result) {
@@ -326,9 +401,12 @@ pub async fn get_cloudtrail_events_internal(
         .collect();
 
     Ok(CloudTrailEventsResult {
-        events,
+        events: Some(events),
         next_token: result.next_token,
         total_events: result.total_events,
+        details_path: None,
+        sample_event_names: None,
+        message: None,
     })
 }
 

@@ -117,10 +117,15 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
 use stood::tools::{Tool, ToolError, ToolResult};
 use tracing::{debug, info};
 
 use crate::app::agent_framework::v8_bindings::{ExecutionResult, RuntimeConfig, V8Runtime};
+use crate::app::agent_framework::vfs::with_vfs_mut;
+
+/// Global sequence counter for script execution tracking
+static SCRIPT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// JavaScript code execution tool
 ///
@@ -213,10 +218,15 @@ Available JavaScript APIs:
   Returns: {
     status: "success"|"not_found",
     resourceType: string,
-    exampleResource: { resourceId, displayName, accountId, region, properties, tags, status },
-    cacheStats: { totalCount, accountCount, regionCount },
-    message: string (if not_found)
+    exampleResource: { resourceId, displayName, accountId, region, properties, tags, status } | null,
+    cacheStats: { totalCount, accountCount, regionCount } | null,
+    message: string (if not_found: "No resources of type X found in cache...")
   }
+  **NOTE**: exampleResource is NULL if no resources of that type are in cache yet. Check status first:
+    const schema = getResourceSchema('AWS::Lambda::Function');
+    if (schema.status === 'not_found' || !schema.exampleResource) {
+      console.log('Call loadCache() first to populate cache');
+    }
   **CRITICAL: Use getResourceSchema() FIRST to understand resource structure before filtering**
 - queryCachedResources(options): Query actual resources from cache for filtering/analysis
   Parameters: {
@@ -226,146 +236,118 @@ Available JavaScript APIs:
   }
   Returns: {
     status: "success"|"not_found",
-    resources: Array<ResourceEntry>,  // Full resource objects with properties, tags, etc.
     count: number,
     accountsWithData: string[],
     regionsWithData: string[],
     resourceTypesFound: string[],
-    message: string (if not_found: "Call loadCache() first...")
+    detailsPath: string|null,    // VFS path where full data is saved
+    sampleResourceIds: string[]|null,  // First 5 resource IDs for context
+    message: string              // Includes VFS path instruction: "Use vfs.readJson('...') to access"
   }
-  **WORKFLOW**: (1) loadCache() to populate, (2) getResourceSchema() to see structure, (3) queryCachedResources() to filter
+  **VFS BEHAVIOR**: Full resources are saved to VFS, NOT returned inline. Use:
+    const result = queryCachedResources({...});
+    const resources = JSON.parse(vfs.readFile(result.detailsPath));  // Read from VFS
+    const filtered = resources.filter(r => ...);
+  **WORKFLOW**: (1) loadCache() to populate, (2) getResourceSchema() to see structure, (3) queryCachedResources() to get VFS path, (4) Write javascript to process vfs.readFile() to get data
   **CRITICAL**: ALWAYS call getResourceSchema() FIRST to understand property names before filtering!
   **CRITICAL**: Properties are MERGED - properties, properties, detailed_properties are combined into single "properties" object
-- showInExplorer(config): Open Explorer window with dynamic configuration
-  Parameters: {
-    accounts: string[],
-    regions: string[],
-    resourceTypes: string[],
-    grouping: { type: "ByAccount"|"ByRegion"|"ByResourceType"|"ByTag", key?: string },
-    tagFilters: { operator: "And"|"Or", filters: [...] },
-    searchFilter: string,
-    title: string
-  }
-  Returns: { status: "success"|"error", message: string, resourcesDisplayed: number }
-  **Opens UI window - use for visualization**
-  Examples: AWS::EC2::Instance, AWS::S3::Bucket, AWS::IAM::Role, AWS::Lambda::Function, we support 93 services and 183 resource types
-- queryCloudWatchLogEvents(params): Query CloudWatch Logs for analysis and monitoring
-  Parameters: { logGroupName: string, accountId: string, region: string, startTime?: number, endTime?: number, filterPattern?: string, limit?: number, logStreamNames?: string[], startFromHead?: boolean }
-  Returns: { events: Array<{ timestamp: number, message: string, ingestionTime: number, logStreamName: string }>, nextToken: string|null, totalEvents: number, statistics: { bytesScanned: number, recordsMatched: number, recordsScanned: number } }
-  Log Group Patterns: /aws/lambda/{function-name}, /aws/apigateway/{api-name}, /ecs/{cluster-name}, /aws/rds/instance/{instance-id}/error
-  Filter Patterns: "ERROR" (simple text), '{ $.level = "ERROR" }' (JSON), "[timestamp, request_id, level, msg]" (structured)
-  Time format: Unix milliseconds (use Date.now() - 3600000 for last hour)
-- getCloudTrailEvents(params): Query CloudTrail events for governance, compliance, and security analysis
-  Parameters: { accountId: string, region: string, startTime?: number, endTime?: number, lookupAttributes?: Array<{attributeKey: string, attributeValue: string}>, maxResults?: number }
-  Returns: { events: Array<{ eventId: string, eventName: string, eventTime: number, eventSource: string, username: string, resources: Array<{resourceType: string, resourceName: string}>, errorCode?: string }>, nextToken: string|null, totalEvents: number }
-  Lookup Attribute Keys: "EventId", "EventName", "ResourceType", "ResourceName", "Username", "EventSource", "AccessKeyId", "ReadOnly"
-  **CRITICAL** ResourceName Format: Use resource NAME/ID, NOT ARN - Lambda: "my-function" (NOT arn:aws:lambda:...), EC2: "i-1234567890abcdef0" (NOT arn:aws:ec2:...)
-  **CRITICAL** API Limitation: ONLY ONE lookupAttribute allowed per query (AWS restriction) - if multiple provided, only LAST one is used
-  Common Event Names: RunInstances, TerminateInstances, CreateBucket, DeleteBucket, PutBucketPolicy, CreateFunction, UpdateFunctionCode
-  Default Behavior: Automatically fetches at least 100 events (2 pages) for better coverage
-  CloudTrail Delay: Events appear 5-15 minutes after the API call
+**VFS (Virtual File System)** - For saving and reading results:
+- vfs.readFile(path, options?): Read file content as string
+  Parameters: path (string), options?: { offset?: number, length?: number }
+  Returns: string (file content)
+  **NOTE**: Files >100KB require chunked reading with offset/length
+- vfs.writeFile(path, content): Write string content to file
+  Parameters: path (string), content (string)
+- vfs.stat(path): Get file information
+  Returns: { size: number, isDirectory: boolean, isFile: boolean }
+- vfs.exists(path): Check if file exists
+  Returns: boolean
+- vfs.listDir(path): List directory contents
+  Returns: Array<{ name: string, type: "file"|"directory", size: number }>
+- vfs.mkdir(path): Create directory
+- vfs.delete(path): Delete file or empty directory
 
-**RESOURCE QUERY WORKFLOW** (Context-Optimized - TWO EXECUTION PATTERN):
-The workflow minimizes LLM context by separating data loading from analysis.
-CRITICAL: This is a TWO-STEP process requiring TWO separate JavaScript executions.
+**VFS Paths**:
+- `/results/` - Auto-saved query results (from loadCache, queryCachedResources, etc.)
+- `/workspace/{task}/` - Your processed output files (save findings here!)
+- `/scripts/` - Executed scripts (auto-logged)
+- `/history/` - Execution history
+
+Examples: AWS::EC2::Instance, AWS::S3::Bucket, AWS::IAM::Role, AWS::Lambda::Function, we support 93 services and 183 resource types
+
+NOTE: All APIs are SYNCHRONOUS - do NOT use async/await!
 
 **EXECUTION 1: Load Cache + Get Schema** (Returns metadata to LLM)
 Execute this FIRST to understand what data exists and what properties are available:
 
-  (async () => {
-    // Load resources into cache (returns counts only, not full data)
-    const loadResult = await loadCache({
-      accounts: listAccounts().map(a => a.id),
-      regions: ['us-east-1', 'us-west-2'],
-      resourceTypes: ['AWS::EC2::SecurityGroup']
+  // All APIs are SYNCHRONOUS - no async/await needed!
+  // Load resources into cache (returns counts only, not full data)
+  const loadResult = loadCache({
+    accounts: listAccounts().map(a => a.id),
+    regions: ['us-east-1', 'us-west-2'],
+    resourceTypes: ['AWS::EC2::SecurityGroup']
+  });
+  // Returns: { countByScope: {...}, totalCount: 234, detailsPath: "/results/..." }
+
+  // Get schema to discover available properties
+  const schema = getResourceSchema('AWS::EC2::SecurityGroup');
+  Available properties: Object.keys(schema.exampleResource.properties));
+
+**EXECUTION 2: Create Javascript code find, filter, aggregregate, transform, chain data.  Use the full power of Javascript accomplish the next step or the goal of the Agent. 
+
+  // All APIs are SYNCHRONOUS - no async/await needed!
+  // Query cached resources - returns VFS path, NOT inline data!
+  const result = queryCachedResources({
+    accounts: null,  // All cached accounts
+    regions: null,   // All cached regions
+    resourceTypes: ['AWS::EC2::SecurityGroup']
+  });
+
+  // CRITICAL: Read full resources from VFS path
+  const sgsData = JSON.parse(vfs.readFile(result.detailsPath));
+
+  // Filter using properties discovered from schema
+  // You know from Execution 1 that sg.properties.IpPermissions exists
+  const openSSH = sgsData.filter(sg => {
+    const rules = sg.properties.IpPermissions || [];
+    return rules.some(rule => {
+      const fromPort = rule.FromPort || 0;
+      const toPort = rule.ToPort || 65535;
+      const hasPort22 = fromPort <= 22 && 22 <= toPort;
+      const openToWorld = (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0') ||
+                          (rule.Ipv6Ranges || []).some(r => r.CidrIpv6 === '::/0');
+      return hasPort22 && openToWorld;
     });
-    console.log('Loaded:', JSON.stringify(loadResult, null, 2));
-    // Returns: { countByScope: {...}, totalCount: 234 }
+  });
 
-    // Get schema to discover available properties
-    const schema = await getResourceSchema('AWS::EC2::SecurityGroup');
-    console.log('Available properties:', Object.keys(schema.exampleResource.properties));
-    console.log('Example resource:', JSON.stringify(schema.exampleResource, null, 2));
-    // Returns: { exampleResource: { properties: {...}, tags: [...] } }
-    // Properties are MERGED - all fields from Phase 1 and Phase 2 are in "properties"
+  // Save FILTERED findings to VFS for manager to use
+  const findings = openSSH.map(sg => ({
+    id: sg.resourceId,
+    name: sg.displayName,
+    account: sg.accountId,
+    region: sg.region,
+    vpcId: sg.properties.VpcId
+  }));
 
-    // Return both results so LLM can see counts and schema structure
-    return {
-      loaded: loadResult,
-      schema: schema.exampleResource
-    };
-  })()
+  vfs.writeFile('/workspace/ssh-audit/findings.json', JSON.stringify({
+    title: 'Security Groups with Public SSH',
+    count: findings.length,
+    findings: findings
+  }));
 
-**After Execution 1**: You (the LLM) will see:
-- How many resources were loaded (totalCount)
-- What properties are available (from schema.properties)
-- Example values for each property
-- Nested structure (e.g., IpPermissions array with FromPort, ToPort, IpRanges fields)
-
-**EXECUTION 2: Query + Filter + Process** (Write this AFTER seeing Execution 1 results)
-NOW you know the schema structure, so write JavaScript to query and filter:
-
-  (async () => {
-    // Query cached resources (already loaded in Execution 1)
-    const sgs = await queryCachedResources({
-      accounts: null,  // All cached accounts
-      regions: null,   // All cached regions
-      resourceTypes: ['AWS::EC2::SecurityGroup']
-    });
-    console.log(`Querying ${sgs.count} security groups`);
-
-    // Filter using properties discovered from schema
-    // You know from Execution 1 that sg.properties.IpPermissions exists
-    const openSSH = sgs.resources.filter(sg => {
-      const rules = sg.properties.IpPermissions || [];
-      return rules.some(rule => {
-        const fromPort = rule.FromPort || 0;
-        const toPort = rule.ToPort || 65535;
-        const hasPort22 = fromPort <= 22 && 22 <= toPort;
-        const openToWorld = (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0') ||
-                            (rule.Ipv6Ranges || []).some(r => r.CidrIpv6 === '::/0');
-        return hasPort22 && openToWorld;
-      });
-    });
-    console.log(`Found ${openSSH.length} security groups with SSH open to world`);
-
-    // Return filtered/aggregated results (NOT raw arrays)
-    // If > 10 results, use showInExplorer() instead
-    if (openSSH.length > 10) {
-      showInExplorer({
-        title: 'Security Groups with Public SSH',
-        resources: openSSH,
-        accounts: [...new Set(openSSH.map(r => r.accountId))],
-        regions: [...new Set(openSSH.map(r => r.region))],
-        resourceTypes: ['AWS::EC2::SecurityGroup']
-      });
-      return { count: openSSH.length, message: 'Results in Explorer window' };
-    }
-
-    // For <= 10 results, return brief summary
-    return openSSH.map(sg => ({
-      id: sg.resourceId,
-      name: sg.displayName,
-      account: sg.accountId,
-      region: sg.region,
-      vpcId: sg.properties.VpcId
-    }));
-  })()
+  // Return summary with file paths
+  ({
+    total: result.count,
+    filtered: openSSH.length,
+    rawDataPath: result.detailsPath,
+    filteredPath: '/workspace/ssh-audit/findings.json',
+    message: 'Manager can create a page to display these findings'
+  })
 
 **WHY TWO EXECUTIONS?**
-- Execution 1: You discover what properties exist (e.g., "IpPermissions", "FromPort")
+- Execution 1: You load data and discover what properties exist (e.g., "IpPermissions", "FromPort")
 - Execution 2: You write correct filter logic using those exact property names
 - Trying to do both in one execution means guessing at property structure = errors
-
-Input Parameters:
-- code: JavaScript code string to execute
-
-Output:
-- success: Whether execution succeeded
-- result: Return value from the JavaScript code (JSON)
-- stdout: Console output (console.log/warn/debug)
-- stderr: Error messages (console.error + exceptions)
-- execution_time_ms: Time taken to execute
 
 **IMPORTANT - Logging Objects**:
 When logging objects with console.log(), they display as '[object Object]'.
@@ -373,72 +355,6 @@ Use JSON.stringify() to see actual content:
   ❌ console.log('Result:', result);           // Shows: Result: [object Object]
   ✅ console.log('Result:', JSON.stringify(result, null, 2));  // Shows actual JSON
 
-Examples:
-1. List all accounts:
-   {"code": "const accounts = listAccounts(); accounts;"}
-
-2. List all AWS regions:
-   {"code": "const regions = listRegions(); regions;"}
-
-3. Filter regions by prefix:
-   {"code": "const regions = listRegions(); regions.filter(r => r.code.startsWith('us-'));"}
-
-4. Filter accounts:
-   {"code": "const accounts = listAccounts(); accounts.filter(a => a.alias === 'prod');"}
-
-5. Process data with console output:
-   {"code": "const regions = listRegions(); console.log(`Found ${regions.length} regions`); regions.map(r => r.name);"}
-
-5b. Log object with JSON.stringify:
-   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); console.log('Load result:', JSON.stringify(result, null, 2)); result;"}
-
-6. Load EC2 instances into cache (get counts):
-   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); result;"}
-
-7. Discover EC2 instance schema:
-   {"code": "const schema = await getResourceSchema('AWS::EC2::Instance'); schema.exampleResource;"}
-
-8. Load multiple resource types:
-   {"code": "const result = await loadCache({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1'], resourceTypes: ['AWS::EC2::Instance', 'AWS::S3::Bucket'] }); result.countByScope;"}
-
-8b. Query cached resources and filter (CORRECT - uses merged properties):
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const schema = await getResourceSchema('AWS::EC2::Instance'); console.log('Properties:', Object.keys(schema.exampleResource.properties)); const result = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); result.resources.filter(i => i.properties.InstanceType === 't3.micro');"}
-
-8c. Complete workflow - find security groups with port 22 open to world:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const schema = await getResourceSchema('AWS::EC2::SecurityGroup'); console.log('Available properties:', Object.keys(schema.exampleResource.properties)); const sgs = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const openSSH = sgs.resources.filter(sg => { const rules = sg.properties.IpPermissions || []; return rules.some(rule => { const fromPort = rule.FromPort || 0; const toPort = rule.ToPort || 65535; const hasPort22 = fromPort <= 22 && 22 <= toPort; const openIPv4 = (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0'); const openIPv6 = (rule.Ipv6Ranges || []).some(r => r.CidrIpv6 === '::/0'); return hasPort22 && (openIPv4 || openIPv6); }); }); openSSH.map(sg => ({ id: sg.resourceId, name: sg.displayName, account: sg.accountId, region: sg.region, vpcId: sg.properties.VpcId }));"}
-
-8d. Aggregate instance counts by type and region:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const instances = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::Instance'] }); const byTypeAndRegion = instances.resources.reduce((acc, i) => { const key = `${i.region}:${i.properties.InstanceType}`; acc[key] = (acc[key] || 0) + 1; return acc; }, {}); byTypeAndRegion;"}
-
-8e. Find S3 buckets without encryption:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); const schema = await getResourceSchema('AWS::S3::Bucket'); const buckets = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); const unencrypted = buckets.resources.filter(b => !b.properties.BucketEncryption); unencrypted.map(b => ({ name: b.resourceId, account: b.accountId }));"}
-
-8f. Find IAM roles with specific trust relationship:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::IAM::Role'] }); const roles = await queryCachedResources({ accounts: null, regions: null, resourceTypes: ['AWS::IAM::Role'] }); const ec2Roles = roles.resources.filter(r => { const policy = r.properties.AssumeRolePolicyDocument; return policy && JSON.stringify(policy).includes('ec2.amazonaws.com'); }); ec2Roles.map(r => ({ name: r.resourceId, account: r.accountId }));"}
-
-9. Query CloudWatch Logs for Lambda errors:
-   {"code": "const errors = queryCloudWatchLogEvents({ logGroupName: '/aws/lambda/my-function', accountId: '123456789012', region: 'us-east-1', filterPattern: 'ERROR', startTime: Date.now() - (60 * 60 * 1000), limit: 100 }); errors.events;"}
-
-10. Find recent API Gateway 4xx/5xx errors:
-   {"code": "const apiLogs = queryCloudWatchLogEvents({ logGroupName: '/aws/apigateway/my-api', accountId: '123456789012', region: 'us-east-1', filterPattern: '[ip, timestamp, method, path, status>=400]', limit: 500 }); apiLogs.events.map(e => e.message);"}
-
-11. Query CloudTrail for EC2 instance changes:
-   {"code": "const events = getCloudTrailEvents({ accountId: '123456789012', region: 'us-east-1', lookupAttributes: [{ attributeKey: 'ResourceType', attributeValue: 'AWS::EC2::Instance' }] }); events.events.map(e => ({ time: new Date(e.eventTime).toISOString(), action: e.eventName, user: e.username }));"}
-
-12. Find CloudTrail security events (failed API calls):
-   {"code": "const events = getCloudTrailEvents({ accountId: '123456789012', region: 'us-east-1', startTime: Date.now() - (24 * 60 * 60 * 1000) }); events.events.filter(e => e.errorCode).map(e => ({ event: e.eventName, error: e.errorCode, user: e.username }));"}
-
-13. Load Lambda functions and get schema:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::Lambda::Function'] }); const schema = await getResourceSchema('AWS::Lambda::Function'); schema.exampleResource.properties;"}
-
-14. Load RDS databases and check count:
-   {"code": "const result = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::RDS::DBInstance'] }); result.totalCount;"}
-
-15. Load instances across all accounts:
-   {"code": "const result = await loadCache({ accounts: listAccounts().map(a => a.id), regions: ['us-east-1', 'us-west-2'], resourceTypes: ['AWS::EC2::Instance'] }); result;"}
-
-16. Visualize S3 buckets in Explorer:
-   {"code": "await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::S3::Bucket'] }); showInExplorer({ resourceTypes: ['AWS::S3::Bucket'], grouping: { type: 'ByAccount' }, title: 'S3 Buckets by Account' });"}
 
 Return Values:
 - Use the last expression as the return value (no 'return' statement needed)
@@ -453,20 +369,20 @@ Return Values:
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "JavaScript code to execute. For async operations, use IIFE pattern: (async () => { /* code */ return result; })(). CRITICAL: Include explicit 'return' statement in IIFE to avoid returning empty object {}.",
+                    "description": "JavaScript code to execute. All APIs are SYNCHRONOUS - do NOT use async/await. Use last expression as return value (no 'return' statement needed at script level).",
                     "examples": [
                         // Basic queries
                         "const accounts = listAccounts(); accounts;",
                         "const regions = listRegions(); regions.filter(r => r.code.startsWith('us-'));",
 
                         // EXECUTION 1: Load cache + get schema (discover what properties exist)
-                        "(async () => { const loadResult = await loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const schema = await getResourceSchema('AWS::EC2::SecurityGroup'); return { loaded: loadResult, schema: schema.exampleResource }; })()",
+                        "const loadResult = loadCache({ accounts: null, regions: null, resourceTypes: ['AWS::EC2::SecurityGroup'] }); const schema = getResourceSchema('AWS::EC2::SecurityGroup'); ({ loaded: loadResult, schema: schema.exampleResource });",
 
-                        // EXECUTION 2: Query + filter (write THIS after seeing Execution 1 results)
-                        "(async () => { const sgs = await queryCachedResources({ resource_types: ['AWS::EC2::SecurityGroup'] }); const vulnerable = sgs.resources.filter(sg => { const rules = sg.properties.IpPermissions || []; return rules.some(rule => rule.FromPort === 22 && (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0')); }); if (vulnerable.length > 10) { showInExplorer({ title: 'Vulnerable SGs', resources: vulnerable, accounts: [...new Set(vulnerable.map(r => r.accountId))], regions: [...new Set(vulnerable.map(r => r.region))], resourceTypes: ['AWS::EC2::SecurityGroup'] }); return { count: vulnerable.length, message: 'Results in Explorer' }; } return vulnerable.map(sg => ({ id: sg.properties.GroupId, name: sg.properties.GroupName, account: sg.accountId, region: sg.region })); })()",
+                        // EXECUTION 2: Query + filter using VFS (write THIS after seeing Execution 1 results)
+                        "const result = queryCachedResources({ resourceTypes: ['AWS::EC2::SecurityGroup'] }); const sgs = JSON.parse(vfs.readFile(result.detailsPath)); const vulnerable = sgs.filter(sg => { const rules = sg.properties.IpPermissions || []; return rules.some(rule => rule.FromPort === 22 && (rule.IpRanges || []).some(r => r.CidrIp === '0.0.0.0/0')); }); vfs.writeFile('/workspace/findings.json', JSON.stringify({ count: vulnerable.length, items: vulnerable.map(sg => ({ id: sg.properties.GroupId, name: sg.properties.GroupName, account: sg.accountId, region: sg.region })) })); ({ total: result.count, vulnerable: vulnerable.length, savedTo: '/workspace/findings.json' });",
 
-                        // Context-efficient aggregation: Return counts, not full arrays
-                        "(async () => { const buckets = await queryCachedResources({ resource_types: ['AWS::S3::Bucket'] }); const byEncryption = buckets.resources.reduce((acc, b) => { const enc = b.properties.BucketEncryption?.Rules?.[0]?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm || 'NONE'; acc[enc] = (acc[enc] || 0) + 1; return acc; }, {}); return byEncryption; })()"
+                        // Context-efficient aggregation using VFS
+                        "const result = queryCachedResources({ resourceTypes: ['AWS::S3::Bucket'] }); const buckets = JSON.parse(vfs.readFile(result.detailsPath)); const byEncryption = buckets.reduce((acc, b) => { const enc = b.properties.BucketEncryption?.Rules?.[0]?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm || 'NONE'; acc[enc] = (acc[enc] || 0) + 1; return acc; }, {}); byEncryption;"
                     ]
                 },
                 "intent": {
@@ -530,55 +446,56 @@ Return Values:
         }
 
         // Execute JavaScript with error handling
-        let tool_result = match execute_with_error_handling(&input.code, &self.config) {
-            Ok(result) => {
-                // Log successful execution with result details
-                if result.success {
-                    let result_preview = if let Some(content) = result.content.as_object() {
-                        if let Some(result_value) = content.get("result") {
-                            serde_json::to_string(result_value)
-                                .unwrap_or_else(|_| "null".to_string())
-                                .to_string()
+        let tool_result =
+            match execute_with_error_handling(&input.code, &self.config, input.intent.as_deref()) {
+                Ok(result) => {
+                    // Log successful execution with result details
+                    if result.success {
+                        let result_preview = if let Some(content) = result.content.as_object() {
+                            if let Some(result_value) = content.get("result") {
+                                serde_json::to_string(result_value)
+                                    .unwrap_or_else(|_| "null".to_string())
+                                    .to_string()
+                            } else {
+                                "undefined".to_string()
+                            }
                         } else {
                             "undefined".to_string()
-                        }
-                    } else {
-                        "undefined".to_string()
-                    };
+                        };
 
-                    info!(
-                        "✅ JavaScript execution succeeded - Result: {}",
-                        result_preview
-                    );
+                        info!(
+                            "✅ JavaScript execution succeeded - Result: {}",
+                            result_preview
+                        );
 
-                    // Log console output if present
-                    if let Some(content) = result.content.as_object() {
-                        if let Some(stdout) = content.get("stdout").and_then(|v| v.as_str()) {
-                            if !stdout.is_empty() {
-                                info!("📺 Console output:\n{}", stdout);
+                        // Log console output if present
+                        if let Some(content) = result.content.as_object() {
+                            if let Some(stdout) = content.get("stdout").and_then(|v| v.as_str()) {
+                                if !stdout.is_empty() {
+                                    info!("📺 Console output:\n{}", stdout);
+                                }
                             }
                         }
-                    }
-                } else {
-                    // Log error details
-                    if let Some(error_msg) = result.error.as_ref() {
-                        info!("❌ JavaScript execution failed - Error: {}", error_msg);
                     } else {
-                        info!("❌ JavaScript execution failed - Error: Unknown error");
+                        // Log error details
+                        if let Some(error_msg) = result.error.as_ref() {
+                            info!("❌ JavaScript execution failed - Error: {}", error_msg);
+                        } else {
+                            info!("❌ JavaScript execution failed - Error: Unknown error");
+                        }
                     }
+                    result
                 }
-                result
-            }
-            Err(e) => {
-                // V8 initialization or catastrophic failure
-                info!("💥 JavaScript execution catastrophic failure: {}", e);
-                ToolResult::error(format!(
-                    "JavaScript execution failed: {}\n\n\
+                Err(e) => {
+                    // V8 initialization or catastrophic failure
+                    info!("💥 JavaScript execution catastrophic failure: {}", e);
+                    ToolResult::error(format!(
+                        "JavaScript execution failed: {}\n\n\
                      This is likely an internal error with the V8 runtime.",
-                    e
-                ))
-            }
-        };
+                        e
+                    ))
+                }
+            };
 
         let elapsed = start_time.elapsed();
         info!("⏱️ execute_javascript total duration: {:?}", elapsed);
@@ -611,8 +528,82 @@ Return Values:
     }
 }
 
+/// Execution log entry format for VFS history
+#[derive(Debug, Serialize)]
+struct ExecutionLogEntry {
+    timestamp: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    sequence: u64,
+    script_path: String,
+    intent: Option<String>,
+    duration_ms: u64,
+    success: bool,
+    result_summary: Option<String>,
+    error: Option<String>,
+}
+
+/// Save script to VFS and return the path
+fn save_script_to_vfs(vfs_id: &str, code: &str, sequence: u64) -> Option<String> {
+    let script_path = format!("/scripts/script_{}.js", sequence);
+
+    with_vfs_mut(vfs_id, |vfs| {
+        // Ensure /scripts directory exists
+        let _ = vfs.mkdir("/scripts");
+        vfs.write_file(&script_path, code.as_bytes())
+    })?
+    .ok()?;
+
+    Some(script_path)
+}
+
+/// Log execution to VFS history
+fn log_execution_to_vfs(vfs_id: &str, entry: &ExecutionLogEntry) {
+    let log_path = "/history/execution_log.jsonl";
+
+    // Serialize entry to JSONL format (single line)
+    let log_line = match serde_json::to_string(entry) {
+        Ok(line) => format!("{}\n", line),
+        Err(_) => return,
+    };
+
+    with_vfs_mut(vfs_id, |vfs| {
+        // Ensure /history directory exists
+        let _ = vfs.mkdir("/history");
+
+        // Append to log file (read existing, append, write back)
+        let existing = vfs
+            .read_file(log_path)
+            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+            .unwrap_or_default();
+
+        let updated = format!("{}{}", existing, log_line);
+        vfs.write_file(log_path, updated.as_bytes())
+    });
+}
+
 /// Execute JavaScript with comprehensive error handling
-fn execute_with_error_handling(code: &str, config: &RuntimeConfig) -> anyhow::Result<ToolResult> {
+fn execute_with_error_handling(
+    code: &str,
+    config: &RuntimeConfig,
+    intent: Option<&str>,
+) -> anyhow::Result<ToolResult> {
+    // Copy VFS ID from tools context to VFS registry for V8 bindings
+    // The tools context VFS ID is set by send_message() in instance.rs
+    let vfs_id_opt = crate::app::agent_framework::get_current_vfs_id();
+    crate::app::agent_framework::vfs::set_current_vfs_id(vfs_id_opt.clone());
+
+    // Get sequence number for this execution
+    let sequence = SCRIPT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let start_time = std::time::Instant::now();
+
+    // Save script to VFS if VFS is available
+    let script_path = if let Some(ref vfs_id) = vfs_id_opt {
+        save_script_to_vfs(vfs_id, code, sequence)
+    } else {
+        None
+    };
+
     // Create V8 runtime with configuration
     // Note: V8Runtime automatically registers console and function bindings
     let runtime = V8Runtime::with_config(config.clone());
@@ -621,6 +612,47 @@ fn execute_with_error_handling(code: &str, config: &RuntimeConfig) -> anyhow::Re
     let execution_result = runtime
         .execute(code)
         .map_err(|e| anyhow::anyhow!("Failed to execute JavaScript: {}", e))?;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    // Clear VFS registry thread-local after execution
+    crate::app::agent_framework::vfs::set_current_vfs_id(None);
+
+    // Log execution to VFS if VFS is available
+    if let Some(ref vfs_id) = vfs_id_opt {
+        let result_summary = if execution_result.success {
+            execution_result.result.as_ref().map(|r| {
+                // Truncate long results
+                if r.len() > 200 {
+                    format!("{}...", &r[..200])
+                } else {
+                    r.clone()
+                }
+            })
+        } else {
+            None
+        };
+
+        let error = if !execution_result.success {
+            Some(execution_result.stderr.clone())
+        } else {
+            None
+        };
+
+        let entry = ExecutionLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            entry_type: "script_execution".to_string(),
+            sequence,
+            script_path: script_path.unwrap_or_else(|| format!("(sequence #{})", sequence)),
+            intent: intent.map(|s| s.to_string()),
+            duration_ms,
+            success: execution_result.success,
+            result_summary,
+            error,
+        };
+
+        log_execution_to_vfs(vfs_id, &entry);
+    }
 
     // Convert ExecutionResult to ToolResult
     Ok(format_execution_result(execution_result))
@@ -632,10 +664,16 @@ fn execute_with_error_handling(code: &str, config: &RuntimeConfig) -> anyhow::Re
 /// with the same V8 bindings available to agent tools.
 ///
 /// Returns the result as a JSON string for easy HTTP transport.
-pub async fn execute_javascript_internal(code: String, intent: Option<String>) -> anyhow::Result<String> {
+pub async fn execute_javascript_internal(
+    code: String,
+    intent: Option<String>,
+) -> anyhow::Result<String> {
     use tokio::task;
 
-    info!("🚀 execute_javascript_internal executing {} chars", code.len());
+    info!(
+        "🚀 execute_javascript_internal executing {} chars",
+        code.len()
+    );
 
     if let Some(ref intent_str) = intent {
         info!("🎯 Intent: {}", intent_str);
@@ -644,7 +682,7 @@ pub async fn execute_javascript_internal(code: String, intent: Option<String>) -
     // Execute in blocking context (V8 is sync)
     let result = task::spawn_blocking(move || {
         let config = RuntimeConfig::default();
-        execute_with_error_handling(&code, &config)
+        execute_with_error_handling(&code, &config, intent.as_deref())
     })
     .await
     .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
@@ -658,7 +696,10 @@ pub async fn execute_javascript_internal(code: String, intent: Option<String>) -
         // Fallback: return full content as JSON string
         Ok(serde_json::to_string(&result.content)?)
     } else {
-        Err(anyhow::anyhow!("JavaScript execution failed: {}", result.error.unwrap_or_else(|| "Unknown error".to_string())))
+        Err(anyhow::anyhow!(
+            "JavaScript execution failed: {}",
+            result.error.unwrap_or_else(|| "Unknown error".to_string())
+        ))
     }
 }
 

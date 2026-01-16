@@ -2,19 +2,25 @@
 //!
 //! This tool allows Page Builder agents to create or overwrite files in their workspace.
 //! All file paths are validated to prevent directory traversal attacks.
+//! Supports both disk-based and VFS-based workspaces.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use stood::tools::{Tool, ToolError, ToolResult};
 
+use super::workspace::WorkspaceType;
+
 /// Tool for writing files to the Page Builder workspace
 #[derive(Debug, Clone)]
 pub struct WriteFileTool {
+    workspace: WorkspaceType,
+    /// Keep for backwards compatibility with tests
+    #[allow(dead_code)]
     workspace_root: PathBuf,
 }
 
@@ -36,30 +42,40 @@ impl WriteFileTool {
     /// Create a new WriteFileTool for the specified page workspace
     ///
     /// # Arguments
-    /// * `page_name` - Name of the page (used as workspace folder name)
+    /// * `page_name` - Name of the page, or VFS pattern `vfs:{vfs_id}:{page_id}`
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
+    /// // Disk-based workspace
     /// let tool = WriteFileTool::new("my-s3-explorer")?;
     /// // Workspace: ~/.local/share/awsdash/pages/my-s3-explorer/
+    ///
+    /// // VFS-based workspace
+    /// let tool = WriteFileTool::new("vfs:abc123:my-dashboard")?;
+    /// // Files stored in VFS at /pages/my-dashboard/
     /// ```
     pub fn new(page_name: &str) -> Result<Self> {
-        let workspace_root = dirs::data_local_dir()
-            .context("Failed to get local data directory")?
-            .join("awsdash/pages")
-            .join(page_name);
+        let workspace = WorkspaceType::from_workspace_name(page_name)?;
 
-        // Ensure workspace exists
-        std::fs::create_dir_all(&workspace_root)
-            .with_context(|| format!("Failed to create workspace directory: {:?}", workspace_root))?;
+        // Extract path for backwards compatibility
+        let workspace_root = match &workspace {
+            WorkspaceType::Disk { path } => path.clone(),
+            WorkspaceType::Vfs { page_id, .. } => {
+                // For VFS, create a placeholder path (not actually used)
+                PathBuf::from(format!("/vfs/pages/{}", page_id))
+            }
+        };
 
-        Ok(Self { workspace_root })
+        Ok(Self {
+            workspace,
+            workspace_root,
+        })
     }
 
     /// Validate that a relative path is safe and within the workspace
     ///
-    /// Returns the absolute path if valid, error otherwise
-    fn validate_path(&self, relative_path: &str) -> Result<PathBuf> {
+    /// Returns the path string if valid, error otherwise
+    fn validate_path(&self, relative_path: &str) -> Result<String> {
         // Prevent directory traversal
         if relative_path.contains("..") || relative_path.starts_with('/') {
             anyhow::bail!("Invalid path: directory traversal not allowed");
@@ -76,14 +92,10 @@ impl WriteFileTool {
             );
         }
 
-        let full_path = self.workspace_root.join(relative_path);
+        // Validate with workspace
+        self.workspace.validate_path(relative_path)?;
 
-        // Verify path is within workspace
-        if !full_path.starts_with(&self.workspace_root) {
-            anyhow::bail!("Path outside workspace");
-        }
-
-        Ok(full_path)
+        Ok(relative_path.to_string())
     }
 }
 
@@ -153,26 +165,13 @@ In HTML, reference files with full wry:// URLs:
                 message: format!("Invalid parameters: {}", e),
             })?;
 
-        // Validate and get full path
-        let full_path = match self.validate_path(&params.path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Invalid path: {}", e)));
-            }
-        };
-
-        // Create parent directories if needed
-        if let Some(parent) = full_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return Ok(ToolResult::error(format!(
-                    "Failed to create parent directory for {}: {}",
-                    params.path, e
-                )));
-            }
+        // Validate path
+        if let Err(e) = self.validate_path(&params.path) {
+            return Ok(ToolResult::error(format!("Invalid path: {}", e)));
         }
 
-        // Write file contents
-        match std::fs::write(&full_path, &params.content) {
+        // Write file contents using workspace abstraction
+        match self.workspace.write_file(&params.path, params.content.as_bytes()) {
             Ok(_) => {
                 let result = WriteFileResult {
                     path: params.path,
@@ -205,11 +204,16 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_tool(tool_name: &str, temp_dir: &TempDir) -> WriteFileTool {
-        let workspace_root = temp_dir.path().join("awsdash/tools").join(tool_name);
+    fn create_test_tool(_tool_name: &str, temp_dir: &TempDir) -> WriteFileTool {
+        let workspace_root = temp_dir.path().to_path_buf();
         fs::create_dir_all(&workspace_root).unwrap();
 
-        WriteFileTool { workspace_root }
+        WriteFileTool {
+            workspace: WorkspaceType::Disk {
+                path: workspace_root.clone(),
+            },
+            workspace_root,
+        }
     }
 
     #[test]
@@ -220,8 +224,10 @@ mod tests {
         let result = tool.validate_path("index.html");
         assert!(result.is_ok());
 
+        // Subfolders are blocked to prevent clutter
         let result = tool.validate_path("assets/logo.png");
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Subfolders not allowed"));
     }
 
     #[test]
@@ -272,23 +278,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_file_creates_parent_directories() {
+    async fn test_write_file_blocks_subdirectories() {
         let temp_dir = TempDir::new().unwrap();
         let tool = create_test_tool("test-tool", &temp_dir);
 
+        // Subfolders are blocked to prevent clutter
         let params = Some(serde_json::json!({
             "path": "assets/images/logo.png",
             "content": "PNG data here"
         }));
 
         let tool_result = tool.execute(params, None).await.unwrap();
-        assert!(tool_result.success);
-
-        // Verify file was written with parent directories created
-        let file_path = tool.workspace_root.join("assets/images/logo.png");
-        assert!(file_path.exists());
-        let content = fs::read_to_string(&file_path).unwrap();
-        assert_eq!(content, "PNG data here");
+        assert!(!tool_result.success);
+        assert!(tool_result.error.unwrap().contains("Subfolders not allowed"));
     }
 
     #[tokio::test]

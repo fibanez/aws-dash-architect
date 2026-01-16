@@ -541,21 +541,28 @@ impl AgentLogger {
         let mut result = Vec::new();
 
         for line in text.lines() {
-            let content_len = line.len();
-            if content_len <= max_content_width {
+            let char_count = line.chars().count();
+            if char_count <= max_content_width {
                 result.push(format!("{}│ {}", indent, line));
             } else {
-                // Wrap long lines
+                // Wrap long lines - use char indices for UTF-8 safety
                 let mut remaining = line;
-                while remaining.len() > max_content_width {
-                    // Find last space before max_content_width
-                    if let Some(wrap_pos) = remaining[..max_content_width].rfind(' ') {
+                while remaining.chars().count() > max_content_width {
+                    // Find the byte position of the max_content_width-th character
+                    let byte_limit = remaining
+                        .char_indices()
+                        .nth(max_content_width)
+                        .map(|(i, _)| i)
+                        .unwrap_or(remaining.len());
+
+                    // Find last space before the byte limit
+                    if let Some(wrap_pos) = remaining[..byte_limit].rfind(' ') {
                         result.push(format!("{}│ {}", indent, &remaining[..wrap_pos]));
                         remaining = remaining[wrap_pos + 1..].trim_start();
                     } else {
-                        // No space found, hard wrap
-                        result.push(format!("{}│ {}", indent, &remaining[..max_content_width]));
-                        remaining = &remaining[max_content_width..];
+                        // No space found, hard wrap at char boundary
+                        result.push(format!("{}│ {}", indent, &remaining[..byte_limit]));
+                        remaining = &remaining[byte_limit..];
                     }
                 }
                 if !remaining.is_empty() {

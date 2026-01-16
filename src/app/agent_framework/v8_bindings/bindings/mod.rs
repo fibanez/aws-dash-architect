@@ -11,6 +11,7 @@ pub mod cloudtrail_events;
 pub mod cloudwatch_logs;
 pub mod regions;
 pub mod resources;
+pub mod vfs;
 
 use anyhow::Result;
 
@@ -47,9 +48,8 @@ pub fn register_bindings(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_
     // Register CloudTrail Events functions
     cloudtrail_events::register(scope)?;
 
-    // Future: Register other function categories here
-    // files::register(scope)?;
-    // aws_services::register(scope)?;
+    // Register VFS functions
+    vfs::register(scope)?;
 
     Ok(())
 }
@@ -88,6 +88,9 @@ pub fn get_api_documentation() -> String {
 
     docs.push_str("\n## CloudTrail Events\n\n");
     docs.push_str(&cloudtrail_events::get_documentation());
+
+    docs.push_str("\n## Virtual File System\n\n");
+    docs.push_str(&vfs::get_documentation());
 
     docs
 }

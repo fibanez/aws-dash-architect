@@ -1,6 +1,7 @@
 //! Theme management and UI dimension tracking
 
 use super::{DashApp, ThemeChoice};
+use crate::app::agent_framework::{set_app_theme, AppTheme};
 use eframe::egui;
 
 impl DashApp {
@@ -13,6 +14,15 @@ impl DashApp {
             ThemeChoice::Macchiato => catppuccin_egui::set_theme(ctx, catppuccin_egui::MACCHIATO),
             ThemeChoice::Mocha => catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA),
         }
+
+        // Sync theme to agent framework for page builder prompts
+        let app_theme = match self.theme {
+            ThemeChoice::Latte => AppTheme::Latte,
+            ThemeChoice::Frappe => AppTheme::Frappe,
+            ThemeChoice::Macchiato => AppTheme::Macchiato,
+            ThemeChoice::Mocha => AppTheme::Mocha,
+        };
+        set_app_theme(app_theme);
 
         // Make window corners more square and adjust heading size
         let mut style = (*ctx.style()).clone();

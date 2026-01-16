@@ -283,6 +283,7 @@ impl AgentLogWindow {
         let available_height = ui.available_height();
 
         ScrollArea::vertical()
+            .id_salt(("agent_log_scroll", self.log_path.display().to_string()))
             .auto_shrink([false, false])
             .max_height(available_height)
             .show(ui, |ui| {

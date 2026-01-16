@@ -5,11 +5,12 @@
 
 #![warn(clippy::all, rust_2018_idioms)]
 
+use crate::app::agent_framework::vfs::{get_current_vfs_id, with_vfs_mut};
 use crate::app::aws_identity::AwsIdentityCenter;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, RwLock};
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Global access to AwsIdentityCenter for account lookups
 /// This is set by the application when Identity Center is initialized
@@ -64,6 +65,32 @@ pub struct AccountInfo {
     pub email: Option<String>,
 }
 
+/// Summary returned when accounts are saved to VFS (>= 20 accounts)
+///
+/// This reduces LLM context pollution by returning only metadata
+/// and a path to the full data in VFS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountListSummary {
+    /// Status indicator
+    pub status: String,
+
+    /// Total number of accounts
+    pub total_count: usize,
+
+    /// Sample of first few account names for context
+    pub sample_names: Vec<String>,
+
+    /// Path to full data in VFS
+    pub details_path: String,
+
+    /// Message explaining how to access full data
+    pub message: String,
+}
+
+/// Threshold for VFS storage - if >= this many accounts, save to VFS
+const ACCOUNTS_VFS_THRESHOLD: usize = 20;
+
 /// Register account-related functions into V8 context
 pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Result<()> {
     let global = scope.get_current_context().global(scope);
@@ -80,6 +107,8 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
 }
 
 /// Callback for listAccounts() JavaScript function
+///
+/// Returns accounts inline if < 20, otherwise saves to VFS and returns summary.
 fn list_accounts_callback(
     scope: &mut v8::PinScope<'_, '_>,
     _args: v8::FunctionCallbackArguments<'_>,
@@ -96,15 +125,90 @@ fn list_accounts_callback(
         }
     };
 
-    // Serialize to JSON string
-    let json_str = match serde_json::to_string(&accounts) {
-        Ok(json) => json,
-        Err(e) => {
-            let msg =
-                v8::String::new(scope, &format!("Failed to serialize accounts: {}", e)).unwrap();
-            let error = v8::Exception::error(scope, msg);
-            scope.throw_exception(error);
-            return;
+    // Check if we should save to VFS (threshold-based)
+    let use_vfs = accounts.len() >= ACCOUNTS_VFS_THRESHOLD && get_current_vfs_id().is_some();
+
+    let json_str = if use_vfs {
+        // Save full data to VFS and return summary
+        let vfs_id = get_current_vfs_id().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let vfs_path = format!("/results/accounts_{}.json", timestamp);
+
+        // Serialize accounts to JSON for VFS storage
+        let accounts_json = match serde_json::to_string_pretty(&accounts) {
+            Ok(json) => json,
+            Err(e) => {
+                let msg = v8::String::new(scope, &format!("Failed to serialize accounts: {}", e)).unwrap();
+                let error = v8::Exception::error(scope, msg);
+                scope.throw_exception(error);
+                return;
+            }
+        };
+
+        // Write to VFS
+        let write_result = with_vfs_mut(&vfs_id, |vfs| {
+            vfs.write_file(&vfs_path, accounts_json.as_bytes())
+        });
+
+        match write_result {
+            Some(Ok(())) => {
+                debug!(
+                    "Saved {} accounts to VFS path: {}",
+                    accounts.len(),
+                    vfs_path
+                );
+            }
+            Some(Err(e)) => {
+                warn!("Failed to write accounts to VFS: {}", e);
+                // Fall back to inline return
+            }
+            None => {
+                warn!("VFS not found for id: {}", vfs_id);
+                // Fall back to inline return
+            }
+        }
+
+        // Create summary with sample names
+        let sample_names: Vec<String> = accounts
+            .iter()
+            .take(5)
+            .map(|a| a.name.clone())
+            .collect();
+
+        let summary = AccountListSummary {
+            status: "success".to_string(),
+            total_count: accounts.len(),
+            sample_names,
+            details_path: vfs_path.clone(),
+            message: format!(
+                "Found {} accounts. Full data saved to VFS. Use vfs.readJson('{}') to access.",
+                accounts.len(),
+                vfs_path
+            ),
+        };
+
+        match serde_json::to_string(&summary) {
+            Ok(json) => json,
+            Err(e) => {
+                let msg = v8::String::new(scope, &format!("Failed to serialize summary: {}", e)).unwrap();
+                let error = v8::Exception::error(scope, msg);
+                scope.throw_exception(error);
+                return;
+            }
+        }
+    } else {
+        // Return inline (small number of accounts or no VFS)
+        match serde_json::to_string(&accounts) {
+            Ok(json) => json,
+            Err(e) => {
+                let msg = v8::String::new(scope, &format!("Failed to serialize accounts: {}", e)).unwrap();
+                let error = v8::Exception::error(scope, msg);
+                scope.throw_exception(error);
+                return;
+            }
         }
     };
 
@@ -119,7 +223,7 @@ fn list_accounts_callback(
         }
     };
 
-    // Parse JSON in V8 to create JavaScript array
+    // Parse JSON in V8 to create JavaScript object/array
     let v8_value = match v8::json::parse(scope, v8_str) {
         Some(v) => v,
         None => {

@@ -7,6 +7,7 @@
 pub mod core;
 pub mod conversation;
 pub mod logging;
+pub mod vfs;
 pub mod workers;
 
 // Feature modules
@@ -38,6 +39,7 @@ pub use middleware::{
 // Re-export prompts
 pub use prompts::{
     TASK_MANAGER_PROMPT, TASK_WORKER_PROMPT, PAGE_BUILDER_PROMPT, PAGE_BUILDER_WORKER_PROMPT,
+    PAGE_BUILDER_COMMON, PAGE_BUILDER_RESULTS_PROMPT, PAGE_BUILDER_TOOL_PROMPT,
 };
 
 // Re-export skills
@@ -52,8 +54,14 @@ pub use ui::*;
 // Re-export utils
 pub use utils::*;
 
-// Re-export V8 bindings
-pub use v8_bindings::*;
+// Re-export V8 bindings (explicit exports to avoid ambiguous glob re-exports with core::types)
+pub use v8_bindings::{
+    get_api_documentation, register_bindings, set_global_aws_identity,
+    register_console, ConsoleBuffers,
+    initialize_v8_platform, is_v8_initialized,
+    ExecutionResult, RuntimeConfig, V8Runtime,
+    from_v8_value, to_v8_value,
+};
 
 // Global workspace tracking for TaskManager agents
 use std::collections::HashMap;

@@ -228,7 +228,9 @@ impl DashApp {
 
 /// Open the Pages Manager window in a new webview
     pub fn open_pages_manager_window(&self) {
-        match crate::app::webview::spawn_pages_manager_window() {
+        use super::ThemeChoice;
+        let is_dark_theme = !matches!(self.theme, ThemeChoice::Latte);
+        match crate::app::webview::spawn_pages_manager_window(is_dark_theme) {
             Ok(()) => {
                 tracing::info!("Pages Manager window spawned successfully");
             }

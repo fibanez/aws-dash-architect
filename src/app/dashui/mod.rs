@@ -92,6 +92,7 @@ pub mod menu;
 pub mod navigable_widgets;
 pub mod navigation_state;
 pub mod verification_window;
+pub mod vfs_browser_window;
 pub mod window_focus;
 pub mod window_maximize;
 pub mod window_selector;
@@ -117,6 +118,7 @@ pub use navigable_widgets::{
 };
 pub use navigation_state::NavigationState;
 pub use verification_window::VerificationWindow;
+pub use vfs_browser_window::VfsBrowserWindow;
 pub use window_focus::{
     FocusableWindow, IdentityShowParams, PositionShowParams, ProjectShowParams, SimpleShowParams,
     ThemeShowParams, WindowFocusManager,

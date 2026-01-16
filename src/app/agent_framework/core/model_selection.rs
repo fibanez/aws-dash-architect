@@ -18,10 +18,12 @@ pub enum AgentModel {
     ClaudeHaiku45,
     /// Claude Opus 4.5 - Most capable
     ClaudeOpus45,
-    /// Amazon Nova 2 Pro - intelligent reasoning model with 1M context
-    Nova2Pro,
-    /// Amazon Nova 2 Lite - fast reasoning model with 1M context
-    Nova2Lite,
+    /// Amazon Nova Pro - intelligent reasoning model with 300K context
+    NovaPro,
+    /// Amazon Nova Lite - fast reasoning model with 300K context
+    NovaLite,
+    /// Amazon Nova Micro - fastest/cheapest model with 128K context
+    NovaMicro,
 }
 
 impl AgentModel {
@@ -31,8 +33,9 @@ impl AgentModel {
             AgentModel::ClaudeSonnet45 => "Claude Sonnet 4.5",
             AgentModel::ClaudeHaiku45 => "Claude Haiku 4.5",
             AgentModel::ClaudeOpus45 => "Claude Opus 4.5",
-            AgentModel::Nova2Pro => "Amazon Nova 2 Pro",
-            AgentModel::Nova2Lite => "Amazon Nova 2 Lite",
+            AgentModel::NovaPro => "Amazon Nova Pro",
+            AgentModel::NovaLite => "Amazon Nova Lite",
+            AgentModel::NovaMicro => "Amazon Nova Micro",
         }
     }
 
@@ -42,8 +45,9 @@ impl AgentModel {
             AgentModel::ClaudeSonnet45,
             AgentModel::ClaudeHaiku45,
             AgentModel::ClaudeOpus45,
-            AgentModel::Nova2Pro,
-            AgentModel::Nova2Lite,
+            AgentModel::NovaPro,
+            AgentModel::NovaLite,
+            AgentModel::NovaMicro,
         ]
     }
 }
@@ -72,14 +76,15 @@ mod tests {
         );
         assert_eq!(AgentModel::ClaudeHaiku45.display_name(), "Claude Haiku 4.5");
         assert_eq!(AgentModel::ClaudeOpus45.display_name(), "Claude Opus 4.5");
-        assert_eq!(AgentModel::Nova2Pro.display_name(), "Amazon Nova 2 Pro");
-        assert_eq!(AgentModel::Nova2Lite.display_name(), "Amazon Nova 2 Lite");
+        assert_eq!(AgentModel::NovaPro.display_name(), "Amazon Nova Pro");
+        assert_eq!(AgentModel::NovaLite.display_name(), "Amazon Nova Lite");
+        assert_eq!(AgentModel::NovaMicro.display_name(), "Amazon Nova Micro");
     }
 
     #[test]
     fn test_all_models() {
         let models = AgentModel::all_models();
-        assert_eq!(models.len(), 5);
+        assert_eq!(models.len(), 6);
     }
 
     #[test]

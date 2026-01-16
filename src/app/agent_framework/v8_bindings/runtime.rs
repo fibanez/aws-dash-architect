@@ -269,6 +269,72 @@ impl V8Runtime {
             };
             stood::perf_checkpoint!("awsdash.v8.run.end");
 
+            // If result is a Promise, resolve it
+            // This handles async IIFE patterns like: (async () => { ... return value; })()
+            stood::perf_checkpoint!("awsdash.v8.promise_check.start");
+            let result = if result.is_promise() {
+                let promise = v8::Local::<v8::Promise>::try_from(result)
+                    .expect("is_promise() returned true but cast failed");
+
+                // Run microtask queue to resolve the promise
+                // This is necessary because async functions schedule their resolution as microtasks
+                scope.perform_microtask_checkpoint();
+
+                match promise.state() {
+                    v8::PromiseState::Fulfilled => {
+                        // Promise resolved successfully - get the resolved value
+                        promise.result(scope)
+                    }
+                    v8::PromiseState::Rejected => {
+                        // Promise was rejected - extract error and return failure
+                        let (stdout, mut stderr) = if let Some(ref buffers) = console_buffers {
+                            (buffers.get_stdout(), buffers.get_stderr())
+                        } else {
+                            (String::new(), String::new())
+                        };
+
+                        let rejection = promise.result(scope);
+                        let rejection_str = rejection.to_string(scope).unwrap();
+                        let rejection_msg = rejection_str.to_rust_string_lossy(scope);
+                        stderr.push_str(&format!("Promise rejected: {}", rejection_msg));
+
+                        return Ok(ExecutionResult {
+                            success: false,
+                            result: None,
+                            stdout,
+                            stderr,
+                            execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        });
+                    }
+                    v8::PromiseState::Pending => {
+                        // Promise is still pending after microtask checkpoint
+                        // This shouldn't happen with synchronous bindings, but handle gracefully
+                        let (stdout, mut stderr) = if let Some(ref buffers) = console_buffers {
+                            (buffers.get_stdout(), buffers.get_stderr())
+                        } else {
+                            (String::new(), String::new())
+                        };
+
+                        stderr.push_str(
+                            "Promise did not resolve - async operations without corresponding \
+                             synchronous bindings are not supported",
+                        );
+
+                        return Ok(ExecutionResult {
+                            success: false,
+                            result: None,
+                            stdout,
+                            stderr,
+                            execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        });
+                    }
+                }
+            } else {
+                // Not a promise - use the result directly
+                result
+            };
+            stood::perf_checkpoint!("awsdash.v8.promise_check.end");
+
             // Extract result as JSON using v8::json::stringify
             // This properly serializes JavaScript objects/arrays as JSON
             // instead of using JavaScript's toString() which gives "[object Object]"
@@ -831,5 +897,117 @@ accounts;
         println!("  stdout: {}", result4.stdout);
         println!("  stderr: {}", result4.stderr);
         assert!(result4.success);
+    }
+
+    // Promise resolution tests
+
+    #[test]
+    fn test_async_iife_promise_resolution() {
+        // Test that async IIFE returns resolved value, not {}
+        let _ = initialize_v8_platform();
+        let runtime = V8Runtime::new();
+
+        let code = r#"
+            (async () => {
+                const x = 10;
+                const y = 20;
+                return { sum: x + y, product: x * y };
+            })()
+        "#;
+
+        let result = runtime.execute(code).unwrap();
+
+        assert!(result.success, "Async IIFE should succeed");
+        let result_str = result.result.unwrap();
+        assert!(
+            result_str.contains("\"sum\":30"),
+            "Should contain sum:30, got: {}",
+            result_str
+        );
+        assert!(
+            result_str.contains("\"product\":200"),
+            "Should contain product:200, got: {}",
+            result_str
+        );
+    }
+
+    #[test]
+    fn test_async_iife_with_await() {
+        // Test async IIFE with await on synchronous value (common pattern)
+        let _ = initialize_v8_platform();
+        let runtime = V8Runtime::new();
+
+        let code = r#"
+            (async () => {
+                const data = await Promise.resolve({ count: 42 });
+                console.log("Got data:", data.count);
+                return { result: data.count * 2 };
+            })()
+        "#;
+
+        let result = runtime.execute(code).unwrap();
+
+        assert!(result.success, "Async IIFE with await should succeed");
+        let result_str = result.result.unwrap();
+        assert!(
+            result_str.contains("\"result\":84"),
+            "Should contain result:84, got: {}",
+            result_str
+        );
+        assert!(
+            result.stdout.contains("Got data: 42"),
+            "Console output should be captured, got: {}",
+            result.stdout
+        );
+    }
+
+    #[test]
+    fn test_async_iife_rejected_promise() {
+        // Test that rejected promises are properly handled
+        let _ = initialize_v8_platform();
+        let runtime = V8Runtime::new();
+
+        let code = r#"
+            (async () => {
+                throw new Error("Intentional test error");
+            })()
+        "#;
+
+        let result = runtime.execute(code).unwrap();
+
+        assert!(!result.success, "Rejected promise should fail");
+        assert!(
+            result.stderr.contains("Promise rejected"),
+            "Should indicate promise rejection, got: {}",
+            result.stderr
+        );
+        assert!(
+            result.stderr.contains("Intentional test error"),
+            "Should contain error message, got: {}",
+            result.stderr
+        );
+    }
+
+    #[test]
+    fn test_non_async_code_still_works() {
+        // Ensure non-async code still works as before
+        let _ = initialize_v8_platform();
+        let runtime = V8Runtime::new();
+
+        let code = r#"
+            const x = [1, 2, 3];
+            const sum = x.reduce((a, b) => a + b, 0);
+            ({ values: x, sum: sum })
+        "#;
+
+        let result = runtime.execute(code).unwrap();
+
+        assert!(result.success, "Non-async code should succeed");
+        let result_str = result.result.unwrap();
+        assert!(
+            result_str.contains("\"sum\":6"),
+            "Should contain sum:6, got: {}",
+            result_str
+        );
     }
 }

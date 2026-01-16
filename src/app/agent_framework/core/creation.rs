@@ -98,6 +98,8 @@ pub enum AgentCreationRequest {
         expected_output_format: Option<String>,
         /// Parent agent ID (the task-manager spawning this worker)
         parent_id: AgentId,
+        /// VFS ID inherited from parent TaskManager
+        vfs_id: Option<String>,
     },
     /// Request to create a ToolBuilderWorker agent
     ToolBuilderWorker {
@@ -113,6 +115,10 @@ pub enum AgentCreationRequest {
         resource_context: Option<String>,
         /// Parent agent ID (the task-manager spawning this worker)
         parent_id: AgentId,
+        /// VFS ID inherited from parent TaskManager
+        vfs_id: Option<String>,
+        /// Whether this is a persistent page (saved to disk) or temporary (VFS results display)
+        is_persistent: bool,
     },
 }
 
@@ -186,6 +192,22 @@ impl AgentCreationRequest {
             }
         }
     }
+
+    /// Get the VFS ID inherited from parent TaskManager
+    pub fn vfs_id(&self) -> Option<&str> {
+        match self {
+            AgentCreationRequest::TaskWorker { vfs_id, .. } => vfs_id.as_deref(),
+            AgentCreationRequest::ToolBuilderWorker { vfs_id, .. } => vfs_id.as_deref(),
+        }
+    }
+
+    /// Get whether this is a persistent page (ToolBuilderWorker only)
+    pub fn is_persistent(&self) -> Option<bool> {
+        match self {
+            AgentCreationRequest::TaskWorker { .. } => None,
+            AgentCreationRequest::ToolBuilderWorker { is_persistent, .. } => Some(*is_persistent),
+        }
+    }
 }
 
 /// Response to agent creation request
@@ -211,6 +233,7 @@ impl AgentCreationRequest {
         task_description: String,
         expected_output_format: Option<String>,
         parent_id: AgentId,
+        vfs_id: Option<String>,
     ) -> (Self, Receiver<AgentCreationResponse>) {
         let request_id = next_request_id();
 
@@ -224,6 +247,7 @@ impl AgentCreationRequest {
             task_description,
             expected_output_format,
             parent_id,
+            vfs_id,
         };
 
         (request, response_receiver)
@@ -236,6 +260,8 @@ impl AgentCreationRequest {
         task_description: String,
         resource_context: Option<String>,
         parent_id: AgentId,
+        vfs_id: Option<String>,
+        is_persistent: bool,
     ) -> (Self, Receiver<AgentCreationResponse>) {
         let request_id = next_request_id();
 
@@ -250,6 +276,8 @@ impl AgentCreationRequest {
             task_description,
             resource_context,
             parent_id,
+            vfs_id,
+            is_persistent,
         };
 
         (request, response_receiver)
@@ -297,6 +325,7 @@ pub fn request_agent_creation(
     task_description: String,
     expected_output_format: Option<String>,
     parent_id: AgentId,
+    vfs_id: Option<String>,
 ) -> Result<AgentId, String> {
     stood::perf_checkpoint!(
         "awsdash.request_agent_creation.start",
@@ -309,6 +338,7 @@ pub fn request_agent_creation(
         task_description,
         expected_output_format,
         parent_id,
+        vfs_id,
     );
 
     // Send the request
@@ -360,6 +390,8 @@ pub fn request_agent_creation(
 /// - `resource_context`: Optional resource context
 /// - `parent_id`: Parent agent ID
 /// - `reuse_existing`: If true, use the workspace name as-is (for editing existing pages)
+/// - `vfs_id`: VFS ID inherited from parent TaskManager
+/// - `is_persistent`: If true, build reusable tool (disk); if false, display results (VFS)
 pub fn request_page_builder_creation(
     suggested_workspace: String,
     concise_description: String,
@@ -367,6 +399,8 @@ pub fn request_page_builder_creation(
     resource_context: Option<String>,
     parent_id: AgentId,
     reuse_existing: bool,
+    vfs_id: Option<String>,
+    is_persistent: bool,
 ) -> Result<(AgentId, String), String> {
     use crate::app::agent_framework::utils::sanitize_workspace_name;
 
@@ -380,7 +414,7 @@ pub fn request_page_builder_creation(
     let _creation_guard = stood::perf_guard!("awsdash.request_page_builder_creation");
 
     // Get workspace name - either sanitize for new, or use as-is for existing
-    let workspace_name = if reuse_existing {
+    let page_id = if reuse_existing {
         // For editing existing pages, use the name directly (already validated by caller)
         stood::perf_checkpoint!(
             "awsdash.request_page_builder_creation.reuse_existing",
@@ -396,28 +430,61 @@ pub fn request_page_builder_creation(
         .map_err(|e| format!("Failed to sanitize workspace name: {}", e))?
     };
 
-    // Workspace directory handling
-    stood::perf_checkpoint!(
-        "awsdash.request_page_builder_creation.workspace_dir",
-        &format!("workspace={}, reuse_existing={}", workspace_name, reuse_existing)
-    );
-    let workspace_path = dirs::data_local_dir()
-        .ok_or_else(|| "Failed to get local data directory".to_string())?
-        .join("awsdash/pages")
-        .join(&workspace_name);
+    // Determine if this is a VFS-backed page (non-persistent with VFS available)
+    let use_vfs = !is_persistent && vfs_id.is_some();
 
-    if reuse_existing {
-        // Verify the workspace exists when reusing
-        if !workspace_path.exists() {
-            return Err(format!(
-                "Cannot edit page '{}': workspace directory not found",
-                workspace_name
-            ));
-        }
+    // Workspace name format:
+    // - VFS-backed: "vfs:{vfs_id}:{page_id}" (e.g., "vfs:abc123:lambda-results")
+    // - Disk-backed: "{page_id}" (e.g., "lambda-dashboard")
+    let workspace_name = if use_vfs {
+        let vfs_ref = vfs_id.as_ref().unwrap();
+        format!("vfs:{}:{}", vfs_ref, page_id)
     } else {
-        // Create workspace directory for new pages
-        std::fs::create_dir_all(&workspace_path)
-            .map_err(|e| format!("Failed to create workspace directory: {}", e))?;
+        page_id.clone()
+    };
+
+    stood::perf_checkpoint!(
+        "awsdash.request_page_builder_creation.workspace_setup",
+        &format!("workspace={}, use_vfs={}, is_persistent={}", workspace_name, use_vfs, is_persistent)
+    );
+
+    // Workspace directory handling - VFS vs disk
+    if use_vfs {
+        // For VFS-backed pages, create directory in VFS
+        let vfs_ref = vfs_id.as_ref().unwrap();
+        let vfs_page_dir = format!("/pages/{}", page_id);
+
+        tracing::info!(
+            target: "agent::page_builder_creation",
+            "Creating VFS-backed page: workspace={}, vfs_path={}",
+            workspace_name, vfs_page_dir
+        );
+
+        // Create VFS directory using registry (needs mutable access)
+        crate::app::agent_framework::vfs::registry::with_vfs_mut(vfs_ref, |vfs| {
+            vfs.mkdir(&vfs_page_dir)
+        }).ok_or_else(|| format!("VFS not found: {}", vfs_ref))?
+          .map_err(|e| format!("Failed to create VFS directory: {}", e))?;
+    } else {
+        // For disk-backed pages, create directory on disk
+        let workspace_path = dirs::data_local_dir()
+            .ok_or_else(|| "Failed to get local data directory".to_string())?
+            .join("awsdash/pages")
+            .join(&page_id);
+
+        if reuse_existing {
+            // Verify the workspace exists when reusing
+            if !workspace_path.exists() {
+                return Err(format!(
+                    "Cannot edit page '{}': workspace directory not found",
+                    page_id
+                ));
+            }
+        } else {
+            // Create workspace directory for new pages
+            std::fs::create_dir_all(&workspace_path)
+                .map_err(|e| format!("Failed to create workspace directory: {}", e))?;
+        }
     }
 
     // Create request
@@ -427,6 +494,8 @@ pub fn request_page_builder_creation(
         task_description,
         resource_context,
         parent_id,
+        vfs_id,
+        is_persistent,
     );
 
     // Send the request
@@ -485,6 +554,7 @@ mod tests {
             "Test task".to_string(),
             Some("JSON".to_string()),
             parent_id,
+            Some("test-vfs-id".to_string()),
         );
 
         assert!(request.request_id() > 0);
@@ -492,6 +562,7 @@ mod tests {
         assert_eq!(request.task_description(), "Test task");
         assert_eq!(request.expected_output_format(), Some("JSON"));
         assert_eq!(request.parent_id(), parent_id);
+        assert_eq!(request.vfs_id(), Some("test-vfs-id"));
     }
 
     #[test]
@@ -521,7 +592,7 @@ mod tests {
 
         let parent_id = AgentId::new();
         let (request, _resp_receiver) =
-            AgentCreationRequest::new("Testing".to_string(), "Test".to_string(), None, parent_id);
+            AgentCreationRequest::new("Testing".to_string(), "Test".to_string(), None, parent_id, None);
 
         sender.send(request.clone()).unwrap();
         let received = receiver.lock().unwrap().try_recv().unwrap();

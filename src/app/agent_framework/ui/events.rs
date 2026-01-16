@@ -26,7 +26,6 @@ use std::time::Instant;
 use crate::app::agent_framework::core::instance::AgentInstance;
 use crate::app::agent_framework::conversation::{ConversationMessage, ConversationRole};
 use crate::app::agent_framework::status_display::ProcessingStatusWidget;
-use crate::perf_checkpoint;
 
 /// Status of a tool call within a worker
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,21 +90,6 @@ pub struct InlineWorkerDisplay {
     pub workspace_name: Option<String>,
 }
 
-/// Format token count with K/M suffixes for readability
-///
-/// - Under 1000: "234" (no suffix)
-/// - 1K to 999K: "1.2K", "45.6K" (one decimal)
-/// - 1M+: "1.2M", "0.8M" (one decimal)
-fn format_tokens(tokens: u32) -> String {
-    if tokens >= 1_000_000 {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
-        tokens.to_string()
-    }
-}
-
 /// Check if content appears to be markdown
 ///
 /// Uses simple heuristics - looks for common markdown patterns:
@@ -141,8 +125,9 @@ fn looks_like_markdown(content: &str) -> bool {
 /// Parameters:
 /// - `inline_workers`: Optional map of message_index -> workers to display inline after each message
 ///
-/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked, worker_log_clicked)`
+/// Returns: `(should_send, log_clicked, clear_clicked, terminate_clicked, stop_clicked, worker_log_clicked, vfs_clicked)`
 /// where `worker_log_clicked` is the log path if a worker's log button was clicked
+/// and `vfs_clicked` is true if the VFS button was clicked
 pub fn render_agent_chat(
     ui: &mut Ui,
     agent: &mut AgentInstance,
@@ -150,7 +135,7 @@ pub fn render_agent_chat(
     markdown_cache: &mut CommonMarkCache,
     status_widget: &mut ProcessingStatusWidget,
     inline_workers: Option<&HashMap<usize, Vec<InlineWorkerDisplay>>>,
-) -> (bool, bool, bool, bool, bool, Option<PathBuf>) {
+) -> (bool, bool, bool, bool, bool, Option<PathBuf>, bool) {
     // Collect data before rendering to avoid holding locks during UI rendering
     let is_processing = agent.is_processing();
     let can_cancel = agent.can_cancel();
@@ -289,13 +274,28 @@ pub fn render_agent_chat(
     // Controls section
     ui.add_space(10.0);
 
+    // Check if agent has VFS
+    let has_vfs = agent.vfs_id().is_some();
+
     // Action buttons
-    let (log_clicked, clear_clicked, terminate_clicked, stop_clicked) = ui
+    let (log_clicked, clear_clicked, terminate_clicked, stop_clicked, vfs_clicked) = ui
         .horizontal(|ui| {
             // Stop button - only enabled when processing and cancellation is available
             let stop_enabled = is_processing && can_cancel;
             let stop_clicked = ui
                 .add_enabled(stop_enabled, egui::Button::new("Stop"))
+                .clicked();
+
+            ui.separator();
+
+            // VFS button - only enabled when agent has a VFS
+            let vfs_clicked = ui
+                .add_enabled(has_vfs, egui::Button::new("VFS"))
+                .on_hover_text(if has_vfs {
+                    "Browse agent's Virtual File System"
+                } else {
+                    "No VFS available for this agent"
+                })
                 .clicked();
 
             ui.separator();
@@ -313,7 +313,7 @@ pub fn render_agent_chat(
             // Terminate button
             let terminate_clicked = ui.button("Terminate Agent").clicked();
 
-            (log_clicked, clear_clicked, terminate_clicked, stop_clicked)
+            (log_clicked, clear_clicked, terminate_clicked, stop_clicked, vfs_clicked)
         })
         .inner;
 
@@ -324,6 +324,7 @@ pub fn render_agent_chat(
         terminate_clicked,
         stop_clicked,
         worker_log_clicked,
+        vfs_clicked,
     )
 }
 
@@ -333,21 +334,11 @@ pub fn render_agent_chat(
 fn render_inline_workers(ui: &mut Ui, workers: &[InlineWorkerDisplay]) -> Option<WorkerActionRequest> {
     let mut action_request: Option<WorkerActionRequest> = None;
 
-    perf_checkpoint!(
-        "ui.render_workers",
-        &format!("count={}", workers.len())
-    );
-
     // Reduce spacing between workers for single-spaced appearance
     let original_spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 2.0;
 
     for worker in workers {
-        perf_checkpoint!(
-            "ui.render_worker",
-            &format!("desc={} calls={} running={}",
-                worker.short_description, worker.tool_calls.len(), worker.is_running)
-        );
         // Worker header with short description and action buttons
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("  {}", worker.short_description)).strong());
@@ -392,13 +383,6 @@ fn render_inline_workers(ui: &mut Ui, workers: &[InlineWorkerDisplay]) -> Option
                                 ToolCallStatus::Failed(_) => "[FAIL]",
                             };
 
-                            // Token string for this call
-                            let tokens_str = if let Some(t) = tool_call.tokens {
-                                format!(" ({})", format_tokens(t))
-                            } else {
-                                String::new()
-                            };
-
                             // Choose color based on status
                             let color = match &tool_call.status {
                                 ToolCallStatus::Running => egui::Color32::GRAY,
@@ -406,9 +390,9 @@ fn render_inline_workers(ui: &mut Ui, workers: &[InlineWorkerDisplay]) -> Option
                                 ToolCallStatus::Failed(_) => egui::Color32::from_rgb(180, 100, 100),
                             };
 
-                            // Render: "    [done] Creating HTML structure (5.1K)"
+                            // Render: "    [done] Creating HTML structure"
                             // Custom rendering without label padding for compact display
-                            let text = format!("{} {}{}", status_icon, tool_call.intent, tokens_str);
+                            let text = format!("{} {}", status_icon, tool_call.intent);
                             let font_id = egui::FontId::proportional(10.0); // small size
                             let galley = ui.fonts(|f| f.layout_no_wrap(text, font_id.clone(), color));
 
@@ -423,21 +407,6 @@ fn render_inline_workers(ui: &mut Ui, workers: &[InlineWorkerDisplay]) -> Option
                         });
                     }
                 });
-
-            // Total tokens summary
-            ui.horizontal(|ui| {
-                ui.add_space(20.0);
-                let total: u32 = worker
-                    .tool_calls
-                    .iter()
-                    .filter_map(|c| c.tokens)
-                    .sum();
-                ui.label(
-                    RichText::new(format!("Total: {}", format_tokens(total)))
-                        .weak()
-                        .small(),
-                );
-            });
         }
     }
 
@@ -497,34 +466,5 @@ mod tests {
 
         let assistant_msg = ConversationMessage::assistant("Hi there!");
         assert_eq!(assistant_msg.role, ConversationRole::Assistant);
-    }
-
-    #[test]
-    fn test_format_tokens_under_thousand() {
-        // Under 1000: no suffix
-        assert_eq!(format_tokens(0), "0");
-        assert_eq!(format_tokens(1), "1");
-        assert_eq!(format_tokens(234), "234");
-        assert_eq!(format_tokens(999), "999");
-    }
-
-    #[test]
-    fn test_format_tokens_thousands() {
-        // 1K to 999K: one decimal with K suffix
-        assert_eq!(format_tokens(1000), "1.0K");
-        assert_eq!(format_tokens(1200), "1.2K");
-        assert_eq!(format_tokens(1234), "1.2K"); // rounds down
-        assert_eq!(format_tokens(45600), "45.6K");
-        assert_eq!(format_tokens(100000), "100.0K");
-        assert_eq!(format_tokens(999999), "1000.0K"); // edge case near million
-    }
-
-    #[test]
-    fn test_format_tokens_millions() {
-        // 1M+: one decimal with M suffix
-        assert_eq!(format_tokens(1_000_000), "1.0M");
-        assert_eq!(format_tokens(1_200_000), "1.2M");
-        assert_eq!(format_tokens(45_600_000), "45.6M");
-        assert_eq!(format_tokens(100_000_000), "100.0M");
     }
 }

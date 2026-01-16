@@ -2,19 +2,25 @@
 //!
 //! This tool allows Page Builder agents to delete files from their workspace.
 //! All file paths are validated to prevent directory traversal attacks.
+//! Supports both disk-based and VFS-based workspaces.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use stood::tools::{Tool, ToolError, ToolResult};
 
+use super::workspace::WorkspaceType;
+
 /// Tool for deleting files from the Page Builder workspace
 #[derive(Debug, Clone)]
 pub struct DeleteFileTool {
+    workspace: WorkspaceType,
+    /// Keep for backwards compatibility with tests
+    #[allow(dead_code)]
     workspace_root: PathBuf,
 }
 
@@ -31,30 +37,25 @@ struct DeleteFileResult {
 }
 
 impl DeleteFileTool {
+    /// Create a new DeleteFileTool for the specified page workspace
+    ///
+    /// # Arguments
+    /// * `page_name` - Name of the page, or VFS pattern `vfs:{vfs_id}:{page_id}`
     pub fn new(page_name: &str) -> Result<Self> {
-        let workspace_root = dirs::data_local_dir()
-            .context("Failed to get local data directory")?
-            .join("awsdash/pages")
-            .join(page_name);
+        let workspace = WorkspaceType::from_workspace_name(page_name)?;
 
-        std::fs::create_dir_all(&workspace_root)
-            .with_context(|| format!("Failed to create workspace directory: {:?}", workspace_root))?;
+        // Extract path for backwards compatibility
+        let workspace_root = match &workspace {
+            WorkspaceType::Disk { path } => path.clone(),
+            WorkspaceType::Vfs { page_id, .. } => {
+                PathBuf::from(format!("/vfs/pages/{}", page_id))
+            }
+        };
 
-        Ok(Self { workspace_root })
-    }
-
-    fn validate_path(&self, relative_path: &str) -> Result<PathBuf> {
-        if relative_path.contains("..") || relative_path.starts_with('/') {
-            anyhow::bail!("Invalid path: directory traversal not allowed");
-        }
-
-        let full_path = self.workspace_root.join(relative_path);
-
-        if !full_path.starts_with(&self.workspace_root) {
-            anyhow::bail!("Path outside workspace");
-        }
-
-        Ok(full_path)
+        Ok(Self {
+            workspace,
+            workspace_root,
+        })
     }
 }
 
@@ -95,28 +96,47 @@ impl Tool for DeleteFileTool {
                 message: format!("Invalid parameters: {}", e),
             })?;
 
-        let full_path = match self.validate_path(&params.path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Invalid path: {}", e)));
+        // Validate path
+        if let Err(e) = self.workspace.validate_path(&params.path) {
+            return Ok(ToolResult::error(format!("Invalid path: {}", e)));
+        }
+
+        // Check if file exists
+        match self.workspace.exists(&params.path) {
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "File not found: {}",
+                    params.path
+                )));
             }
-        };
-
-        if !full_path.exists() {
-            return Ok(ToolResult::error(format!(
-                "File not found: {}",
-                params.path
-            )));
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to check file existence: {}",
+                    e
+                )));
+            }
+            Ok(true) => {}
         }
 
-        if !full_path.is_file() {
-            return Ok(ToolResult::error(format!(
-                "Path is not a file: {}",
-                params.path
-            )));
+        // Check if it's a file (not a directory)
+        match self.workspace.is_file(&params.path) {
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Path is not a file: {}",
+                    params.path
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to check file type: {}",
+                    e
+                )));
+            }
+            Ok(true) => {}
         }
 
-        match std::fs::remove_file(&full_path) {
+        // Delete file using workspace abstraction
+        match self.workspace.delete_file(&params.path) {
             Ok(_) => {
                 let result = DeleteFileResult {
                     path: params.path,

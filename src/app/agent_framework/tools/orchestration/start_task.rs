@@ -10,7 +10,7 @@
 //! The parent agent ID is retrieved from thread-local storage.
 
 use crate::app::agent_framework::{
-    get_current_agent_id, request_agent_creation, wait_for_worker_completion,
+    get_current_agent_id, get_current_vfs_id, request_agent_creation, wait_for_worker_completion,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -172,6 +172,9 @@ impl Tool for StartTaskTool {
             input.expected_output_format
         );
 
+        // Get VFS ID from parent (if TaskManager)
+        let vfs_id = get_current_vfs_id();
+
         // Request agent creation via channel
         stood::perf_checkpoint!(
             "awsdash.start_task.request_creation.start",
@@ -183,6 +186,7 @@ impl Tool for StartTaskTool {
                 input.task_description.clone(),
                 input.expected_output_format.clone(),
                 parent_id,
+                vfs_id,
             )
         })
         .map_err(|e| ToolError::InvalidParameters {

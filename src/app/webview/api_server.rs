@@ -28,10 +28,10 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -100,6 +100,9 @@ impl ApiServer {
         // Build router with all endpoints
         let app = Router::new()
             .route("/api/command", post(handle_api_request))
+            // VFS file serving endpoint for webview subprocess to fetch VFS files
+            // Pattern: /vfs/{vfs_id}/pages/{page_id}/{file_path}
+            .route("/vfs/:vfs_id/pages/:page_id/*file_path", get(handle_vfs_file))
             .with_state(state)
             .layer(cors);
 
@@ -348,5 +351,75 @@ async fn execute_command(
         }
 
         _ => Err(anyhow::anyhow!("Unknown command: {}", cmd)),
+    }
+}
+
+/// Handle VFS file requests from webview subprocess
+///
+/// This endpoint allows the webview subprocess (which can't access main process VFS)
+/// to fetch VFS files via HTTP. The subprocess custom protocol handler proxies
+/// VFS URLs to this endpoint.
+///
+/// Route: GET /vfs/{vfs_id}/pages/{page_id}/{file_path}
+async fn handle_vfs_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((vfs_id, page_id, file_path)): Path<(String, String, String)>,
+) -> Response {
+    // Validate API token
+    if !validate_token(&headers, &state.api_token) {
+        warn!("⚠️ Unauthorized VFS request: invalid token");
+        return (StatusCode::FORBIDDEN, "Invalid API token").into_response();
+    }
+
+    let vfs_path = format!("/pages/{}/{}", page_id, file_path);
+    info!("📂 VFS file request: vfs_id={}, path={}", vfs_id, vfs_path);
+
+    // Read from VFS registry
+    use crate::app::agent_framework::vfs::registry::with_vfs;
+
+    let content = with_vfs(&vfs_id, |vfs| vfs.read_file(&vfs_path).map(|c| c.to_vec()));
+
+    match content {
+        Some(Ok(bytes)) => {
+            // Determine content type from file extension
+            let content_type = match file_path.rsplit('.').next() {
+                Some("html") => "text/html",
+                Some("js") => "application/javascript",
+                Some("css") => "text/css",
+                Some("json") => "application/json",
+                Some("png") => "image/png",
+                Some("jpg") | Some("jpeg") => "image/jpeg",
+                Some("gif") => "image/gif",
+                Some("svg") => "image/svg+xml",
+                _ => "application/octet-stream",
+            };
+
+            info!(
+                "✅ VFS file served: {} ({} bytes, type: {})",
+                vfs_path,
+                bytes.len(),
+                content_type
+            );
+
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", content_type)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(axum::body::Body::from(bytes))
+                .unwrap()
+        }
+        Some(Err(e)) => {
+            warn!("❌ VFS file not found: {} - {}", vfs_path, e);
+            (StatusCode::NOT_FOUND, format!("File not found: {}", vfs_path)).into_response()
+        }
+        None => {
+            warn!("❌ VFS not found: {}", vfs_id);
+            (
+                StatusCode::NOT_FOUND,
+                format!("VFS not found: {}. Agent session may have ended.", vfs_id),
+            )
+                .into_response()
+        }
     }
 }

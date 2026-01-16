@@ -308,6 +308,11 @@
      * Returns actual resource objects from cache for filtering/analysis.
      * Call loadCache first to populate the cache.
      *
+     * NOTE: This API returns FULL results (all matching resources). When called from
+     * the webview (dashApp API), you receive complete data including all resources.
+     * This is different from execute_javascript in agent context, which returns
+     * optimized summaries for context efficiency with full data saved to VFS.
+     *
      * @param {object} options - Query options
      * @param {string[]} [options.accounts] - Account IDs (null = all cached)
      * @param {string[]} [options.regions] - Region codes (null = all cached)

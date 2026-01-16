@@ -93,6 +93,10 @@ pub enum AgentType {
         parent_id: AgentId,
         /// Workspace name (sanitized, kebab-case)
         workspace_name: String,
+        /// Whether this is a persistent page (saved to disk) or temporary (VFS-backed)
+        /// - false: Results display page (focus on VFS data, temporary)
+        /// - true: Reusable tool page (queries AWS live, persistent)
+        is_persistent: bool,
     },
 }
 
@@ -147,6 +151,16 @@ impl AgentType {
     pub fn workspace_name(&self) -> Option<&str> {
         match self {
             AgentType::PageBuilderWorker { workspace_name, .. } => Some(workspace_name),
+            _ => None,
+        }
+    }
+
+    /// Get whether this is a persistent page (if page-builder-worker)
+    ///
+    /// Returns `None` for other agent types
+    pub fn is_persistent(&self) -> Option<bool> {
+        match self {
+            AgentType::PageBuilderWorker { is_persistent, .. } => Some(*is_persistent),
             _ => None,
         }
     }
@@ -326,12 +340,14 @@ mod tests {
         let agent_type = AgentType::PageBuilderWorker {
             parent_id,
             workspace_name: "my-tool".to_string(),
+            is_persistent: false,
         };
 
         match agent_type {
-            AgentType::PageBuilderWorker { parent_id: id, workspace_name } => {
+            AgentType::PageBuilderWorker { parent_id: id, workspace_name, is_persistent } => {
                 assert_eq!(id, parent_id);
                 assert_eq!(workspace_name, "my-tool");
+                assert!(!is_persistent);
             }
             _ => panic!("Expected PageBuilderWorker variant"),
         }
@@ -343,6 +359,7 @@ mod tests {
         let page_builder_worker = AgentType::PageBuilderWorker {
             parent_id,
             workspace_name: "test-workspace".to_string(),
+            is_persistent: false,
         };
 
         assert_eq!(page_builder_worker.parent_id(), Some(parent_id));
@@ -355,13 +372,15 @@ mod tests {
         let page_builder_worker = AgentType::PageBuilderWorker {
             parent_id,
             workspace_name: "s3-bucket-explorer".to_string(),
+            is_persistent: true,
         };
 
         assert_eq!(page_builder_worker.workspace_name(), Some("s3-bucket-explorer"));
+        assert_eq!(page_builder_worker.is_persistent(), Some(true));
 
         // Other agent types should return None
         assert_eq!(AgentType::TaskManager.workspace_name(), None);
-        assert_eq!(AgentType::PageBuilder.workspace_name(), None);
+        assert_eq!(AgentType::TaskManager.is_persistent(), None);
         assert_eq!(
             AgentType::TaskWorker { parent_id }.workspace_name(),
             None
@@ -374,6 +393,7 @@ mod tests {
         let worker = AgentType::PageBuilderWorker {
             parent_id,
             workspace_name: "vpc-viewer".to_string(),
+            is_persistent: false,
         };
         assert_eq!(worker.to_string(), "Page Builder Worker");
         assert_eq!(worker.display_name(), "Page Builder Worker");

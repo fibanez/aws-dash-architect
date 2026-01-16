@@ -6,8 +6,9 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info, warn};
 
+use crate::app::agent_framework::vfs::{get_current_vfs_id, with_vfs_mut};
 use crate::app::data_plane::cloudwatch_logs::{CloudWatchLogsClient, QueryOptions};
 
 /// JavaScript function call arguments for queryCloudWatchLogEvents()
@@ -77,8 +78,9 @@ pub struct QueryStatisticsInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudWatchLogsQueryResult {
-    /// Log events returned by the query
-    pub events: Vec<LogEventInfo>,
+    /// Log events returned by the query (None when saved to VFS)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<LogEventInfo>>,
 
     /// Token for pagination (if more results available)
     pub next_token: Option<String>,
@@ -88,6 +90,18 @@ pub struct CloudWatchLogsQueryResult {
 
     /// Query statistics
     pub statistics: QueryStatisticsInfo,
+
+    /// Path to full events in VFS (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details_path: Option<String>,
+
+    /// Sample of log messages for context (when VFS is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_messages: Option<Vec<String>>,
+
+    /// Message explaining how to access full data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Register CloudWatch Logs functions into V8 context
@@ -106,6 +120,8 @@ pub fn register(scope: &mut v8::ContextScope<'_, '_, v8::HandleScope<'_>>) -> Re
 }
 
 /// Callback for queryCloudWatchLogEvents() JavaScript function
+///
+/// When VFS is available, saves log events to VFS and returns summary.
 fn query_cloudwatch_log_events_callback(
     scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments<'_>,
@@ -149,7 +165,7 @@ fn query_cloudwatch_log_events_callback(
     };
 
     // Execute async query
-    let result = match execute_query(query_args) {
+    let mut result = match execute_query(query_args) {
         Ok(result) => result,
         Err(e) => {
             let msg =
@@ -159,6 +175,77 @@ fn query_cloudwatch_log_events_callback(
             return;
         }
     };
+
+    // If VFS is available and we have events, save to VFS and return summary
+    if let Some(vfs_id) = get_current_vfs_id() {
+        if let Some(ref events) = result.events {
+            if !events.is_empty() {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let vfs_path = format!("/results/cloudwatch_logs_{}.json", timestamp);
+
+                // Serialize events to JSON for VFS storage
+                let events_json = match serde_json::to_string_pretty(events) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!("Failed to serialize CloudWatch events for VFS: {}", e);
+                        String::new()
+                    }
+                };
+
+                if !events_json.is_empty() {
+                    // Write to VFS
+                    let write_result = with_vfs_mut(&vfs_id, |vfs| {
+                        vfs.write_file(&vfs_path, events_json.as_bytes())
+                    });
+
+                    match write_result {
+                        Some(Ok(())) => {
+                            debug!(
+                                "Saved {} CloudWatch log events to VFS path: {}",
+                                events.len(),
+                                vfs_path
+                            );
+
+                            // Extract sample messages for context (first 3, truncated)
+                            let sample_messages: Vec<String> = events
+                                .iter()
+                                .take(3)
+                                .map(|e| {
+                                    let msg = &e.message;
+                                    if msg.len() > 100 {
+                                        format!("{}...", &msg[..100])
+                                    } else {
+                                        msg.clone()
+                                    }
+                                })
+                                .collect();
+
+                            // Update result: remove inline events, add VFS path
+                            result.events = None;
+                            result.details_path = Some(vfs_path.clone());
+                            result.sample_messages = Some(sample_messages);
+                            result.message = Some(format!(
+                                "Found {} log events. Full data saved to VFS. Use vfs.readJson('{}') to access.",
+                                result.total_events,
+                                vfs_path
+                            ));
+                        }
+                        Some(Err(e)) => {
+                            warn!("Failed to write CloudWatch events to VFS: {}", e);
+                            // Fall back to inline return
+                        }
+                        None => {
+                            warn!("VFS not found for id: {}", vfs_id);
+                            // Fall back to inline return
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Serialize result to JSON
     let result_json = match serde_json::to_string(&result) {
@@ -275,10 +362,13 @@ pub async fn query_cloudwatch_logs_internal(
     };
 
     Ok(CloudWatchLogsQueryResult {
-        events,
+        events: Some(events),
         next_token: result.next_token,
         total_events: result.total_events,
         statistics,
+        details_path: None,
+        sample_messages: None,
+        message: None,
     })
 }
 

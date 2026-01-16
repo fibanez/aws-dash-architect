@@ -11,7 +11,7 @@
 //! with an existing workspace name. The worker reads existing files and makes changes.
 
 use crate::app::agent_framework::{
-    get_current_agent_id, request_page_builder_creation, wait_for_worker_completion,
+    get_current_agent_id, get_current_vfs_id, request_page_builder_creation, wait_for_worker_completion,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -209,6 +209,9 @@ impl Tool for EditPageTool {
             input.task_description
         );
 
+        // Get VFS ID from parent (if TaskManager)
+        let vfs_id = get_current_vfs_id();
+
         // Request page builder creation via channel (using existing workspace)
         stood::perf_checkpoint!(
             "awsdash.edit_page.request_creation.start",
@@ -217,6 +220,7 @@ impl Tool for EditPageTool {
 
         // Pass the existing page name as the workspace name with reuse_existing=true
         // This tells the creation function to skip collision detection and reuse the folder
+        // Editing existing disk pages uses persistent=true (tool building prompt)
         let (agent_id, workspace_name) = stood::perf_timed!(
             "awsdash.edit_page.request_page_builder_creation",
             {
@@ -227,6 +231,8 @@ impl Tool for EditPageTool {
                     None,       // No additional resource context
                     parent_id,
                     true,       // reuse_existing: reuse the existing folder
+                    vfs_id,
+                    true,       // is_persistent: editing existing pages uses tool building prompt
                 )
             }
         )

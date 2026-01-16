@@ -2,19 +2,29 @@
 //!
 //! This tool allows Page Builder agents to read file contents from their workspace.
 //! All file paths are validated to prevent directory traversal attacks.
+//! Supports both disk-based and VFS-based workspaces.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use stood::tools::{Tool, ToolError, ToolResult};
 
+use super::workspace::WorkspaceType;
+
+/// Maximum file size that can be read into context (10KB)
+/// Files larger than this should use copy_file or execute_javascript
+const MAX_READ_SIZE: u64 = 10 * 1024;
+
 /// Tool for reading files from the Page Builder workspace
 #[derive(Debug, Clone)]
 pub struct ReadFileTool {
+    workspace: WorkspaceType,
+    /// Keep for backwards compatibility with tests
+    #[allow(dead_code)]
     workspace_root: PathBuf,
 }
 
@@ -34,43 +44,33 @@ impl ReadFileTool {
     /// Create a new ReadFileTool for the specified page workspace
     ///
     /// # Arguments
-    /// * `page_name` - Name of the page (used as workspace folder name)
+    /// * `page_name` - Name of the page, or VFS pattern `vfs:{vfs_id}:{page_id}`
     ///
-    /// # Example
+    /// # Examples
     /// ```ignore
+    /// // Disk-based workspace
     /// let tool = ReadFileTool::new("my-s3-explorer")?;
     /// // Workspace: ~/.local/share/awsdash/pages/my-s3-explorer/
+    ///
+    /// // VFS-based workspace
+    /// let tool = ReadFileTool::new("vfs:abc123:my-dashboard")?;
+    /// // Files read from VFS at /pages/my-dashboard/
     /// ```
     pub fn new(page_name: &str) -> Result<Self> {
-        let workspace_root = dirs::data_local_dir()
-            .context("Failed to get local data directory")?
-            .join("awsdash/pages")
-            .join(page_name);
+        let workspace = WorkspaceType::from_workspace_name(page_name)?;
 
-        // Ensure workspace exists
-        std::fs::create_dir_all(&workspace_root)
-            .with_context(|| format!("Failed to create workspace directory: {:?}", workspace_root))?;
+        // Extract path for backwards compatibility
+        let workspace_root = match &workspace {
+            WorkspaceType::Disk { path } => path.clone(),
+            WorkspaceType::Vfs { page_id, .. } => {
+                PathBuf::from(format!("/vfs/pages/{}", page_id))
+            }
+        };
 
-        Ok(Self { workspace_root })
-    }
-
-    /// Validate that a relative path is safe and within the workspace
-    ///
-    /// Returns the absolute path if valid, error otherwise
-    fn validate_path(&self, relative_path: &str) -> Result<PathBuf> {
-        // Prevent directory traversal
-        if relative_path.contains("..") || relative_path.starts_with('/') {
-            anyhow::bail!("Invalid path: directory traversal not allowed");
-        }
-
-        let full_path = self.workspace_root.join(relative_path);
-
-        // Verify path is within workspace
-        if !full_path.starts_with(&self.workspace_root) {
-            anyhow::bail!("Path outside workspace");
-        }
-
-        Ok(full_path)
+        Ok(Self {
+            workspace,
+            workspace_root,
+        })
     }
 }
 
@@ -112,32 +112,73 @@ impl Tool for ReadFileTool {
                 message: format!("Invalid parameters: {}", e),
             })?;
 
-        // Validate and get full path
-        let full_path = match self.validate_path(&params.path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Invalid path: {}", e)));
-            }
-        };
+        // Validate path
+        if let Err(e) = self.workspace.validate_path(&params.path) {
+            return Ok(ToolResult::error(format!("Invalid path: {}", e)));
+        }
 
         // Check if file exists
-        if !full_path.exists() {
-            return Ok(ToolResult::error(format!(
-                "File not found: {}",
-                params.path
-            )));
+        match self.workspace.exists(&params.path) {
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "File not found: {}",
+                    params.path
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to check file existence: {}",
+                    e
+                )));
+            }
+            Ok(true) => {}
         }
 
         // Check if it's a file (not a directory)
-        if !full_path.is_file() {
-            return Ok(ToolResult::error(format!(
-                "Path is not a file: {}",
-                params.path
-            )));
+        match self.workspace.is_file(&params.path) {
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Path is not a file: {}",
+                    params.path
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to check file type: {}",
+                    e
+                )));
+            }
+            Ok(true) => {}
         }
 
-        // Read file contents
-        let content = match std::fs::read_to_string(&full_path) {
+        // Check file size - block large files to prevent context pollution
+        match self.workspace.file_size(&params.path) {
+            Ok(size) if size > MAX_READ_SIZE => {
+                return Ok(ToolResult::error(format!(
+                    "File too large to read into context: {} bytes (limit: {} bytes).\n\n\
+                    CONTEXT POLLUTION WARNING: Reading large files wastes LLM tokens!\n\n\
+                    Use one of these instead:\n\
+                    1. copy_file - Copy VFS data directly to page workspace:\n\
+                       copy_file({{ source: \"/results/file.json\", destination: \"data.js\", as_js_variable: \"DATA\" }})\n\n\
+                    2. execute_javascript - Process data in V8 sandbox:\n\
+                       const data = JSON.parse(vfs.readFile('/results/file.json'));\n\
+                       const filtered = data.filter(...);\n\
+                       // Return only summary, not full data\n\n\
+                    Do NOT read large files into context - it's wasteful and slow!",
+                    size, MAX_READ_SIZE
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to get file size: {}",
+                    e
+                )));
+            }
+            Ok(_) => {}
+        }
+
+        // Read file contents using workspace abstraction
+        let content = match self.workspace.read_file_string(&params.path) {
             Ok(content) => content,
             Err(e) => {
                 return Ok(ToolResult::error(format!(
@@ -173,11 +214,16 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_tool(tool_name: &str, temp_dir: &TempDir) -> ReadFileTool {
-        let workspace_root = temp_dir.path().join("awsdash/tools").join(tool_name);
+    fn create_test_tool(_tool_name: &str, temp_dir: &TempDir) -> ReadFileTool {
+        let workspace_root = temp_dir.path().to_path_buf();
         fs::create_dir_all(&workspace_root).unwrap();
 
-        ReadFileTool { workspace_root }
+        ReadFileTool {
+            workspace: WorkspaceType::Disk {
+                path: workspace_root.clone(),
+            },
+            workspace_root,
+        }
     }
 
     #[test]
@@ -185,10 +231,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let tool = create_test_tool("test-tool", &temp_dir);
 
-        let result = tool.validate_path("index.html");
+        let result = tool.workspace.validate_path("index.html");
         assert!(result.is_ok());
 
-        let result = tool.validate_path("assets/logo.png");
+        let result = tool.workspace.validate_path("assets/logo.png");
         assert!(result.is_ok());
     }
 
@@ -197,11 +243,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let tool = create_test_tool("test-tool", &temp_dir);
 
-        let result = tool.validate_path("../other-tool/file.js");
+        let result = tool.workspace.validate_path("../other-tool/file.js");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("directory traversal"));
 
-        let result = tool.validate_path("../../etc/passwd");
+        let result = tool.workspace.validate_path("../../etc/passwd");
         assert!(result.is_err());
     }
 
@@ -210,7 +256,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let tool = create_test_tool("test-tool", &temp_dir);
 
-        let result = tool.validate_path("/etc/passwd");
+        let result = tool.workspace.validate_path("/etc/passwd");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("directory traversal"));
     }

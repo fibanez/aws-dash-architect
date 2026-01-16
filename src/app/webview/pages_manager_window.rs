@@ -1,37 +1,69 @@
 //! Pages Manager Window - Manage Dash Pages
 //!
 //! A webview-based window for viewing, editing, and deleting Dash Pages.
-//! Uses Ant Design CSS for styling.
+//! Supports Catppuccin dark and light themes.
 
 #![warn(clippy::all, rust_2018_idioms)]
 
 /// Generate the Pages Manager HTML content
 ///
-/// Returns HTML string with Ant Design CSS styling and JavaScript
+/// Returns HTML string with theme-aware styling and JavaScript
 /// that calls dashApp API methods for page management.
-pub fn generate_pages_manager_html() -> String {
-    r##"<!DOCTYPE html>
+///
+/// # Arguments
+/// * `is_dark_theme` - If true, use Catppuccin dark theme colors; otherwise use light theme
+pub fn generate_pages_manager_html(is_dark_theme: bool) -> String {
+    // CSS variables for light theme (Catppuccin Latte)
+    let light_theme = r#"
+        :root {
+            --primary-color: #1e66f5;
+            --success-color: #40a02b;
+            --warning-color: #df8e1d;
+            --error-color: #d20f39;
+            --text-color: #4c4f69;
+            --text-secondary: #6c6f85;
+            --border-color: #ccd0da;
+            --background-color: #eff1f5;
+            --component-background: #e6e9ef;
+            --hover-background: #ccd0da;
+            --table-header-bg: #dce0e8;
+            --modal-background: #e6e9ef;
+        }
+    "#;
+
+    // CSS variables for dark theme (Catppuccin Mocha)
+    let dark_theme = r#"
+        :root {
+            --primary-color: #89b4fa;
+            --success-color: #a6e3a1;
+            --warning-color: #f9e2af;
+            --error-color: #f38ba8;
+            --text-color: #cdd6f4;
+            --text-secondary: #a6adc8;
+            --border-color: #45475a;
+            --background-color: #1e1e2e;
+            --component-background: #313244;
+            --hover-background: #45475a;
+            --table-header-bg: #181825;
+            --modal-background: #313244;
+        }
+    "#;
+
+    let theme_css = if is_dark_theme { dark_theme } else { light_theme };
+
+    // Build HTML by concatenating parts to avoid format string escaping issues with CSS braces
+    let html_start = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AWS Dash Pages</title>
-    <!-- Ant Design CSS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/antd/5.12.8/reset.min.css">
     <!-- Fuse.js for fuzzy search -->
     <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
     <style>
-        :root {
-            --primary-color: #1890ff;
-            --success-color: #52c41a;
-            --warning-color: #faad14;
-            --error-color: #ff4d4f;
-            --text-color: rgba(0, 0, 0, 0.85);
-            --text-secondary: rgba(0, 0, 0, 0.45);
-            --border-color: #d9d9d9;
-            --background-color: #f5f5f5;
-            --component-background: #ffffff;
-        }
+"##;
+
+    let css_rest = r##"
 
         * {
             box-sizing: border-box;
@@ -159,7 +191,7 @@ pub fn generate_pages_manager_html() -> String {
         }
 
         th {
-            background: #fafafa;
+            background: var(--table-header-bg);
             font-weight: 500;
             color: var(--text-color);
         }
@@ -171,7 +203,7 @@ pub fn generate_pages_manager_html() -> String {
         }
 
         th.sortable:hover {
-            background: #e6f4ff;
+            background: var(--hover-background);
             color: var(--primary-color);
         }
 
@@ -193,7 +225,7 @@ pub fn generate_pages_manager_html() -> String {
         }
 
         tr:hover td {
-            background: #fafafa;
+            background: var(--hover-background);
         }
 
         .page-name {
@@ -264,16 +296,16 @@ pub fn generate_pages_manager_html() -> String {
         }
 
         .status-message.success {
-            background: #f6ffed;
-            border: 1px solid #b7eb8f;
-            color: #52c41a;
+            background: var(--component-background);
+            border: 1px solid var(--success-color);
+            color: var(--success-color);
             display: block;
         }
 
         .status-message.error {
-            background: #fff2f0;
-            border: 1px solid #ffccc7;
-            color: #ff4d4f;
+            background: var(--component-background);
+            border: 1px solid var(--error-color);
+            color: var(--error-color);
             display: block;
         }
 
@@ -295,12 +327,13 @@ pub fn generate_pages_manager_html() -> String {
         }
 
         .modal {
-            background: white;
+            background: var(--modal-background);
             border-radius: 8px;
             padding: 24px;
             max-width: 420px;
             width: 90%;
             box-shadow: 0 3px 6px -4px rgba(0,0,0,.12), 0 6px 16px 0 rgba(0,0,0,.08), 0 9px 28px 8px rgba(0,0,0,.05);
+            color: var(--text-color);
         }
 
         .modal h3 {
@@ -323,7 +356,7 @@ pub fn generate_pages_manager_html() -> String {
         .size-badge {
             display: inline-block;
             padding: 2px 8px;
-            background: #f5f5f5;
+            background: var(--hover-background);
             border-radius: 4px;
             font-size: 12px;
             color: var(--text-secondary);
@@ -351,11 +384,13 @@ pub fn generate_pages_manager_html() -> String {
             border-radius: 6px;
             outline: none;
             transition: border-color 0.2s, box-shadow 0.2s;
+            background: var(--component-background);
+            color: var(--text-color);
         }
 
         .search-input:focus {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+            box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.2);
         }
 
         .search-input::placeholder {
@@ -376,21 +411,23 @@ pub fn generate_pages_manager_html() -> String {
             border-radius: 6px;
             outline: none;
             margin-bottom: 16px;
+            background: var(--background-color);
+            color: var(--text-color);
         }
 
         .modal-input:focus {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+            box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.2);
         }
 
         .btn-warning {
-            color: #faad14;
-            border-color: #faad14;
+            color: var(--warning-color);
+            border-color: var(--warning-color);
         }
 
         .btn-warning:hover {
-            background: #faad14;
-            color: white;
+            background: var(--warning-color);
+            color: var(--background-color);
         }
     </style>
 </head>
@@ -813,11 +850,17 @@ pub fn generate_pages_manager_html() -> String {
         });
     </script>
 </body>
-</html>"##.to_string()
+</html>"##;
+
+    // Concatenate all parts: html_start + theme_css + css_rest
+    html_start.to_string() + theme_css + css_rest
 }
 
 /// Spawn a Pages Manager webview window
-pub fn spawn_pages_manager_window() -> std::io::Result<()> {
-    let html = generate_pages_manager_html();
+///
+/// # Arguments
+/// * `is_dark_theme` - If true, use dark theme colors; otherwise use light theme
+pub fn spawn_pages_manager_window(is_dark_theme: bool) -> std::io::Result<()> {
+    let html = generate_pages_manager_html(is_dark_theme);
     crate::app::webview::spawn_webview_process_with_html(html, "AWS Dash Pages".to_string())
 }

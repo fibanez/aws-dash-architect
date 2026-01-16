@@ -12,7 +12,7 @@
 //! Workspace names are sanitized and collision detection ensures unique directories.
 
 use crate::app::agent_framework::{
-    get_current_agent_id, request_page_builder_creation, wait_for_worker_completion,
+    get_current_agent_id, get_current_vfs_id, request_page_builder_creation, wait_for_worker_completion,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -40,6 +40,12 @@ struct StartPageBuilderInput {
     /// Optional description of what data/resources the page should show
     #[serde(skip_serializing_if = "Option::is_none")]
     resource_context: Option<String>,
+
+    /// Whether to save the page permanently to disk (default: false)
+    /// - false: Temporary VFS page (uses session data, disappears after session)
+    /// - true: Persistent disk page (saved to Pages Manager, standalone)
+    #[serde(default)]
+    persistent: bool,
 }
 
 impl StartPageBuilderTool {
@@ -56,19 +62,25 @@ impl StartPageBuilderTool {
     /// Get the page description
     pub fn description(&self) -> &str {
         "Spawn a page builder worker to create an interactive Dash Page (HTML/CSS/JS app).\n\n\
-         Use this tool when:\n\
-         1. User explicitly requests creating a page, dashboard, or view\n\
-         2. You have a large dataset that would benefit from interactive visualization\n\
-         3. User wants something persistent they can use repeatedly\n\n\
-         **Good examples**:\n\
-         - 'User wants dashboard for Lambda functions'\n\
-         - 'Create tool to explore S3 buckets with search/filter'\n\
-         - 'Build VPC subnet viewer with region selection'\n\n\
-         **Bad examples**:\n\
-         - 'Show me S3 buckets' (use execute_javascript instead)\n\
-         - 'List Lambda functions' (use start_task instead)\n\n\
-         The worker will return the workspace name on success, which you can use\n\
-         to preview the page or request changes."
+         **Page Types (controlled by `persistent` parameter):**\n\n\
+         `persistent: false` (default) - **Temporary VFS page**\n\
+         - Uses session VFS data (can read files from /workspace/, /results/)\n\
+         - Disappears when session ends\n\
+         - Use for: 'Show me results', 'Display these findings', 'Visualize this data'\n\
+         - Pass `data_file` in resource_context to tell builder which VFS file to read\n\n\
+         `persistent: true` - **Permanent disk page**\n\
+         - Saved to Pages Manager, appears in page list\n\
+         - Standalone - doesn't depend on session data\n\
+         - Use for: 'Create a dashboard', 'Build a tool', 'Make a reusable viewer'\n\n\
+         **Examples:**\n\n\
+         User: 'Show me the security groups with port 22 open'\n\
+         → persistent: false, resource_context: 'Data file: /workspace/ssh-audit/findings.json'\n\n\
+         User: 'Create a Lambda dashboard I can use later'\n\
+         → persistent: true, builds standalone page with live data queries\n\n\
+         User: 'Build a VPC explorer tool'\n\
+         → persistent: true, reusable tool saved to disk\n\n\
+         **IMPORTANT**: On success, returns `workspace_name` which you MUST pass EXACTLY to `open_page`.\n\
+         For VFS pages, workspace_name includes 'vfs:' prefix - use the full string."
     }
 
     /// Get the parameters schema
@@ -83,7 +95,7 @@ impl StartPageBuilderTool {
                     "examples": [
                         "Lambda Function Dashboard",
                         "S3 Bucket Explorer",
-                        "VPC Subnet Viewer"
+                        "ssh-findings-view"
                     ]
                 },
                 "concise_description": {
@@ -92,24 +104,32 @@ impl StartPageBuilderTool {
                     "examples": [
                         "Building Lambda dashboard",
                         "Creating S3 explorer",
-                        "Generating VPC viewer",
-                        "Building EC2 interface"
+                        "Displaying SSH findings"
                     ]
                 },
                 "task_description": {
                     "type": "string",
-                    "description": "High-level description of WHAT tool to build and WHY. Include user's original request for context.",
+                    "description": "High-level description of WHAT to build and WHY. Include user's original request for context.",
                     "examples": [
                         "User requested: 'Create a dashboard for my Lambda functions'. Build an interactive dashboard showing Lambda functions with filters for runtime and memory.",
-                        "User has 500 S3 buckets. Build a tool with search, filtering by region, and size sorting."
+                        "Display the SSH audit findings from /workspace/ssh-audit/findings.json in a table with sorting and filtering."
                     ]
                 },
                 "resource_context": {
                     "type": "string",
-                    "description": "Optional context about what AWS resources or data to show",
+                    "description": "Context about data source. For temporary pages, specify the VFS data file path.",
                     "examples": [
-                        "Show Lambda functions from all accounts/regions with runtime, memory, timeout",
-                        "Display EC2 instances with instance type, state, and tags"
+                        "Data file: /workspace/ssh-audit/findings.json (47 security groups with public SSH)",
+                        "Show Lambda functions from all accounts/regions with runtime, memory, timeout"
+                    ]
+                },
+                "persistent": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to save page permanently. false=temporary VFS page (session data), true=permanent disk page (standalone).",
+                    "examples": [
+                        false,
+                        true
                     ]
                 }
             }
@@ -177,11 +197,37 @@ impl Tool for StartPageBuilderTool {
         tracing::info!(
             target: "agent::start_page_builder",
             parent_id = %parent_id,
-            "start_page_builder TOOL CALL:\n  Workspace Name: {}\n  Task Description: {}\n  Resource Context: {:?}",
+            "start_page_builder TOOL CALL:\n  Workspace Name: {}\n  Task Description: {}\n  Resource Context: {:?}\n  Persistent: {}",
             input.workspace_name,
             input.task_description,
-            input.resource_context
+            input.resource_context,
+            input.persistent
         );
+
+        // Decide VFS usage based on persistent flag:
+        // - persistent=false (default): Use VFS for temporary session-based page
+        // - persistent=true: Don't use VFS, save to disk for permanent page
+        let vfs_id = if input.persistent {
+            tracing::info!(
+                target: "agent::start_page_builder",
+                "Creating PERSISTENT page (saved to disk, no VFS)"
+            );
+            None
+        } else {
+            let id = get_current_vfs_id();
+            if id.is_some() {
+                tracing::info!(
+                    target: "agent::start_page_builder",
+                    "Creating TEMPORARY page (VFS-backed, session data)"
+                );
+            } else {
+                tracing::warn!(
+                    target: "agent::start_page_builder",
+                    "No VFS available - temporary page will use disk storage"
+                );
+            }
+            id
+        };
 
         // Request page builder creation via channel with reuse_existing=false
         // This enables collision detection to create a unique folder name
@@ -199,6 +245,8 @@ impl Tool for StartPageBuilderTool {
                     input.resource_context.clone(),
                     parent_id,
                     false,  // reuse_existing: false means use collision detection for new pages
+                    vfs_id,
+                    input.persistent,  // Pass through the persistent flag
                 )
             }
         )
@@ -254,10 +302,12 @@ impl Tool for StartPageBuilderTool {
                 );
 
                 // Return workspace name and result
+                // IMPORTANT: workspace_name must be passed exactly to open_page
                 Ok(ToolResult::success(json!({
                     "workspace_name": sanitized_workspace,
                     "result": result,
                     "execution_time_ms": execution_time_ms,
+                    "next_step": format!("To open this page, call: open_page({{\"page_name\": \"{}\"}})", sanitized_workspace),
                 })))
             }
             Err(error) => {

@@ -15,6 +15,7 @@ use crate::perf_guard;
 use crate::perf_timed;
 
 use crate::app::agent_framework::agent_logger::AgentLogger;
+use crate::app::agent_framework::vfs::{register_vfs, deregister_vfs, VirtualFileSystem};
 use super::types::{
     AgentId, AgentMetadata, AgentStatus, AgentType, StoodLogLevel,
 };
@@ -46,8 +47,6 @@ pub struct AgentInstance {
     status: AgentStatus,
     /// Type of agent (determines tools and prompts)
     agent_type: AgentType,
-    /// Page workspace name (for PageBuilder agents only)
-    page_workspace: Option<String>,
     /// Current page workspace being worked on (for TaskManager tracking)
     current_page_workspace: Option<String>,
 
@@ -99,6 +98,12 @@ pub struct AgentInstance {
     // Cancellation
     /// Cancellation token captured from stood agent (for Stop button)
     cancel_token: Option<CancellationToken>,
+
+    /// Parent's cancellation token (for workers - cancelled when parent is cancelled)
+    parent_cancel_token: Option<CancellationToken>,
+
+    /// VFS ID for this agent session (TaskManager owns VFS, workers inherit ID)
+    vfs_id: Option<String>,
 }
 
 impl AgentInstance {
@@ -111,8 +116,7 @@ impl AgentInstance {
     ///
     /// * `metadata` - Agent metadata (name, description, model)
     /// * `agent_type` - Type of agent (TaskManager, PageBuilder, or TaskWorker)
-    /// * `page_workspace` - Workspace name for PageBuilder agents (ignored for other types)
-    pub fn new(metadata: AgentMetadata, agent_type: AgentType, page_workspace: Option<String>) -> Self {
+    pub fn new(metadata: AgentMetadata, agent_type: AgentType) -> Self {
         let _timing = perf_guard!("AgentInstance::new", &metadata.name);
 
         let id = AgentId::new();
@@ -135,6 +139,16 @@ impl AgentInstance {
             Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
         });
 
+        // Create VFS for TaskManager agents (workers will inherit the ID)
+        let vfs_id = if matches!(agent_type, AgentType::TaskManager) {
+            let vfs = VirtualFileSystem::with_default_size();
+            let id = register_vfs(vfs);
+            logger.log_system_message(&agent_type, &format!("Created VFS with ID: {}", id));
+            Some(id)
+        } else {
+            None
+        };
+
         perf_checkpoint!("AgentInstance::new.building_struct");
 
         Self {
@@ -142,7 +156,6 @@ impl AgentInstance {
             metadata,
             status: AgentStatus::Running,
             agent_type,
-            page_workspace,
             current_page_workspace: None,
             stood_agent: Arc::new(Mutex::new(None)),
             response_channel: (tx, rx),
@@ -159,6 +172,8 @@ impl AgentInstance {
             processing_phase: ProcessingPhase::Idle,
             layer_stack: LayerStack::new(),
             cancel_token: None,
+            parent_cancel_token: None,
+            vfs_id,
         }
     }
 
@@ -181,12 +196,10 @@ impl AgentInstance {
     /// * `metadata` - Agent metadata (name, description, model)
     /// * `agent_type` - Type of agent (TaskWorker or PageBuilderWorker with parent_id)
     /// * `parent_logger` - Parent agent's logger (used to log worker creation in parent log)
-    /// * `page_workspace` - Workspace name for PageBuilder agents
     pub fn new_with_parent_logger(
         metadata: AgentMetadata,
         agent_type: AgentType,
         parent_logger: Arc<AgentLogger>,
-        page_workspace: Option<String>,
     ) -> Self {
         let id = AgentId::new();
         let (tx, rx) = mpsc::channel();
@@ -219,7 +232,6 @@ impl AgentInstance {
             metadata,
             status: AgentStatus::Running,
             agent_type,
-            page_workspace,
             current_page_workspace: None,
             stood_agent: Arc::new(Mutex::new(None)),
             response_channel: (tx, rx),
@@ -236,6 +248,8 @@ impl AgentInstance {
             processing_phase: ProcessingPhase::Idle,
             layer_stack: LayerStack::new(),
             cancel_token: None,
+            parent_cancel_token: None,
+            vfs_id: None, // Workers inherit VFS ID from parent at execution time
         }
     }
 
@@ -274,6 +288,27 @@ impl AgentInstance {
         &self.status
     }
 
+    /// Set the agent's status
+    ///
+    /// Used for external status updates like cancellation.
+    pub fn set_status(&mut self, status: AgentStatus) {
+        self.status = status;
+        self.processing = false; // Stop processing on status change
+        self.processing_phase = ProcessingPhase::Idle; // Stop animation
+    }
+
+    /// Add a system message to the conversation
+    ///
+    /// This adds a message to the conversation history that will be displayed
+    /// in the UI. Used for cancellation notices, system notifications, etc.
+    pub fn add_system_message(&mut self, message: &str) {
+        // Add as an assistant message with system prefix for display
+        self.messages
+            .push_back(ConversationMessage::assistant(message));
+        // Also log it
+        self.logger.log_system_message(&self.agent_type, message);
+    }
+
     /// Get reference to conversation messages
     pub fn messages(&self) -> &VecDeque<ConversationMessage> {
         &self.messages
@@ -302,6 +337,20 @@ impl AgentInstance {
     /// Set the current page workspace (for TaskManager tracking)
     pub fn set_current_page_workspace(&mut self, workspace: Option<String>) {
         self.current_page_workspace = workspace;
+    }
+
+    // ========== VFS API ==========
+
+    /// Get the VFS ID for this agent session
+    ///
+    /// TaskManager agents own the VFS; workers should inherit from parent.
+    pub fn vfs_id(&self) -> Option<&str> {
+        self.vfs_id.as_deref()
+    }
+
+    /// Set the VFS ID for this agent (used when inheriting from parent)
+    pub fn set_vfs_id(&mut self, vfs_id: Option<String>) {
+        self.vfs_id = vfs_id;
     }
 
     // ========== Middleware API ==========
@@ -399,19 +448,43 @@ impl AgentInstance {
     /// Check if cancellation is available for this agent
     ///
     /// Returns true if the agent was initialized with cancellation support
-    /// and has not been reset.
+    /// and has not been reset, OR if a parent cancellation token is available.
     pub fn can_cancel(&self) -> bool {
-        self.cancel_token.is_some()
+        self.cancel_token.is_some() || self.parent_cancel_token.is_some()
     }
 
     /// Check if cancellation has been requested
     ///
-    /// Returns true if cancel() was called and the token is cancelled.
+    /// Returns true if cancel() was called on this agent OR on a parent agent.
+    /// Workers check both their own token and their parent's token.
     pub fn is_cancelled(&self) -> bool {
-        self.cancel_token
+        let self_cancelled = self
+            .cancel_token
             .as_ref()
             .map(|t| t.is_cancelled())
-            .unwrap_or(false)
+            .unwrap_or(false);
+
+        let parent_cancelled = self
+            .parent_cancel_token
+            .as_ref()
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false);
+
+        self_cancelled || parent_cancelled
+    }
+
+    /// Set the parent cancellation token for worker agents
+    ///
+    /// When this token is cancelled, the worker should also stop.
+    pub fn set_parent_cancel_token(&mut self, token: CancellationToken) {
+        self.parent_cancel_token = Some(token);
+    }
+
+    /// Get the cancellation token for passing to child workers
+    ///
+    /// Returns the agent's own cancellation token if available.
+    pub fn get_cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 
     // ========== End Cancellation API ==========
@@ -543,6 +616,27 @@ impl AgentInstance {
         );
     }
 
+    /// Reset the cancellation token for recovery from cancelled state
+    ///
+    /// This preserves the agent's conversation history and only replaces
+    /// the cancellation token with a fresh one. Use this when the agent
+    /// was cancelled but the user wants to continue the conversation.
+    pub fn reset_cancellation_token(&mut self) {
+        if let Some(agent) = self.stood_agent.lock().unwrap().as_mut() {
+            let new_token = agent.reset_cancellation_token();
+            self.cancel_token = Some(new_token);
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Cancellation token reset - conversation preserved",
+            );
+        } else {
+            self.logger.log_system_message(
+                &self.agent_type,
+                "Cannot reset token - agent not initialized",
+            );
+        }
+    }
+
     /// Get tools based on agent type
     ///
     /// Tool configuration:
@@ -640,6 +734,16 @@ impl AgentInstance {
                 let execute_js_tool = Box::new(
                     crate::app::agent_framework::tools::ExecuteJavaScriptTool::new(),
                 );
+                // Open page tool for previewing the page in a webview
+                let open_page_tool = Box::new(
+                    crate::app::agent_framework::tools::OpenPageTool::new(workspace_name.as_str())
+                        .expect("Failed to create OpenPageTool"),
+                );
+                // Copy file tool for efficient VFS-to-page copying without context pollution
+                let copy_file_tool = Box::new(
+                    crate::app::agent_framework::tools::CopyFileTool::new(workspace_name.as_str())
+                        .expect("Failed to create CopyFileTool"),
+                );
 
                 vec![
                     read_tool as Box<dyn stood::tools::Tool>,
@@ -647,8 +751,10 @@ impl AgentInstance {
                     edit_tool as Box<dyn stood::tools::Tool>,
                     list_tool as Box<dyn stood::tools::Tool>,
                     delete_tool as Box<dyn stood::tools::Tool>,
+                    copy_file_tool as Box<dyn stood::tools::Tool>,
                     api_docs_tool as Box<dyn stood::tools::Tool>,
                     execute_js_tool as Box<dyn stood::tools::Tool>,
+                    open_page_tool as Box<dyn stood::tools::Tool>,
                 ]
             }
         }
@@ -663,8 +769,22 @@ impl AgentInstance {
             AgentType::TaskWorker { .. } => {
                 crate::app::agent_framework::TASK_WORKER_PROMPT.to_string()
             }
-            AgentType::PageBuilderWorker { .. } => {
-                crate::app::agent_framework::PAGE_BUILDER_WORKER_PROMPT.to_string()
+            AgentType::PageBuilderWorker { is_persistent, .. } => {
+                // Select prompt based on is_persistent flag:
+                // - false: Results display page (focus on VFS data)
+                // - true: Reusable tool page (queries AWS live)
+                let specific_prompt = if *is_persistent {
+                    crate::app::agent_framework::PAGE_BUILDER_TOOL_PROMPT
+                } else {
+                    crate::app::agent_framework::PAGE_BUILDER_RESULTS_PROMPT
+                };
+
+                // Combine common + specific prompt
+                format!(
+                    "{}\n\n{}",
+                    crate::app::agent_framework::PAGE_BUILDER_COMMON,
+                    specific_prompt
+                )
             }
         };
 
@@ -672,10 +792,16 @@ impl AgentInstance {
         let current_datetime = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
         let prompt = prompt.replace("{{CURRENT_DATETIME}}", &current_datetime);
 
-        // For PageBuilderWorker agents, replace {{PAGE_WORKSPACE_NAME}} with actual workspace name
+        // For PageBuilderWorker agents, replace workspace and theme placeholders
         let prompt = match &self.agent_type {
             AgentType::PageBuilderWorker { workspace_name, .. } => {
-                prompt.replace("{{PAGE_WORKSPACE_NAME}}", workspace_name)
+                // Get current theme for pages
+                let theme = crate::app::agent_framework::get_app_theme();
+
+                prompt
+                    .replace("{{PAGE_WORKSPACE_NAME}}", workspace_name)
+                    .replace("{{THEME_NAME}}", theme.name())
+                    .replace("{{THEME_IS_DARK}}", if theme.is_dark() { "true" } else { "false" })
             }
             _ => prompt,
         };
@@ -700,6 +826,7 @@ impl AgentInstance {
         use stood::agent::{Agent, EventLoopConfig};
         use stood::llm::Bedrock;
         use stood::telemetry::{AwsCredentialSource, TelemetryConfig};
+        use stood::CacheStrategy;
 
         // Get AWS credentials from the Home Dash Account for Bedrock
         perf_checkpoint!("create_stood_agent.get_bedrock_credentials_start");
@@ -814,22 +941,44 @@ impl AgentInstance {
         // Configure event loop with appropriate limits based on agent type
         // TaskManager (orchestration): 1000 tool iterations, 100 cycles
         // TaskWorker/PageBuilderWorker: 200 tool iterations, 20 cycles
+        //
+        // For workers: Use a child token of parent's token so workers are cancelled
+        // when the parent is cancelled (Stop button propagation)
         let event_loop_config = match self.agent_type {
             AgentType::TaskManager => EventLoopConfig {
                 max_cycles: 100,
                 max_tool_iterations: 1000,
+                cancellation_token: Some(CancellationToken::new()),
                 ..Default::default()
             },
-            AgentType::TaskWorker { .. } => EventLoopConfig {
-                max_cycles: 20,
-                max_tool_iterations: 200,
-                ..Default::default()
-            },
-            AgentType::PageBuilderWorker { .. } => EventLoopConfig {
-                max_cycles: 20,
-                max_tool_iterations: 200,
-                ..Default::default()
-            },
+            AgentType::TaskWorker { .. } => {
+                // Use child token if parent token exists, otherwise create new
+                let token = self
+                    .parent_cancel_token
+                    .as_ref()
+                    .map(|t| t.child_token())
+                    .unwrap_or_else(CancellationToken::new);
+                EventLoopConfig {
+                    max_cycles: 20,
+                    max_tool_iterations: 200,
+                    cancellation_token: Some(token),
+                    ..Default::default()
+                }
+            }
+            AgentType::PageBuilderWorker { .. } => {
+                // Use child token if parent token exists, otherwise create new
+                let token = self
+                    .parent_cancel_token
+                    .as_ref()
+                    .map(|t| t.child_token())
+                    .unwrap_or_else(CancellationToken::new);
+                EventLoopConfig {
+                    max_cycles: 20,
+                    max_tool_iterations: 200,
+                    cancellation_token: Some(token),
+                    ..Default::default()
+                }
+            }
         };
 
         self.logger.log_system_message(
@@ -851,9 +1000,10 @@ impl AgentInstance {
                 .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeSonnet45)
                 .system_prompt(&system_prompt)
+                .with_prompt_caching(CacheStrategy::SystemAndTools)
                 .with_streaming(false)
-                .with_cancellation()
                 .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -867,9 +1017,10 @@ impl AgentInstance {
                 .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeHaiku45)
                 .system_prompt(&system_prompt)
+                .with_prompt_caching(CacheStrategy::SystemAndTools)
                 .with_streaming(false)
-                .with_cancellation()
                 .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -883,9 +1034,10 @@ impl AgentInstance {
                 .with_telemetry(telemetry_config.clone())
                 .model(Bedrock::ClaudeOpus45)
                 .system_prompt(&system_prompt)
+                .with_prompt_caching(CacheStrategy::SystemAndTools)
                 .with_streaming(false)
-                .with_cancellation()
                 .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -893,15 +1045,15 @@ impl AgentInstance {
                     region.clone(),
                 )
                 .tools(self.get_tools_for_type()),
-            AgentModel::Nova2Pro => Agent::builder()
+            AgentModel::NovaPro => Agent::builder()
                 .name(agent_name)
                 .with_id(&agent_id)
                 .with_telemetry(telemetry_config.clone())
-                .model(Bedrock::Nova2Pro)
+                .model(Bedrock::NovaPro)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
-                .with_cancellation()
                 .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -909,15 +1061,31 @@ impl AgentInstance {
                     region.clone(),
                 )
                 .tools(self.get_tools_for_type()),
-            AgentModel::Nova2Lite => Agent::builder()
+            AgentModel::NovaLite => Agent::builder()
                 .name(agent_name)
                 .with_id(&agent_id)
                 .with_telemetry(telemetry_config.clone())
-                .model(Bedrock::Nova2Lite)
+                .model(Bedrock::NovaLite)
                 .system_prompt(&system_prompt)
                 .with_streaming(false)
-                .with_cancellation()
                 .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
+                .with_credentials(
+                    access_key.clone(),
+                    secret_key.clone(),
+                    session_token.clone(),
+                    region.clone(),
+                )
+                .tools(self.get_tools_for_type()),
+            AgentModel::NovaMicro => Agent::builder()
+                .name(agent_name)
+                .with_id(&agent_id)
+                .with_telemetry(telemetry_config.clone())
+                .model(Bedrock::NovaMicro)
+                .system_prompt(&system_prompt)
+                .with_streaming(false)
+                .with_event_loop_config(event_loop_config.clone())
+                // Cancellation token is set in event_loop_config above (child token for workers)
                 .with_credentials(
                     access_key.clone(),
                     secret_key.clone(),
@@ -1013,6 +1181,9 @@ impl AgentInstance {
     /// - Lazily initializes stood agent if needed
     /// - Spawns background thread for execution
     /// - Sets processing flag
+    ///
+    /// Note: If the agent was cancelled, caller should reinitialize before calling this.
+    /// The agent_manager_window handles reinitialization with AWS credentials.
     pub fn send_message(&mut self, user_message: String) {
         let _timing = perf_guard!("send_message", &self.metadata.name);
 
@@ -1068,7 +1239,9 @@ impl AgentInstance {
         let agent_id = self.id;
         let agent_type = self.agent_type.clone();
         let stood_log_level = self.stood_log_level;
+        let vfs_id = self.vfs_id.clone();
         let message_for_agent = processed_message; // Use processed message for agent
+        let parent_cancel_token = self.parent_cancel_token.clone(); // For worker cancellation propagation
 
         // Spawn background thread
         perf_checkpoint!("send_message.spawning_background_thread");
@@ -1090,6 +1263,9 @@ impl AgentInstance {
             // Set the current agent type for this thread (so tools can pass it to logger methods)
             crate::app::agent_framework::set_current_agent_type(agent_type.clone());
 
+            // Set the current VFS ID for this thread (so tools can access VFS)
+            crate::app::agent_framework::set_current_vfs_id(vfs_id);
+
             // Set the stood log level for this thread (for AgentTracingLayer to filter stood traces)
             crate::app::agent_framework::logging::tracing::set_current_log_level(stood_log_level);
 
@@ -1109,6 +1285,28 @@ impl AgentInstance {
                     "background_thread.tokio_runtime_entered",
                     None
                 );
+
+                // Check if parent has been cancelled (for worker agents)
+                if let Some(ref token) = parent_cancel_token {
+                    if token.is_cancelled() {
+                        logger.log_system_message(&agent_type, "Parent cancelled - aborting worker execution");
+                        let _ = sender.send(ConversationResponse::Error(
+                            "Cancelled by parent agent".to_string()
+                        ));
+
+                        // Send worker completion for worker agents
+                        if matches!(agent_type, crate::app::agent_framework::AgentType::PageBuilderWorker { .. } | crate::app::agent_framework::AgentType::TaskWorker { .. }) {
+                            crate::app::agent_framework::send_worker_completion(
+                                crate::app::agent_framework::WorkerCompletion {
+                                    worker_id: agent_id,
+                                    result: Err("Cancelled by parent agent".to_string()),
+                                    execution_time: std::time::Duration::ZERO,
+                                }
+                            );
+                        }
+                        return;
+                    }
+                }
 
                 // Lazy initialization of stood agent
                 let mut agent_guard = stood_agent.lock().unwrap();
@@ -1276,6 +1474,18 @@ Query result presentation:
     /// Also handles deferred message injections - if an injection is queued
     /// and the agent is not currently processing, the injection will be sent.
     pub fn poll_response(&mut self) -> bool {
+        // If agent is cancelled, drain and discard any pending messages
+        if self.status == AgentStatus::Cancelled {
+            // Drain the channel to prevent message buildup
+            while self.response_channel.1.try_recv().is_ok() {
+                self.logger.log_system_message(
+                    &self.agent_type,
+                    "Discarding message - agent is cancelled",
+                );
+            }
+            return false;
+        }
+
         // Handle deferred injections when not processing
         if !self.processing && self.has_pending_injection {
             if let Some(injection_msg) = self.deferred_injection.take() {
@@ -1514,6 +1724,13 @@ Query result presentation:
         // Clear workspace tracking for this agent
         crate::app::agent_framework::clear_workspace_for_agent(self.id);
 
+        // Deregister VFS if this agent owned it (TaskManager only)
+        if let Some(ref vfs_id) = self.vfs_id {
+            deregister_vfs(vfs_id);
+            self.logger
+                .log_system_message(&self.agent_type, &format!("Deregistered VFS: {}", vfs_id));
+        }
+
         self.logger
             .log_system_message(&self.agent_type, "Agent terminated");
     }
@@ -1542,7 +1759,7 @@ mod tests {
         let agent = AgentInstance::new(metadata.clone(), AgentType::TaskManager);
 
         assert_eq!(agent.metadata().name, metadata.name);
-        assert_eq!(agent.agent_type(), AgentType::TaskManager);
+        assert_eq!(*agent.agent_type(), AgentType::TaskManager);
         assert_eq!(agent.status(), &AgentStatus::Running);
         assert!(!agent.is_processing());
         assert_eq!(agent.messages().len(), 0);
@@ -1555,7 +1772,7 @@ mod tests {
         let agent = AgentInstance::new(metadata.clone(), AgentType::TaskWorker { parent_id });
 
         assert_eq!(agent.metadata().name, metadata.name);
-        assert_eq!(agent.agent_type(), AgentType::TaskWorker { parent_id });
+        assert_eq!(*agent.agent_type(), AgentType::TaskWorker { parent_id });
         assert_eq!(agent.agent_type().parent_id(), Some(parent_id));
         assert!(!agent.agent_type().is_task_manager());
     }

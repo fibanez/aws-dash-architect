@@ -93,11 +93,12 @@
 //! - Restore: `[_]` (square with line) - tooltip "Restore window"
 
 use super::agent_log_window::AgentLogWindow;
+use super::vfs_browser_window::VfsBrowserWindow;
 use super::window_focus::FocusableWindow;
 use super::window_maximize::{WindowMaximizeState, MENU_BAR_HEIGHT};
 use crate::app::agent_framework::{
     get_agent_creation_receiver, get_ui_event_receiver, render_agent_chat, AgentCreationRequest,
-    AgentId, AgentInstance, AgentModel, AgentType, AgentUIEvent, InlineWorkerDisplay,
+    AgentId, AgentInstance, AgentModel, AgentStatus, AgentType, AgentUIEvent, InlineWorkerDisplay,
     ProcessingStatusWidget, StoodLogLevel,
 };
 use crate::app::aws_identity::AwsIdentityCenter;
@@ -209,16 +210,6 @@ impl WorkerInlineMessage {
     fn mark_completed(&mut self, success: bool) {
         self.status = WorkerMessageStatus::Completed { success };
     }
-
-    /// Get total tokens across all tool calls
-    fn total_tokens(&self) -> u32 {
-        self.tool_calls.iter().filter_map(|c| c.tokens).sum()
-    }
-
-    /// Check if worker has any running tool calls
-    fn has_running_tools(&self) -> bool {
-        self.tool_calls.iter().any(|c| matches!(c.status, ToolCallStatus::Running))
-    }
 }
 
 pub struct AgentManagerWindow {
@@ -243,6 +234,9 @@ pub struct AgentManagerWindow {
 
     // Agent log viewer
     agent_log_window: AgentLogWindow,
+
+    // VFS browser window
+    vfs_browser_window: VfsBrowserWindow,
 
     // Agents
     agents: HashMap<AgentId, AgentInstance>,
@@ -278,7 +272,6 @@ pub struct AgentManagerWindow {
     show_agent_type_dialog: bool,
     selected_agent_type: Option<AgentType>,
     new_agent_name: String,
-    tool_workspace_name: String,
     dialog_selected_model: AgentModel,
     dialog_selected_log_level: StoodLogLevel,
 }
@@ -300,6 +293,7 @@ impl AgentManagerWindow {
             editing_agent_name: None,
             temp_agent_name: String::new(),
             agent_log_window: AgentLogWindow::new(),
+            vfs_browser_window: VfsBrowserWindow::new(),
             agents: HashMap::new(),
             input_text: String::new(),
             selected_model: AgentModel::default(),
@@ -313,7 +307,6 @@ impl AgentManagerWindow {
             show_agent_type_dialog: false,
             selected_agent_type: None,
             new_agent_name: String::new(),
-            tool_workspace_name: String::new(),
             dialog_selected_model: AgentModel::default(),
             dialog_selected_log_level: StoodLogLevel::default(),
         }
@@ -640,7 +633,7 @@ impl AgentManagerWindow {
 
         perf_checkpoint!("create_new_agent.creating_agent_instance");
         let mut agent = perf_timed!("create_new_agent.AgentInstance_new", {
-            AgentInstance::new(metadata, agent_type, None)
+            AgentInstance::new(metadata, agent_type)
         });
         let agent_id = agent.id();
 
@@ -706,7 +699,7 @@ impl AgentManagerWindow {
             updated_at: Utc::now(),
         };
 
-        let mut agent = AgentInstance::new(metadata, agent_type, None);
+        let mut agent = AgentInstance::new(metadata, agent_type);
         let agent_id = agent.id();
 
         // Set the page workspace so edit_page tool knows which page to modify
@@ -1363,13 +1356,13 @@ impl AgentManagerWindow {
             parent_agent.metadata().model
         };
 
-        // Get parent agent's logger to share with worker
-        let parent_logger = {
+        // Get parent agent's logger and cancellation token to share with worker
+        let (parent_logger, parent_cancel_token) = {
             let parent_agent = self
                 .agents
                 .get(&request.parent_id())
                 .ok_or_else(|| format!("Parent agent {} not found", request.parent_id()))?;
-            parent_agent.logger().clone()
+            (parent_agent.logger().clone(), parent_agent.get_cancel_token())
         };
 
         // Create agent based on request type
@@ -1402,6 +1395,7 @@ impl AgentManagerWindow {
                 concise_description,
                 task_description,
                 resource_context,
+                is_persistent,
                 ..
             } => {
                 // Generate agent name from workspace name
@@ -1418,6 +1412,7 @@ impl AgentManagerWindow {
                     AgentType::PageBuilderWorker {
                         parent_id: request.parent_id(),
                         workspace_name: workspace_name.clone(),
+                        is_persistent: *is_persistent,
                     },
                     default_name,
                     concise_description.clone(),
@@ -1438,13 +1433,21 @@ impl AgentManagerWindow {
         // Create worker agent with parent_id and parent's logger
         perf_checkpoint!("UI.handle_agent_creation_request.create_worker_instance.start");
         let mut agent = perf_timed!("UI.handle_agent_creation_request.AgentInstance_new", {
-            AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger, None)
+            AgentInstance::new_with_parent_logger(metadata, agent_type, parent_logger)
         });
         let agent_id = agent.id();
         perf_checkpoint!(
             "UI.handle_agent_creation_request.create_worker_instance.end",
             &format!("worker_id={}", agent_id)
         );
+
+        // Set the VFS ID inherited from parent TaskManager
+        agent.set_vfs_id(request.vfs_id().map(String::from));
+
+        // Set parent cancellation token so worker stops when parent stops
+        if let Some(token) = parent_cancel_token {
+            agent.set_parent_cancel_token(token);
+        }
 
         // Set the current stood log level on new worker agent
         agent.set_stood_log_level(self.stood_log_level);
@@ -1661,7 +1664,7 @@ impl AgentManagerWindow {
         self.status_widgets.entry(display_agent_id).or_default();
 
         // Render UI and handle message sending/polling in a scope to release borrow
-        let (terminate_clicked, log_clicked, _clear_clicked, worker_log_to_open) = {
+        let (terminate_clicked, log_clicked, _clear_clicked, worker_log_to_open, vfs_clicked, vfs_info, stop_clicked) = {
             // Get the agent and status widget to display
             let agent = match self.agents.get_mut(&display_agent_id) {
                 Some(agent) => agent,
@@ -1674,6 +1677,11 @@ impl AgentManagerWindow {
             // Get status widget (we just ensured it exists)
             let status_widget = self.status_widgets.get_mut(&display_agent_id).unwrap();
 
+            // Capture VFS info before render (for opening browser later)
+            let vfs_info = agent.vfs_id().map(|id| {
+                (id.to_string(), agent.metadata().name.clone())
+            });
+
             // Render the chat UI with inline workers
             let (
                 should_send,
@@ -1682,6 +1690,7 @@ impl AgentManagerWindow {
                 terminate_clicked,
                 stop_clicked,
                 worker_log_clicked,
+                vfs_clicked,
             ) = render_agent_chat(
                 ui,
                 agent,
@@ -1700,6 +1709,16 @@ impl AgentManagerWindow {
                 let message = self.input_text.clone();
                 self.input_text.clear();
 
+                // If agent was cancelled, reset token to continue (preserves conversation)
+                if *agent.status() == AgentStatus::Cancelled {
+                    log::info!(
+                        "Agent {} was cancelled, resetting token before send",
+                        agent_id
+                    );
+                    agent.reset_cancellation_token();
+                    agent.set_status(AgentStatus::Running);
+                }
+
                 // Send message to agent
                 log::info!("Sending message to agent {}: {}", agent_id, message);
                 agent.send_message(message);
@@ -1710,6 +1729,10 @@ impl AgentManagerWindow {
             if stop_clicked {
                 if agent.cancel() {
                     log::info!("Agent {} execution cancelled by user", agent_id);
+                    // Add cancellation message to conversation
+                    agent.add_system_message("[CANCELLED] Execution stopped by user request.");
+                    // Update status to Cancelled
+                    agent.set_status(AgentStatus::Cancelled);
                 }
             }
 
@@ -1724,13 +1747,57 @@ impl AgentManagerWindow {
                 log_clicked,
                 clear_clicked,
                 worker_log_clicked,
+                vfs_clicked,
+                vfs_info,
+                stop_clicked,
             )
         }; // agent borrow released here
+
+        // Handle Stop button - also cancel all child workers
+        if stop_clicked {
+            // Find all workers for this agent
+            let workers_to_cancel: Vec<AgentId> = self
+                .agents
+                .iter()
+                .filter_map(|(worker_id, worker)| match worker.agent_type() {
+                    AgentType::TaskWorker { parent_id } if *parent_id == agent_id => {
+                        Some(*worker_id)
+                    }
+                    AgentType::PageBuilderWorker { parent_id, .. } if *parent_id == agent_id => {
+                        Some(*worker_id)
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            // Cancel each worker
+            for worker_id in workers_to_cancel {
+                if let Some(worker) = self.agents.get_mut(&worker_id) {
+                    if worker.cancel() {
+                        worker.add_system_message("[CANCELLED] Parent agent stopped.");
+                        worker.set_status(AgentStatus::Cancelled);
+                        log::info!(
+                            "Worker {} cancelled (parent {} stopped)",
+                            worker_id,
+                            agent_id
+                        );
+                    }
+                }
+            }
+        }
 
         // Handle worker log button click
         if let Some(log_path) = worker_log_to_open {
             self.agent_log_window
                 .show_log_from_path(&log_path, "Worker Log");
+        }
+
+        // Handle VFS button click
+        if vfs_clicked {
+            if let Some((vfs_id, agent_name)) = vfs_info {
+                self.vfs_browser_window.open_for_vfs(vfs_id, agent_name);
+                tracing::info!("VFS browser opened for agent {}", agent_id);
+            }
         }
 
         // Handle log button click outside the borrow scope
@@ -2090,6 +2157,11 @@ impl FocusableWindow for AgentManagerWindow {
         // Show agent log window if open
         if self.agent_log_window.is_open() {
             self.agent_log_window.show(ctx, false);
+        }
+
+        // Show VFS browser window if open
+        if self.vfs_browser_window.is_open() {
+            self.vfs_browser_window.show(ctx);
         }
 
         // Show agent type selection dialog if open

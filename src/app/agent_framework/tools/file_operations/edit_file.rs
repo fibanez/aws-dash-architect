@@ -2,6 +2,7 @@
 //!
 //! This tool allows Page Builder agents to edit existing files using SEARCH/REPLACE blocks.
 //! Inspired by Aider's approach to avoid hitting max_tokens limits with large files.
+//! Supports both disk-based and VFS-based workspaces.
 //!
 //! The LLM provides one or more edit blocks with:
 //! - The exact text to search for (SEARCH)
@@ -15,7 +16,7 @@
 
 #![warn(clippy::all, rust_2018_idioms)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -23,9 +24,14 @@ use serde_json::Value;
 use std::path::PathBuf;
 use stood::tools::{Tool, ToolError, ToolResult};
 
+use super::workspace::WorkspaceType;
+
 /// Tool for editing files in the Page Builder workspace using SEARCH/REPLACE blocks
 #[derive(Debug, Clone)]
 pub struct EditFileTool {
+    workspace: WorkspaceType,
+    /// Keep for backwards compatibility with tests
+    #[allow(dead_code)]
     workspace_root: PathBuf,
 }
 
@@ -55,21 +61,28 @@ struct EditFileResult {
 
 impl EditFileTool {
     /// Create a new EditFileTool for the specified page workspace
+    ///
+    /// # Arguments
+    /// * `page_name` - Name of the page, or VFS pattern `vfs:{vfs_id}:{page_id}`
     pub fn new(page_name: &str) -> Result<Self> {
-        let workspace_root = dirs::data_local_dir()
-            .context("Failed to get local data directory")?
-            .join("awsdash/pages")
-            .join(page_name);
+        let workspace = WorkspaceType::from_workspace_name(page_name)?;
 
-        // Ensure workspace exists
-        std::fs::create_dir_all(&workspace_root)
-            .with_context(|| format!("Failed to create workspace directory: {:?}", workspace_root))?;
+        // Extract path for backwards compatibility
+        let workspace_root = match &workspace {
+            WorkspaceType::Disk { path } => path.clone(),
+            WorkspaceType::Vfs { page_id, .. } => {
+                PathBuf::from(format!("/vfs/pages/{}", page_id))
+            }
+        };
 
-        Ok(Self { workspace_root })
+        Ok(Self {
+            workspace,
+            workspace_root,
+        })
     }
 
-    /// Validate that a relative path is safe and within the workspace
-    fn validate_path(&self, relative_path: &str) -> Result<PathBuf> {
+    /// Validate that a relative path is safe
+    fn validate_path(&self, relative_path: &str) -> Result<String> {
         // Prevent directory traversal
         if relative_path.contains("..") || relative_path.starts_with('/') {
             anyhow::bail!("Invalid path: directory traversal not allowed");
@@ -84,14 +97,10 @@ impl EditFileTool {
             );
         }
 
-        let full_path = self.workspace_root.join(relative_path);
+        // Validate with workspace
+        self.workspace.validate_path(relative_path)?;
 
-        // Verify path is within workspace
-        if !full_path.starts_with(&self.workspace_root) {
-            anyhow::bail!("Path outside workspace");
-        }
-
-        Ok(full_path)
+        Ok(relative_path.to_string())
     }
 
     /// Apply a single search/replace edit to content
@@ -267,23 +276,29 @@ Each edit block contains:
             })?;
 
         // Validate path
-        let full_path = match self.validate_path(&params.path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Invalid path: {}", e)));
-            }
-        };
-
-        // Check file exists
-        if !full_path.exists() {
-            return Ok(ToolResult::error(format!(
-                "File not found: {}. Use write_file to create new files.",
-                params.path
-            )));
+        if let Err(e) = self.validate_path(&params.path) {
+            return Ok(ToolResult::error(format!("Invalid path: {}", e)));
         }
 
-        // Read current content
-        let mut content = match std::fs::read_to_string(&full_path) {
+        // Check file exists
+        match self.workspace.exists(&params.path) {
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "File not found: {}. Use write_file to create new files.",
+                    params.path
+                )));
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to check file existence: {}",
+                    e
+                )));
+            }
+            Ok(true) => {}
+        }
+
+        // Read current content using workspace abstraction
+        let mut content = match self.workspace.read_file_string(&params.path) {
             Ok(c) => c,
             Err(e) => {
                 return Ok(ToolResult::error(format!(
@@ -312,9 +327,9 @@ Each edit block contains:
             }
         }
 
-        // Write updated content if any edits succeeded
+        // Write updated content if any edits succeeded using workspace abstraction
         if edits_applied > 0 {
-            if let Err(e) = std::fs::write(&full_path, &content) {
+            if let Err(e) = self.workspace.write_file(&params.path, content.as_bytes()) {
                 return Ok(ToolResult::error(format!(
                     "Failed to write updated file {}: {}",
                     params.path, e
@@ -362,11 +377,16 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_tool(tool_name: &str, temp_dir: &TempDir) -> EditFileTool {
-        let workspace_root = temp_dir.path().join("awsdash/tools").join(tool_name);
+    fn create_test_tool(_tool_name: &str, temp_dir: &TempDir) -> EditFileTool {
+        let workspace_root = temp_dir.path().to_path_buf();
         fs::create_dir_all(&workspace_root).unwrap();
 
-        EditFileTool { workspace_root }
+        EditFileTool {
+            workspace: WorkspaceType::Disk {
+                path: workspace_root.clone(),
+            },
+            workspace_root,
+        }
     }
 
     fn create_test_file(tool: &EditFileTool, filename: &str, content: &str) {
