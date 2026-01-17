@@ -3272,7 +3272,7 @@ dependencies = [
 
 [[package]]
 name = "awsdash"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10419,7 +10419,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stood"
 version = "0.1.2"
-source = "git+https://github.com/fibanez/stood-ai-agent.git#87ef381de5a7377ad926f03198a731f6059e27af"
+source = "git+https://github.com/fibanez/stood-ai-agent.git#6783e1aa9bf7541ed2e34052c205783caefe5a9e"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -10478,7 +10478,7 @@ dependencies = [
 [[package]]
 name = "stood-macros"
 version = "0.1.0"
-source = "git+https://github.com/fibanez/stood-ai-agent.git#87ef381de5a7377ad926f03198a731f6059e27af"
+source = "git+https://github.com/fibanez/stood-ai-agent.git#6783e1aa9bf7541ed2e34052c205783caefe5a9e"
 dependencies = [
  "proc-macro2",
  "quote",
